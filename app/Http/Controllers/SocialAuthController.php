@@ -49,7 +49,7 @@ class SocialAuthController extends Controller
 
         $user = User::where('email', $googleUser->getEmail())->first();
 
-        if (! $user || $user->status !== 'Active' || $user->locked_at) {
+        if (! $user || strcasecmp((string) $user->status, 'Active') !== 0 || $user->locked_at) {
             $reason = $user && $user->locked_at ? 'Account locked' : 'Account not enabled for Google login';
             $this->logAttempt($user, $googleUser->getEmail(), 'Failed', $reason, $ip, $ua, $deviceId, $deviceInfo);
             return $this->redirectToFrontend('error', 'Your account is not enabled for Google sign-in. Please try logging in with your email and password.');
@@ -95,7 +95,7 @@ class SocialAuthController extends Controller
             minutes: self::SESSION_LIFETIME_MINUTES,
             path: '/',
             domain: config('session.domain'),
-            secure: app()->environment('production'),
+            secure: (bool) config('session.secure'),
             httpOnly: true,
             sameSite: 'lax'
         );

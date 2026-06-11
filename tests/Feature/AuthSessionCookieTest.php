@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Socialite\Facades\Socialite;
+use Mockery;
 use Symfony\Component\HttpFoundation\Cookie;
 use Tests\TestCase;
 
@@ -52,6 +54,46 @@ class AuthSessionCookieTest extends TestCase
         $this->assertSame($loginCookie->isSecure(), $logoutCookie->isSecure());
         $this->assertSame($loginCookie->isHttpOnly(), $logoutCookie->isHttpOnly());
         $this->assertSame($loginCookie->getSameSite(), $logoutCookie->getSameSite());
+    }
+
+    public function test_google_callback_uses_shared_session_cookie_attributes_and_active_status_check(): void
+    {
+        config([
+            'app.frontend_url' => 'https://vmecc.amiosh.com',
+            'session.domain' => '.amiosh.com',
+            'session.secure' => true,
+        ]);
+
+        $user = User::factory()->create([
+            'email' => 'google@example.test',
+            'status' => 'active',
+        ]);
+
+        $googleUser = new class ($user->email) {
+            public function __construct(private string $email)
+            {
+            }
+
+            public function getEmail(): string
+            {
+                return $this->email;
+            }
+        };
+
+        $provider = Mockery::mock();
+        $provider->shouldReceive('stateless')->once()->andReturnSelf();
+        $provider->shouldReceive('user')->once()->andReturn($googleUser);
+        Socialite::shouldReceive('driver')->once()->with('google')->andReturn($provider);
+
+        $response = $this->get('/api/auth/google/callback');
+
+        $response->assertRedirect('https://vmecc.amiosh.com/login?status=success');
+        $cookie = $this->findSessionCookie($response->headers->getCookies());
+        $this->assertNotNull($cookie);
+        $this->assertSame('.amiosh.com', $cookie->getDomain());
+        $this->assertTrue($cookie->isSecure());
+        $this->assertTrue($cookie->isHttpOnly());
+        $this->assertSame('lax', strtolower((string) $cookie->getSameSite()));
     }
 
     /**
