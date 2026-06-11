@@ -7,6 +7,8 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Barryvdh\DomPDF\PDF as DomPdfWrapper;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class ErcoReportPdfTest extends TestCase
@@ -19,6 +21,7 @@ class ErcoReportPdfTest extends TestCase
             'status' => 'active',
             'name' => 'Operations Supervisor',
         ]);
+        $this->grantErcoPermission($user);
         $this->actingAs($user);
 
         $create = $this->postJson('/api/reports', [
@@ -87,6 +90,56 @@ class ErcoReportPdfTest extends TestCase
         $this->assertContains('reviewed', $actions);
         $this->assertContains('approved', $actions);
         $this->assertCount(3, $actions);
+    }
+
+    public function test_pdf_download_is_scoped_to_owner_for_report_uid_requests(): void
+    {
+        $owner = User::factory()->create(['status' => 'active']);
+        $otherUser = User::factory()->create(['status' => 'active']);
+        $this->grantErcoPermission($owner);
+        $this->grantErcoPermission($otherUser);
+
+        $this->actingAs($owner);
+        $create = $this->postJson('/api/reports', [
+            'display_id' => 'ERCO-03-28042026',
+            'report_type' => 'erco',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'Special Assistance',
+                'location' => 'Zone 2',
+                'details' => 'Owner only report',
+            ],
+        ]);
+        $create->assertCreated();
+        $reportUid = (string) $create->json('data.id');
+
+        $this->actingAs($otherUser);
+        $response = $this->postJson('/api/reports/erco/pdf', [
+            'report_uid' => $reportUid,
+        ]);
+        $response->assertStatus(404);
+    }
+
+    public function test_pdf_download_requires_report_uid(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantErcoPermission($user);
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports/erco/pdf', []);
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['report_uid']);
+    }
+
+    public function test_pdf_download_requires_erco_permission(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports/erco/pdf', [
+            'report_uid' => 'any-report',
+        ]);
+        $response->assertStatus(403);
     }
 
     public function test_pdf_template_maps_reviewed_action_to_checked_by_signoff(): void
@@ -189,5 +242,21 @@ class ErcoReportPdfTest extends TestCase
                 ],
             ],
         ];
+    }
+
+    private function grantErcoPermission(User $user): void
+    {
+        $permission = Permission::query()->firstOrCreate([
+            'name' => 'reports.erco.view',
+            'guard_name' => 'web',
+        ]);
+        $role = Role::query()->firstOrCreate([
+            'name' => 'Erco Pdf Tester',
+            'guard_name' => 'web',
+        ]);
+        if (! $role->hasPermissionTo($permission)) {
+            $role->givePermissionTo($permission);
+        }
+        $user->assignRole($role);
     }
 }

@@ -40,7 +40,7 @@ class AuthController extends Controller
             ]);
         }
 
-        if ($user->status !== 'Active') {
+        if (strcasecmp((string) $user->status, 'Active') !== 0) {
             $this->logAttempt($user, $credentials['email'], 'Failed', 'Inactive account', $ip, $ua, $deviceId, $deviceInfo);
             throw ValidationException::withMessages([
                 'email' => [__('auth.failed')],
@@ -71,6 +71,7 @@ class AuthController extends Controller
         }
 
         $session = $this->createSession($user, $request);
+        $csrfToken = $this->refreshCsrfToken($session);
         $user->forceFill([
             'last_login_at' => now(),
             'failed_login_count' => 0,
@@ -80,7 +81,7 @@ class AuthController extends Controller
         ])->save();
         $this->logAttempt($user, $credentials['email'], 'Success', null, $ip, $ua, $deviceId, $deviceInfo);
 
-        return $this->respondWithUser($user)->withCookie($this->buildSessionCookie($session->id));
+        return $this->respondWithUser($user, $csrfToken)->withCookie($this->buildSessionCookie($session->id));
     }
 
     public function session(Request $request): JsonResponse
@@ -113,7 +114,7 @@ class AuthController extends Controller
             return response()->json(['message' => 'Unauthenticated'], 401)
                 ->withCookie($this->forgetSessionCookie());
         }
-        if ($user->trashed() || $user->status !== 'Active') {
+        if ($user->trashed() || strcasecmp((string) $user->status, 'Active') !== 0) {
             $session->forceFill([
                 'logged_out_at' => now(),
                 'revoked_at' => now(),
@@ -124,7 +125,7 @@ class AuthController extends Controller
                 ->withCookie($this->forgetSessionCookie());
         }
 
-        return $this->respondWithUser($user);
+        return $this->respondWithUser($user, $this->refreshCsrfToken($session));
     }
 
     public function logout(Request $request): JsonResponse
@@ -189,7 +190,7 @@ class AuthController extends Controller
         ]);
     }
 
-    private function respondWithUser(User $user): JsonResponse
+    private function respondWithUser(User $user, ?string $csrfToken = null): JsonResponse
     {
         $authz = app(AssignmentAuthorizationService::class);
         $loginRecords = $user->loginAttempts()
@@ -208,7 +209,7 @@ class AuthController extends Controller
                 ];
             });
 
-        return response()->json([
+        $payload = [
             'user' => [
                 'id' => $user->id,
                 'name' => $user->name,
@@ -229,7 +230,13 @@ class AuthController extends Controller
                 'medical_info' => $user->medical_info ?? null,
                 'login_records' => $loginRecords,
             ],
-        ]);
+        ];
+
+        if ($csrfToken !== null) {
+            $payload['csrf_token'] = $csrfToken;
+        }
+
+        return response()->json($payload);
     }
 
     public function updateProfile(Request $request): JsonResponse
@@ -315,7 +322,7 @@ class AuthController extends Controller
             'image' => ['required', 'image', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
         ]);
 
-        $disk = config('filesystems.default', 'local');
+        $disk = $this->publicUploadsDisk();
         $oldPath = trim((string) ($user->profile_image_url ?? ''));
         if ($oldPath !== '' && $this->isStoredProfileImagePath($oldPath)) {
             Storage::disk($disk)->delete($oldPath);
@@ -334,7 +341,7 @@ class AuthController extends Controller
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
-        $disk = config('filesystems.default', 'local');
+        $disk = $this->publicUploadsDisk();
         $oldPath = trim((string) ($user->profile_image_url ?? ''));
         if ($oldPath !== '' && $this->isStoredProfileImagePath($oldPath)) {
             Storage::disk($disk)->delete($oldPath);
@@ -353,15 +360,34 @@ class AuthController extends Controller
             minutes: self::SESSION_LIFETIME_MINUTES,
             path: '/',
             domain: config('session.domain'),
-            secure: app()->environment('production'),
+            secure: (bool) config('session.secure'),
             httpOnly: true,
             sameSite: 'lax'
         );
     }
 
+    private function refreshCsrfToken(UserSession $session): string
+    {
+        $token = Str::random(64);
+        $session->forceFill([
+            'csrf_token_hash' => hash('sha256', $token),
+        ])->save();
+
+        return $token;
+    }
+
     private function forgetSessionCookie()
     {
-        return cookie()->forget(self::SESSION_COOKIE);
+        return cookie(
+            name: self::SESSION_COOKIE,
+            value: '',
+            minutes: -2628000,
+            path: '/',
+            domain: config('session.domain'),
+            secure: (bool) config('session.secure'),
+            httpOnly: true,
+            sameSite: 'lax'
+        );
     }
 
     private function logAttempt(?User $user, string $email, string $status, ?string $reason, ?string $ip, ?string $ua, ?string $deviceId, ?string $deviceInfo): void
@@ -389,11 +415,16 @@ class AuthController extends Controller
             return $raw;
         }
 
-        return Storage::disk(config('filesystems.default', 'local'))->url($raw);
+        return Storage::disk($this->publicUploadsDisk())->url($raw);
     }
 
     private function isStoredProfileImagePath(string $value): bool
     {
         return ! str_starts_with($value, 'http://') && ! str_starts_with($value, 'https://');
+    }
+
+    private function publicUploadsDisk(): string
+    {
+        return (string) config('filesystems.public_uploads_disk', 'public');
     }
 }

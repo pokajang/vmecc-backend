@@ -34,7 +34,7 @@ class TeamController extends Controller
             'image_url'  => $team->image_url
                 ? (str_starts_with($team->image_url, 'preset:')
                     ? $team->image_url
-                    : Storage::disk(config('filesystems.default', 'local'))->url($team->image_url))
+                    : Storage::disk($this->publicUploadsDisk())->url($team->image_url))
                 : null,
             'created_at' => $team->created_at,
             'updated_at' => $team->updated_at,
@@ -140,7 +140,7 @@ class TeamController extends Controller
             'image' => ['required', 'file', 'image', 'max:4096', 'mimes:jpeg,png,webp,gif'],
         ]);
 
-        $disk = config('filesystems.default', 'local');
+        $disk = $this->publicUploadsDisk();
 
         // Remove old uploaded image if present (presets are not stored on disk)
         if ($team->image_url && !str_starts_with($team->image_url, 'preset:')) {
@@ -190,7 +190,7 @@ class TeamController extends Controller
             $request->validate([
                 'image' => ['file', 'image', 'max:4096', 'mimes:jpeg,png,webp,gif'],
             ]);
-            $disk = config('filesystems.default', 'local');
+            $disk = $this->publicUploadsDisk();
             if ($team->image_url && !str_starts_with($team->image_url, 'preset:')) {
                 Storage::disk($disk)->delete($team->image_url);
             }
@@ -281,7 +281,7 @@ class TeamController extends Controller
 
         // Delete old image file after DB commit so an upload failure doesn't orphan the file reference
         if ($oldImageToDelete) {
-            Storage::disk(config('filesystems.default', 'local'))->delete($oldImageToDelete);
+            Storage::disk($this->publicUploadsDisk())->delete($oldImageToDelete);
         }
 
         // Send notifications outside the transaction so the DB is fully consistent if mail fails.
@@ -357,7 +357,7 @@ class TeamController extends Controller
 
         // 4. Delete uploaded cover image after DB commit (skip preset tokens)
         if ($imageToDelete) {
-            Storage::disk(config('filesystems.default', 'local'))->delete($imageToDelete);
+            Storage::disk($this->publicUploadsDisk())->delete($imageToDelete);
         }
 
         // 5. Notify each member that has a linked user account — outside the transaction
@@ -409,5 +409,10 @@ class TeamController extends Controller
         ]);
 
         return response()->json(null, 204);
+    }
+
+    private function publicUploadsDisk(): string
+    {
+        return (string) config('filesystems.public_uploads_disk', 'public');
     }
 }

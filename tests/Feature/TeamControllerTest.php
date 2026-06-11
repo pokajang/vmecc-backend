@@ -281,7 +281,7 @@ class TeamControllerTest extends TestCase
 
     public function test_upload_image_stores_file_and_updates_team(): void
     {
-        Storage::fake('local');
+        Storage::fake('public');
         $this->actingAsAdmin();
         $team = Team::factory()->create();
 
@@ -293,12 +293,12 @@ class TeamControllerTest extends TestCase
 
         $storedPath = $team->fresh()->image_url;
         $this->assertNotNull($storedPath);
-        Storage::disk('local')->assertExists($storedPath);
+        Storage::disk('public')->assertExists($storedPath);
     }
 
     public function test_upload_image_rejects_non_image_mime(): void
     {
-        Storage::fake('local');
+        Storage::fake('public');
         $this->actingAsAdmin();
         $team = Team::factory()->create();
 
@@ -311,7 +311,7 @@ class TeamControllerTest extends TestCase
 
     public function test_upload_image_rejects_file_over_4mb(): void
     {
-        Storage::fake('local');
+        Storage::fake('public');
         $this->actingAsAdmin();
         $team = Team::factory()->create();
 
@@ -327,7 +327,7 @@ class TeamControllerTest extends TestCase
 
     public function test_update_with_image_saves_members_and_image_atomically(): void
     {
-        Storage::fake('local');
+        Storage::fake('public');
         $this->actingAsAdmin();
 
         $team = Team::factory()->create();
@@ -346,9 +346,10 @@ class TeamControllerTest extends TestCase
             '_method' => 'PUT',
             'name'    => $team->name,
             'members' => $members,
-        ], [], ['image' => $file], [
+        ], $this->prepareCookiesForRequest(), ['image' => $file], [
             'CONTENT_TYPE' => 'multipart/form-data',
             'HTTP_ACCEPT' => 'application/json',
+            'HTTP_X_CSRF_TOKEN' => $this->sessionCsrfToken(),
         ]);
 
         $this->assertEquals(200, $response->getStatusCode(), $response->getContent());
@@ -362,12 +363,12 @@ class TeamControllerTest extends TestCase
         // Image was stored
         $storedPath = $team->fresh()->image_url;
         $this->assertNotNull($storedPath);
-        Storage::disk('local')->assertExists($storedPath);
+        Storage::disk('public')->assertExists($storedPath);
     }
 
     public function test_update_with_invalid_image_mime_is_rejected(): void
     {
-        Storage::fake('local');
+        Storage::fake('public');
         $this->actingAsAdmin();
 
         $team = Team::factory()->create();
@@ -377,9 +378,10 @@ class TeamControllerTest extends TestCase
             '_method' => 'PUT',
             'name'    => $team->name,
             'members' => '[]',
-        ], [], ['image' => $file], [
+        ], $this->prepareCookiesForRequest(), ['image' => $file], [
             'CONTENT_TYPE' => 'multipart/form-data',
             'HTTP_ACCEPT' => 'application/json',
+            'HTTP_X_CSRF_TOKEN' => $this->sessionCsrfToken(),
         ]);
 
         $this->assertEquals(422, $response->getStatusCode());

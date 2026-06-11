@@ -49,14 +49,14 @@ Route::get('auth/google/callback', [SocialAuthController::class, 'callback']);
 
 Route::post('password/forgot', [PasswordResetController::class, 'sendResetLink']);
 Route::post('password/reset', [PasswordResetController::class, 'reset']);
-Route::middleware(['session.auth', 'system.maintenance'])->post('auth/password', [AuthController::class, 'changePassword']);
-Route::middleware(['session.auth', 'system.maintenance'])->put('profile', [AuthController::class, 'updateProfile']);
-Route::middleware(['session.auth', 'system.maintenance'])->post('profile/image', [AuthController::class, 'uploadProfileImage']);
-Route::middleware(['session.auth', 'system.maintenance'])->delete('profile/image', [AuthController::class, 'deleteProfileImage']);
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->post('auth/password', [AuthController::class, 'changePassword']);
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->put('profile', [AuthController::class, 'updateProfile']);
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->post('profile/image', [AuthController::class, 'uploadProfileImage']);
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->delete('profile/image', [AuthController::class, 'deleteProfileImage']);
 Route::get('settings/system-maintenance', [SettingsController::class, 'getSystemMaintenance']);
-Route::middleware(['session.auth', 'system.maintenance'])->get('dashboard/me', [DashboardController::class, 'me'])
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->get('dashboard/me', [DashboardController::class, 'me'])
     ->middleware('permission.assignment:self.dashboard');
-Route::middleware(['session.auth', 'system.maintenance'])->prefix('stats')->group(function () {
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->prefix('stats')->group(function () {
     Route::get('payroll', [DashboardController::class, 'payrollStats'])
         ->middleware(['permission.assignment:self.dashboard', 'permission.assignment:dashboard.payroll.view']);
     Route::get('overtime', [DashboardController::class, 'overtimeStats'])
@@ -68,7 +68,7 @@ Route::middleware(['session.auth', 'system.maintenance'])->prefix('stats')->grou
     Route::get('reports', [DashboardController::class, 'reportStats'])
         ->middleware(['permission.assignment:self.dashboard', 'permission.assignment:dashboard.reports.view']);
 });
-Route::middleware(['session.auth', 'system.maintenance', 'permission.assignment:self.messages'])->group(function () {
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'permission.assignment:self.messages'])->group(function () {
     Route::get('messages/contacts', [MessageController::class, 'contacts']);
     Route::get('messages/threads', [MessageController::class, 'threads']);
     Route::get('messages/threads/{userId}', [MessageController::class, 'threadMessages']);
@@ -86,7 +86,7 @@ Route::middleware(['session.auth', 'system.maintenance', 'permission.assignment:
     Route::post('messages/{id}/read', [MessageController::class, 'markRead']);
 });
 
-    Route::middleware(['session.auth', 'system.maintenance'])->group(function () {
+    Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group(function () {
     Route::get('users', [UserManagementController::class, 'index'])
         ->middleware('permission.assignment:users.manage|staff.view|staff.manage|staff.leave.manage|staff.salary.manage|teams.view|teams.manage');
     Route::post('users', [UserManagementController::class, 'store'])->middleware('permission.assignment:users.manage');

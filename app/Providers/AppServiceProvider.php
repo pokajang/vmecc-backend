@@ -2,7 +2,9 @@
 
 namespace App\Providers;
 
+use App\Validation\SafeEmailValidator;
 use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -20,6 +22,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Validator::resolver(function ($translator, $data, $rules, $messages, $attributes) {
+            return new SafeEmailValidator($translator, $data, $rules, $messages, $attributes);
+        });
+
         ResetPassword::createUrlUsing(function ($user, string $token) {
             $baseUrl = rtrim(config('app.frontend_url', config('app.url')), '/');
 

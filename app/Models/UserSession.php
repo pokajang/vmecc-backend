@@ -26,6 +26,7 @@ class UserSession extends Model
         'revoked_at',
         'revoked_by',
         'revoke_reason',
+        'csrf_token_hash',
     ];
 
     protected $casts = [

@@ -432,6 +432,6 @@ class OvertimeManagementController extends Controller
         if (str_starts_with($raw, 'http://') || str_starts_with($raw, 'https://')) {
             return $raw;
         }
-        return Storage::disk(config('filesystems.default', 'local'))->url($raw);
+        return Storage::disk(config('filesystems.public_uploads_disk', 'public'))->url($raw);
     }
 }

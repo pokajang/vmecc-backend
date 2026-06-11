@@ -24,7 +24,7 @@ class SessionAuth
 
             if ($session && $session->user) {
                 $user = $session->user;
-                if ($user->trashed() || $user->status !== 'Active' || $user->locked_at) {
+                if ($user->trashed() || strcasecmp((string) $user->status, 'Active') !== 0 || $user->locked_at) {
                     $session->forceFill([
                         'logged_out_at' => now(),
                         'revoked_at' => now(),
@@ -37,6 +37,7 @@ class SessionAuth
                     }
                     // Make the user available to the current request/guards
                     Auth::setUser($user);
+                    $request->attributes->set('user_session', $session);
                 }
             } elseif ($session) {
                 $session->forceFill([
@@ -51,9 +52,23 @@ class SessionAuth
         $response = $next($request);
 
         if ($shouldForget) {
-            return $response->withCookie(cookie()->forget('vmecc_session'));
+            return $response->withCookie($this->forgetSessionCookie());
         }
 
         return $response;
+    }
+
+    private function forgetSessionCookie()
+    {
+        return cookie(
+            name: 'vmecc_session',
+            value: '',
+            minutes: -2628000,
+            path: '/',
+            domain: config('session.domain'),
+            secure: (bool) config('session.secure'),
+            httpOnly: true,
+            sameSite: 'lax'
+        );
     }
 }
