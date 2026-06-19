@@ -72,6 +72,14 @@ class ReleaseHardeningTest extends TestCase
         $this
             ->withCredentials()
             ->withUnencryptedCookie('vmecc_session', $sessionCookie->getValue())
+            ->withHeader('X-CSRF-Token', 'invalid-token')
+            ->putJson('/api/profile', ['name' => 'Invalid Token Update'])
+            ->assertStatus(419)
+            ->assertJsonPath('message', 'CSRF token mismatch.');
+
+        $this
+            ->withCredentials()
+            ->withUnencryptedCookie('vmecc_session', $sessionCookie->getValue())
             ->withHeader('X-CSRF-Token', (string) $loginResponse->json('csrf_token'))
             ->putJson('/api/profile', ['name' => 'Allowed Update'])
             ->assertOk()
