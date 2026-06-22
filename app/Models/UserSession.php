@@ -27,6 +27,8 @@ class UserSession extends Model
         'revoked_by',
         'revoke_reason',
         'csrf_token_hash',
+        'remember_token_hash',
+        'remember_expires_at',
     ];
 
     protected $casts = [
@@ -34,6 +36,7 @@ class UserSession extends Model
         'logged_out_at' => 'datetime',
         'last_seen_at' => 'datetime',
         'revoked_at' => 'datetime',
+        'remember_expires_at' => 'datetime',
     ];
 
     public function user(): BelongsTo

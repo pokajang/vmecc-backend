@@ -25,7 +25,7 @@ abstract class TestCase extends BaseTestCase
             'ip_address' => '127.0.0.1',
             'user_agent' => 'phpunit',
             'last_seen_at' => now(),
-            'expires_at' => now()->addHours(2),
+            'expires_at' => now()->addMinutes((int) config('session.lifetime', 720)),
             'csrf_token_hash' => hash('sha256', $token),
         ]);
 

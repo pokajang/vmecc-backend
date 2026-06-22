@@ -49,4 +49,9 @@ return [
         static fn ($email) => trim((string) $email),
         explode(',', (string) env('FEATURE_HOLIDAY_GUIDANCE_COHORT_EMAILS', ''))
     ))),
+    'module_activation_force_all_enabled' => filter_var(
+        env('MODULE_ACTIVATION_FORCE_ALL_ENABLED', false),
+        FILTER_VALIDATE_BOOL,
+        FILTER_NULL_ON_FAILURE
+    ) ?? false,
 ];

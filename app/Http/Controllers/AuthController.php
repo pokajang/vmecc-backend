@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\UserSession;
 use App\Models\LoginAttempt;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\AuthSessionService;
 use App\Support\MalaysiaStateCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,16 +17,23 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
-    private const SESSION_COOKIE = 'vmecc_session';
-    private const SESSION_LIFETIME_MINUTES = 120;
     private const MAX_FAILED_ATTEMPTS = 5;
+
+    public function __construct(private readonly AuthSessionService $sessions)
+    {
+    }
 
     public function login(Request $request): JsonResponse
     {
-        $credentials = $request->validate([
+        $data = $request->validate([
             'email' => ['required', 'email'],
             'password' => ['required', 'string'],
+            'remember' => ['sometimes', 'boolean'],
         ]);
+        $credentials = [
+            'email' => $data['email'],
+            'password' => $data['password'],
+        ];
 
         $ip = $request->ip();
         $ua = substr((string) $request->userAgent(), 0, 255);
@@ -64,13 +72,26 @@ class AuthController extends Controller
             }
             $user->forceFill($update)->save();
 
+            if ($nextCount >= self::MAX_FAILED_ATTEMPTS) {
+                UserSession::where('user_id', $user->id)
+                    ->whereNull('revoked_at')
+                    ->update([
+                        'logged_out_at' => now(),
+                        'revoked_at' => now(),
+                        'revoke_reason' => 'too_many_attempts',
+                        'remember_token_hash' => null,
+                        'remember_expires_at' => null,
+                    ]);
+            }
+
             $this->logAttempt($user, $credentials['email'], 'Failed', 'Invalid credentials', $ip, $ua, $deviceId, $deviceInfo);
             throw ValidationException::withMessages([
                 'email' => [__('auth.failed')],
             ]);
         }
 
-        $session = $this->createSession($user, $request);
+        $created = $this->sessions->createSession($user, $request, (bool) ($data['remember'] ?? false));
+        $session = $created['session'];
         $csrfToken = $this->refreshCsrfToken($session);
         $user->forceFill([
             'last_login_at' => now(),
@@ -81,68 +102,75 @@ class AuthController extends Controller
         ])->save();
         $this->logAttempt($user, $credentials['email'], 'Success', null, $ip, $ua, $deviceId, $deviceInfo);
 
-        return $this->respondWithUser($user, $csrfToken)->withCookie($this->buildSessionCookie($session->id));
+        $response = $this->respondWithUser($user, $csrfToken)
+            ->withCookie($this->sessions->buildSessionCookie($session->id));
+
+        if ($created['remember_token']) {
+            $response->withCookie($this->sessions->buildRememberCookie($session, $created['remember_token']));
+        }
+
+        return $response;
     }
 
     public function session(Request $request): JsonResponse
     {
-        $sessionId = $request->cookie(self::SESSION_COOKIE);
+        $sessionId = $request->cookie(AuthSessionService::SESSION_COOKIE);
 
-        if (! $sessionId) {
-            return response()->json(['message' => 'Unauthenticated'], 401);
+        $session = $sessionId
+            ? UserSession::with(['user' => fn ($query) => $query->withTrashed()])
+                ->where('id', $sessionId)
+                ->whereNull('logged_out_at')
+                ->whereNull('revoked_at')
+                ->where('expires_at', '>', now())
+                ->first()
+            : null;
+
+        $restored = null;
+        if (! $session) {
+            $restored = $this->sessions->restoreRememberedSession($request);
+            $session = $restored['session'] ?? null;
         }
-
-        $session = UserSession::with(['user' => fn ($query) => $query->withTrashed()])
-            ->where('id', $sessionId)
-            ->whereNull('logged_out_at')
-            ->whereNull('revoked_at')
-            ->where('expires_at', '>', now())
-            ->first();
 
         if (! $session || ! $session->user) {
             return response()->json(['message' => 'Unauthenticated'], 401)
-                ->withCookie($this->forgetSessionCookie());
+                ->withCookie($this->sessions->forgetSessionCookie())
+                ->withCookie($this->sessions->forgetRememberCookie());
         }
 
         $user = $session->user;
-        if ($user->locked_at) {
-            UserSession::where('id', $sessionId)->update([
-                'logged_out_at' => now(),
-                'revoked_at' => now(),
-                'revoke_reason' => 'locked',
-            ]);
-            return response()->json(['message' => 'Unauthenticated'], 401)
-                ->withCookie($this->forgetSessionCookie());
-        }
-        if ($user->trashed() || strcasecmp((string) $user->status, 'Active') !== 0) {
+        if (! $this->sessions->isUserEligible($user)) {
             $session->forceFill([
                 'logged_out_at' => now(),
                 'revoked_at' => now(),
-                'revoke_reason' => $user->trashed() ? 'terminated' : 'inactive',
+                'revoke_reason' => $this->sessions->userIneligibleReason($user),
+                'remember_token_hash' => null,
+                'remember_expires_at' => null,
             ])->save();
 
             return response()->json(['message' => 'Unauthenticated'], 401)
-                ->withCookie($this->forgetSessionCookie());
+                ->withCookie($this->sessions->forgetSessionCookie())
+                ->withCookie($this->sessions->forgetRememberCookie());
         }
 
-        return $this->respondWithUser($user, $this->refreshCsrfToken($session));
+        $response = $this->respondWithUser($user, $this->refreshCsrfToken($session));
+        if ($restored && $restored['remember_token']) {
+            $response
+                ->withCookie($this->sessions->buildSessionCookie($session->id))
+                ->withCookie($this->sessions->buildRememberCookie($session, $restored['remember_token']));
+        }
+
+        return $response;
     }
 
     public function logout(Request $request): JsonResponse
     {
-        $sessionId = $request->cookie(self::SESSION_COOKIE);
-
-        if ($sessionId) {
-            UserSession::where('id', $sessionId)->update([
-                'logged_out_at' => now(),
-                'revoked_at' => now(),
-                'revoke_reason' => 'logout',
-            ]);
-        }
+        $this->sessions->invalidateSession($request->cookie(AuthSessionService::SESSION_COOKIE), 'logout');
+        $this->sessions->invalidateRememberCookie($request->cookie(AuthSessionService::REMEMBER_COOKIE), 'logout');
 
         return response()
             ->json(['message' => 'Logged out'])
-            ->withCookie($this->forgetSessionCookie());
+            ->withCookie($this->sessions->forgetSessionCookie())
+            ->withCookie($this->sessions->forgetRememberCookie());
     }
 
     public function changePassword(Request $request): JsonResponse
@@ -170,24 +198,14 @@ class AuthController extends Controller
             'logged_out_at' => now(),
             'revoked_at' => now(),
             'revoke_reason' => 'password_change',
+            'remember_token_hash' => null,
+            'remember_expires_at' => null,
         ]);
 
         return response()
             ->json(['message' => 'Password updated. Please sign in again.'])
-            ->withCookie($this->forgetSessionCookie());
-    }
-
-    private function createSession(User $user, Request $request): UserSession
-    {
-        return UserSession::create([
-            'id' => (string) Str::uuid(),
-            'user_id' => $user->id,
-            'ip_address' => $request->ip(),
-            'user_agent' => substr((string) $request->userAgent(), 0, 255),
-            'device_id' => $request->header('X-Client-Id'),
-            'expires_at' => now()->addMinutes(self::SESSION_LIFETIME_MINUTES),
-            'last_seen_at' => now(),
-        ]);
+            ->withCookie($this->sessions->forgetSessionCookie())
+            ->withCookie($this->sessions->forgetRememberCookie());
     }
 
     private function respondWithUser(User $user, ?string $csrfToken = null): JsonResponse
@@ -352,20 +370,6 @@ class AuthController extends Controller
         return $this->respondWithUser($user->fresh());
     }
 
-    private function buildSessionCookie(string $sessionId)
-    {
-        return cookie(
-            name: self::SESSION_COOKIE,
-            value: $sessionId,
-            minutes: self::SESSION_LIFETIME_MINUTES,
-            path: '/',
-            domain: config('session.domain'),
-            secure: (bool) config('session.secure'),
-            httpOnly: true,
-            sameSite: 'lax'
-        );
-    }
-
     private function refreshCsrfToken(UserSession $session): string
     {
         $token = Str::random(64);
@@ -374,20 +378,6 @@ class AuthController extends Controller
         ])->save();
 
         return $token;
-    }
-
-    private function forgetSessionCookie()
-    {
-        return cookie(
-            name: self::SESSION_COOKIE,
-            value: '',
-            minutes: -2628000,
-            path: '/',
-            domain: config('session.domain'),
-            secure: (bool) config('session.secure'),
-            httpOnly: true,
-            sameSite: 'lax'
-        );
     }
 
     private function logAttempt(?User $user, string $email, string $status, ?string $reason, ?string $ip, ?string $ua, ?string $deviceId, ?string $deviceInfo): void

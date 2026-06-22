@@ -71,6 +71,7 @@ class Kernel extends HttpKernel
         'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
         'permission.assignment' => \App\Http\Middleware\PermissionAssignmentMiddleware::class,
         'permission.assignment.scope' => \App\Http\Middleware\PermissionAssignmentScopeMiddleware::class,
+        'module.enabled' => \App\Http\Middleware\EnsureModuleEnabled::class,
         'session.csrf' => \App\Http\Middleware\VerifySessionCsrfToken::class,
         'system.maintenance' => \App\Http\Middleware\SystemMaintenanceMiddleware::class,
     ];

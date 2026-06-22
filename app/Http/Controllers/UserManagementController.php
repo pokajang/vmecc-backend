@@ -76,6 +76,8 @@ class UserManagementController extends Controller
                 'logged_out_at' => now(),
                 'revoked_by' => $request->user()?->id,
                 'revoke_reason' => $request->input('reason'),
+                'remember_token_hash' => null,
+                'remember_expires_at' => null,
             ])->save();
 
             AuditLogger::log($request, 'user_session_revoked', $user, [
@@ -98,6 +100,8 @@ class UserManagementController extends Controller
                 'logged_out_at' => now(),
                 'revoked_by' => $request->user()?->id,
                 'revoke_reason' => $request->input('reason'),
+                'remember_token_hash' => null,
+                'remember_expires_at' => null,
             ]);
 
         AuditLogger::log($request, 'user_sessions_revoked_all', $user, [
@@ -803,6 +807,8 @@ class UserManagementController extends Controller
                 'revoked_at' => now(),
                 'revoked_by' => $request->user()?->id,
                 'revoke_reason' => $reason,
+                'remember_token_hash' => null,
+                'remember_expires_at' => null,
             ]);
 
         AuditLogger::log($request, 'user_sessions_revoked_all', $user, [

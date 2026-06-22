@@ -4,24 +4,29 @@ namespace App\Http\Controllers;
 
 use App\Models\LoginAttempt;
 use App\Models\User;
-use App\Models\UserSession;
+use App\Services\AuthSessionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Crypt;
 use Laravel\Socialite\Facades\Socialite;
 use Symfony\Component\HttpFoundation\Response;
 
 class SocialAuthController extends Controller
 {
-    private const SESSION_COOKIE = 'vmecc_session';
-    private const SESSION_LIFETIME_MINUTES = 120;
-
-    public function redirect(): JsonResponse
+    public function __construct(private readonly AuthSessionService $sessions)
     {
+    }
+
+    public function redirect(Request $request): JsonResponse
+    {
+        $state = Crypt::encryptString(json_encode([
+            'remember' => $request->boolean('remember'),
+        ]));
+
         $url = Socialite::driver('google')
             ->stateless()
+            ->with(['state' => $state])
             ->redirect()
             ->getTargetUrl();
 
@@ -34,6 +39,7 @@ class SocialAuthController extends Controller
         $ua = substr((string) $request->userAgent(), 0, 255);
         $deviceId = $request->header('X-Client-Id');
         $deviceInfo = $ua;
+        $remember = $this->rememberRequested($request);
 
         try {
             $googleUser = Socialite::driver('google')->stateless()->user();
@@ -55,12 +61,19 @@ class SocialAuthController extends Controller
             return $this->redirectToFrontend('error', 'Your account is not enabled for Google sign-in. Please try logging in with your email and password.');
         }
 
-        $session = $this->createSession($user, $request);
+        $created = $this->sessions->createSession($user, $request, $remember);
+        $session = $created['session'];
         $user->forceFill(['last_login_at' => now()])->save();
         $this->logAttempt($user, $googleUser->getEmail(), 'Success', null, $ip, $ua, $deviceId, $deviceInfo);
 
-        return $this->redirectToFrontend('success')
-            ->withCookie($this->buildSessionCookie($session->id));
+        $response = $this->redirectToFrontend('success')
+            ->withCookie($this->sessions->buildSessionCookie($session->id));
+
+        if ($created['remember_token']) {
+            $response->withCookie($this->sessions->buildRememberCookie($session, $created['remember_token']));
+        }
+
+        return $response;
     }
 
     private function redirectToFrontend(string $status, ?string $message = null): RedirectResponse
@@ -74,31 +87,20 @@ class SocialAuthController extends Controller
         return redirect()->away($query ? "{$base}/login?{$query}" : "{$base}/login", Response::HTTP_TEMPORARY_REDIRECT);
     }
 
-    private function createSession(User $user, Request $request): UserSession
+    private function rememberRequested(Request $request): bool
     {
-        return UserSession::create([
-            'id' => (string) Str::uuid(),
-            'user_id' => $user->id,
-            'ip_address' => $request->ip(),
-            'user_agent' => substr((string) $request->userAgent(), 0, 255),
-            'device_id' => $request->header('X-Client-Id'),
-            'expires_at' => now()->addMinutes(self::SESSION_LIFETIME_MINUTES),
-            'last_seen_at' => now(),
-        ]);
-    }
+        $state = (string) $request->query('state', '');
+        if ($state === '') {
+            return false;
+        }
 
-    private function buildSessionCookie(string $sessionId)
-    {
-        return cookie(
-            name: self::SESSION_COOKIE,
-            value: $sessionId,
-            minutes: self::SESSION_LIFETIME_MINUTES,
-            path: '/',
-            domain: config('session.domain'),
-            secure: (bool) config('session.secure'),
-            httpOnly: true,
-            sameSite: 'lax'
-        );
+        try {
+            $payload = json_decode(Crypt::decryptString($state), true, flags: JSON_THROW_ON_ERROR);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        return (bool) ($payload['remember'] ?? false);
     }
 
     private function logAttempt(?User $user, string $email, string $status, ?string $reason, ?string $ip, ?string $ua, ?string $deviceId, ?string $deviceInfo): void
