@@ -53,6 +53,7 @@ class UserManagementController extends Controller
                     'ip_address' => $session->ip_address,
                     'user_agent' => $session->user_agent,
                     'device_id' => $session->device_id,
+                    'client_mode' => $session->client_mode,
                     'created_at' => optional($session->created_at)->toIso8601String(),
                     'last_seen_at' => optional($session->last_seen_at)->toIso8601String(),
                     'expires_at' => optional($session->expires_at)->toIso8601String(),
@@ -111,10 +112,14 @@ class UserManagementController extends Controller
         return response()->json(['message' => 'All sessions revoked.']);
     }
 
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         $teamMap = TeamMember::with('team')->get()->groupBy('user_id');
         $includeDeleted = request()->boolean('include_deleted');
+        $canViewSensitiveManagementFields = $this->authorizationService->hasPermission(
+            $request->user(),
+            'users.manage'
+        );
 
         $query = User::query();
         if ($includeDeleted) {
@@ -124,7 +129,7 @@ class UserManagementController extends Controller
         $users = $query
             ->orderBy('name')
             ->get()
-            ->map(fn (User $user) => $this->formatUserPayload($user, $teamMap));
+            ->map(fn (User $user) => $this->formatUserPayload($user, $teamMap, $canViewSensitiveManagementFields));
 
         return response()->json(['data' => $users]);
     }
@@ -728,8 +733,31 @@ class UserManagementController extends Controller
             ->all();
     }
 
-    private function formatUserPayload(User $user, $teamMap = null): array
+    private function formatUserPayload(User $user, $teamMap = null, bool $includeSensitiveManagementFields = true): array
     {
+        $teamEntry = $teamMap?->get($user->id)?->first();
+        $teamName = $teamEntry?->team?->name ?? $user->team;
+        $teamStatus = $teamEntry?->team?->status ?? null;
+
+        $payload = [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'state' => MalaysiaStateCatalog::normalize($user->state),
+            'profile_image_url' => $this->resolveProfileImageUrl($user->profile_image_url),
+            'team' => $teamName,
+            'team_status' => $teamStatus,
+            'status' => $user->status,
+            'created_at' => optional($user->created_at)->toIso8601String(),
+            'deleted_at' => optional($user->deleted_at)->toIso8601String(),
+            'roles' => $this->authorizationService->getActiveRoleNames($user)->values()->all(),
+        ];
+
+        if (! $includeSensitiveManagementFields) {
+            return $payload;
+        }
+
         $lastLogin = $user->last_login_at;
         if (! $lastLogin) {
             $lastLogin = UserSession::where('user_id', $user->id)
@@ -739,7 +767,7 @@ class UserManagementController extends Controller
         $loginRecords = LoginAttempt::where('user_id', $user->id)
             ->latest()
             ->limit(10)
-            ->get(['created_at as timestamp', 'status', 'reason', 'ip_address', 'user_agent', 'device_id', 'device_info'])
+            ->get(['created_at as timestamp', 'status', 'reason', 'ip_address', 'user_agent', 'device_id', 'device_info', 'client_mode'])
             ->map(function ($record) {
                 return [
                     'timestamp' => $record->timestamp,
@@ -749,27 +777,13 @@ class UserManagementController extends Controller
                     'user_agent' => $record->user_agent,
                     'device_id' => $record->device_id,
                     'device_info' => $record->device_info,
+                    'client_mode' => $record->client_mode,
                 ];
             });
 
-        $teamEntry = $teamMap?->get($user->id)?->first();
-        $teamName = $teamEntry?->team?->name ?? $user->team;
-        $teamStatus = $teamEntry?->team?->status ?? null;
-
-        return [
-            'id' => $user->id,
-            'name' => $user->name,
-            'email' => $user->email,
+        return array_merge($payload, [
             'ic_number' => $user->ic_number,
-            'phone' => $user->phone,
             'address' => $user->address,
-            'state' => MalaysiaStateCatalog::normalize($user->state),
-            'profile_image_url' => $this->resolveProfileImageUrl($user->profile_image_url),
-            'team' => $teamName,
-            'team_status' => $teamStatus,
-            'status' => $user->status,
-            'created_at' => optional($user->created_at)->toIso8601String(),
-            'deleted_at' => optional($user->deleted_at)->toIso8601String(),
             'last_login_at' => $lastLogin,
             'failed_login_count' => (int) ($user->failed_login_count ?? 0),
             'locked_at' => optional($user->locked_at)->toIso8601String(),
@@ -779,10 +793,9 @@ class UserManagementController extends Controller
             'banking_info' => $user->banking_info,
             'statutory_info' => $user->statutory_info,
             'medical_info' => $user->medical_info,
-            'roles' => $this->authorizationService->getActiveRoleNames($user)->values()->all(),
             'permissions' => $this->authorizationService->getActivePermissionNames($user)->values()->all(),
             'role_assignments' => $this->authorizationService->getRoleAssignmentsPayload($user),
-        ];
+        ]);
     }
 
     private function resolveProfileImageUrl(?string $value): ?string

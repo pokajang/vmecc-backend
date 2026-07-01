@@ -1,0 +1,25 @@
+<?php
+
+return [
+    'enabled' => env('AI_HELPER_ENABLED', false),
+    'model' => env('OPENAI_HELPER_MODEL', 'gpt-5.4-mini'),
+    'api_key' => env('OPENAI_API_KEY'),
+    'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+    'timeout' => (int) env('AI_HELPER_TIMEOUT_SECONDS', 60),
+    'max_message_length' => (int) env('AI_HELPER_MAX_MESSAGE_LENGTH', 2000),
+    'knowledge_upload_max_kb' => (int) env('AI_HELPER_KNOWLEDGE_UPLOAD_MAX_KB', 10240),
+    'markdown_upload_max_kb' => (int) env('AI_HELPER_MARKDOWN_UPLOAD_MAX_KB', 1024),
+    'knowledge_extract_max_characters' => (int) env('AI_HELPER_KNOWLEDGE_EXTRACT_MAX_CHARACTERS', 30000),
+    'knowledge_chunk_characters' => (int) env('AI_HELPER_KNOWLEDGE_CHUNK_CHARACTERS', 1000),
+    'knowledge_max_chunks_per_entry' => (int) env('AI_HELPER_KNOWLEDGE_MAX_CHUNKS_PER_ENTRY', 40),
+    'knowledge_retrieval_limit' => (int) env('AI_HELPER_KNOWLEDGE_RETRIEVAL_LIMIT', 6),
+    'knowledge_require_shared_review' => env('AI_HELPER_KNOWLEDGE_REQUIRE_SHARED_REVIEW', true),
+    'knowledge_max_active_uploads_per_user' => (int) env('AI_HELPER_KNOWLEDGE_MAX_ACTIVE_UPLOADS_PER_USER', 100),
+    'knowledge_max_upload_bytes_per_user' => (int) env('AI_HELPER_KNOWLEDGE_MAX_UPLOAD_BYTES_PER_USER', 2147483648),
+    'knowledge_max_total_upload_bytes' => (int) env('AI_HELPER_KNOWLEDGE_MAX_TOTAL_UPLOAD_BYTES', 21474836480),
+    'knowledge_deleted_retention_days' => (int) env('AI_HELPER_KNOWLEDGE_DELETED_RETENTION_DAYS', 30),
+    'knowledge_failed_retention_days' => (int) env('AI_HELPER_KNOWLEDGE_FAILED_RETENTION_DAYS', 14),
+    'history_turns' => (int) env('AI_HELPER_HISTORY_TURNS', 12),
+    'history_max_characters' => (int) env('AI_HELPER_HISTORY_MAX_CHARACTERS', 12000),
+    'rate_limit_per_minute' => (int) env('AI_HELPER_RATE_LIMIT_PER_MINUTE', 12),
+];

@@ -34,11 +34,18 @@ use App\Http\Controllers\SalaryAssignmentController;
 use App\Http\Controllers\SalaryAssignmentDraftController;
 use App\Http\Controllers\OtPayrollMigrationController;
 use App\Http\Controllers\HolidayController;
+use App\Http\Controllers\DrillReportPdfController;
 use App\Http\Controllers\ErcoReportPdfController;
 use App\Http\Controllers\InspectionReportPdfController;
+use App\Http\Controllers\InspectionEquipmentController;
+use App\Http\Controllers\InspectionFireExtinguisherController;
+use App\Http\Controllers\InspectionLocationController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportDraftController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\FeedbackReportController;
+use App\Http\Controllers\AiHelperController;
+use App\Http\Controllers\OnboardingStateController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('auth/login', [AuthController::class, 'login']);
@@ -54,9 +61,19 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->post(
 Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->put('profile', [AuthController::class, 'updateProfile']);
 Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->post('profile/image', [AuthController::class, 'uploadProfileImage']);
 Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->delete('profile/image', [AuthController::class, 'deleteProfileImage']);
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->prefix('onboarding')->group(function () {
+    Route::get('states', [OnboardingStateController::class, 'index']);
+    Route::post('states/{key}', [OnboardingStateController::class, 'store']);
+});
 Route::get('settings/system-maintenance', [SettingsController::class, 'getSystemMaintenance']);
 Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->get('dashboard/me', [DashboardController::class, 'me'])
     ->middleware('permission.assignment:self.dashboard');
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->post('feedback-reports', [FeedbackReportController::class, 'store']);
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'permission.assignment:*'])->group(function () {
+    Route::get('feedback-reports', [FeedbackReportController::class, 'index']);
+    Route::get('feedback-reports/{reportId}', [FeedbackReportController::class, 'show']);
+    Route::patch('feedback-reports/{reportId}', [FeedbackReportController::class, 'update']);
+});
 Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->prefix('stats')->group(function () {
     Route::get('payroll', [DashboardController::class, 'payrollStats'])
         ->middleware(['module.enabled:dashboard.payroll', 'permission.assignment:self.dashboard', 'permission.assignment:dashboard.payroll.view']);
@@ -69,6 +86,35 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->prefi
     Route::get('reports', [DashboardController::class, 'reportStats'])
         ->middleware(['permission.assignment:self.dashboard', 'permission.assignment:dashboard.reports.view']);
 });
+
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'throttle:ai-helper'])
+    ->prefix('ai-helper')
+    ->group(function () {
+        Route::get('context', [AiHelperController::class, 'context']);
+        Route::get('threads', [AiHelperController::class, 'threads']);
+        Route::get('thread', [AiHelperController::class, 'thread']);
+        Route::delete('threads/{threadId}', [AiHelperController::class, 'destroyThread']);
+        Route::get('knowledge', [AiHelperController::class, 'knowledge']);
+        Route::get('knowledge/{knowledgeId}', [AiHelperController::class, 'knowledgeDetail']);
+        Route::get('knowledge/{knowledgeId}/file', [AiHelperController::class, 'knowledgeFile']);
+        Route::post('knowledge', [AiHelperController::class, 'uploadKnowledge']);
+        Route::patch('knowledge/{knowledgeId}', [AiHelperController::class, 'updateKnowledge']);
+        Route::delete('knowledge/{knowledgeId}', [AiHelperController::class, 'destroyKnowledge']);
+        Route::post('messages/{messageId}/report', [AiHelperController::class, 'reportMessage']);
+        Route::post('messages/stream', [AiHelperController::class, 'stream']);
+        Route::middleware('permission.assignment:*')->group(function () {
+            Route::get('diagnostics', [AiHelperController::class, 'diagnostics']);
+            Route::post('knowledge/markdown', [AiHelperController::class, 'uploadMarkdownKnowledge']);
+            Route::get('knowledge-review', [AiHelperController::class, 'adminKnowledge']);
+            Route::get('knowledge-review/{knowledgeId}', [AiHelperController::class, 'adminKnowledgeDetail']);
+            Route::patch('knowledge-review/{knowledgeId}', [AiHelperController::class, 'updateAdminKnowledge']);
+            Route::delete('knowledge-review/{knowledgeId}', [AiHelperController::class, 'destroyAdminKnowledge']);
+            Route::get('reports', [AiHelperController::class, 'reports']);
+            Route::get('reports/{reportId}', [AiHelperController::class, 'report']);
+            Route::patch('reports/{reportId}', [AiHelperController::class, 'updateReport']);
+        });
+    });
+
 Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'module.enabled:messages', 'permission.assignment:self.messages'])->group(function () {
     Route::get('messages/contacts', [MessageController::class, 'contacts']);
     Route::get('messages/threads', [MessageController::class, 'threads']);
@@ -89,7 +135,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'module
 
     Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group(function () {
     Route::get('users', [UserManagementController::class, 'index'])
-        ->middleware('permission.assignment:users.manage|staff.view|staff.manage|staff.leave.manage|staff.salary.manage|teams.view|teams.manage');
+        ->middleware('permission.assignment:users.manage|staff.view|staff.manage|staff.leave.manage|staff.salary.manage');
     Route::post('users', [UserManagementController::class, 'store'])->middleware('permission.assignment:users.manage');
     Route::post('users/{id}/status', [UserManagementController::class, 'toggleStatus'])->middleware('permission.assignment:users.manage');
     Route::post('users/{id}/role', [UserManagementController::class, 'updateRole'])->middleware('permission.assignment:roles.assign');
@@ -112,6 +158,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'module
 
     Route::get('teams', [TeamController::class, 'index'])->middleware('permission.assignment:teams.view');
     Route::post('teams', [TeamController::class, 'store'])->middleware('permission.assignment:teams.manage');
+    Route::get('teams/member-options', [TeamController::class, 'memberOptions'])->middleware('permission.assignment:teams.manage');
     Route::get('teams/{team}', [TeamController::class, 'show'])->middleware('permission.assignment.scope:teams.view,team');
     Route::put('teams/{team}', [TeamController::class, 'update'])->middleware('permission.assignment.scope:teams.manage,team');
     Route::post('teams/{team}', [TeamController::class, 'update'])->middleware('permission.assignment.scope:teams.manage,team'); // multipart method-spoofing path
@@ -127,7 +174,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'module
     Route::get('settings/modules', [ModuleActivationController::class, 'show']);
     Route::put('settings/modules', [ModuleActivationController::class, 'update'])->middleware('permission.assignment:settings.manage');
 
-    Route::get('settings/shift-windows', [SettingsController::class, 'getShiftWindows'])->middleware('permission.assignment:settings.manage|staff.leave.manage|staff.salary.manage');
+    Route::get('settings/shift-windows', [SettingsController::class, 'getShiftWindows'])->middleware('permission.assignment:settings.manage|staff.leave.manage|staff.salary.manage|rosters.manage|teams.view');
     Route::post('settings/shift-windows', [SettingsController::class, 'updateShiftWindows'])->middleware('permission.assignment:settings.manage|staff.leave.manage|staff.salary.manage');
 
     Route::get('settings/custom-shifts', [SettingsController::class, 'getCustomShifts'])->middleware('permission.assignment:settings.manage|staff.leave.manage|staff.salary.manage');
@@ -140,6 +187,10 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'module
     Route::post('settings/leave-approval-rules', [SettingsController::class, 'updateLeaveApprovalRules'])->middleware('permission.assignment:settings.manage');
     Route::get('settings/overtime-approval-rules', [SettingsController::class, 'getOvertimeApprovalRules'])->middleware('permission.assignment:settings.manage');
     Route::post('settings/overtime-approval-rules', [SettingsController::class, 'updateOvertimeApprovalRules'])->middleware('permission.assignment:settings.manage');
+    Route::get('settings/inspection-workflow-rules', [SettingsController::class, 'getInspectionWorkflowRules'])->middleware('permission.assignment:settings.manage');
+    Route::post('settings/inspection-workflow-rules', [SettingsController::class, 'updateInspectionWorkflowRules'])->middleware('permission.assignment:settings.manage');
+    Route::get('settings/reporting-workflow-rules', [SettingsController::class, 'getReportingWorkflowRules'])->middleware('permission.assignment:settings.manage');
+    Route::post('settings/reporting-workflow-rules', [SettingsController::class, 'updateReportingWorkflowRules'])->middleware('permission.assignment:settings.manage');
     Route::get('settings/overtime-rate-settings', [SettingsController::class, 'getOvertimeRateSettings'])->middleware('permission.assignment:settings.manage');
     Route::post('settings/overtime-rate-settings', [SettingsController::class, 'updateOvertimeRateSettings'])->middleware('permission.assignment:settings.manage');
     Route::get('settings/salary-workflow-rules', [SettingsController::class, 'getSalaryWorkflowRules'])->middleware(['module.enabled:payroll.workflow_rules', 'permission.assignment:settings.manage']);
@@ -161,7 +212,20 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'module
     Route::delete('workflow/notifications/{id}', [WorkflowNotificationController::class, 'dismiss']);
 
     Route::post('reports/erco/pdf', [ErcoReportPdfController::class, 'download']);
+    Route::post('reports/drill/pdf', [DrillReportPdfController::class, 'download']);
     Route::post('reports/inspection/pdf', [InspectionReportPdfController::class, 'download']);
+    Route::get('inspection/location-options', [InspectionLocationController::class, 'index']);
+    Route::post('inspection/locations', [InspectionLocationController::class, 'store']);
+    Route::patch('inspection/locations/{locationId}', [InspectionLocationController::class, 'update']);
+    Route::delete('inspection/locations/{locationId}', [InspectionLocationController::class, 'destroy']);
+    Route::get('inspection/equipment-options', [InspectionEquipmentController::class, 'index']);
+    Route::post('inspection/equipment', [InspectionEquipmentController::class, 'store']);
+    Route::patch('inspection/equipment/{equipmentId}', [InspectionEquipmentController::class, 'update']);
+    Route::delete('inspection/equipment/{equipmentId}', [InspectionEquipmentController::class, 'destroy']);
+    Route::get('inspection/fire-extinguishers', [InspectionFireExtinguisherController::class, 'index']);
+    Route::post('inspection/fire-extinguishers', [InspectionFireExtinguisherController::class, 'store']);
+    Route::patch('inspection/fire-extinguishers/{extinguisherId}', [InspectionFireExtinguisherController::class, 'update']);
+    Route::delete('inspection/fire-extinguishers/{extinguisherId}', [InspectionFireExtinguisherController::class, 'destroy']);
     Route::get('reports/draft', [ReportDraftController::class, 'show']);
     Route::post('reports/draft', [ReportDraftController::class, 'store']);
     Route::delete('reports/draft', [ReportDraftController::class, 'destroy']);
@@ -172,6 +236,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'module
     Route::delete('reports/drafts/{draftId}', [ReportDraftController::class, 'destroyById']);
     Route::get('reports', [ReportController::class, 'index']);
     Route::post('reports', [ReportController::class, 'store']);
+    Route::get('reports/inspection/checklist-summary', [ReportController::class, 'inspectionChecklistSummary']);
     Route::get('reports/{reportUid}', [ReportController::class, 'show']);
     Route::put('reports/{reportUid}', [ReportController::class, 'update']);
     Route::delete('reports/{reportUid}', [ReportController::class, 'destroy']);

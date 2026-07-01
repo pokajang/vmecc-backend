@@ -96,4 +96,9 @@ class User extends Authenticatable
     {
         return $this->hasMany(WorkflowNotification::class, 'owner_user_id');
     }
+
+    public function onboardingStates(): HasMany
+    {
+        return $this->hasMany(UserOnboardingState::class);
+    }
 }

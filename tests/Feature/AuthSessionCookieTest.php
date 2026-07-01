@@ -66,6 +66,7 @@ class AuthSessionCookieTest extends TestCase
             'session.secure' => true,
             'session.lifetime' => 720,
             'session.remember_days' => 30,
+            'session.same_site' => 'strict',
         ]);
 
         $user = User::factory()->create([
@@ -73,11 +74,13 @@ class AuthSessionCookieTest extends TestCase
             'status' => 'Active',
         ]);
 
-        $response = $this->postJson('/api/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-            'remember' => true,
-        ]);
+        $response = $this
+            ->withHeader('X-Client-Mode', 'pwa')
+            ->postJson('/api/auth/login', [
+                'email' => $user->email,
+                'password' => 'password',
+                'remember' => true,
+            ]);
 
         $response->assertOk();
         $sessionCookie = $this->findSessionCookie($response->headers->getCookies());
@@ -87,14 +90,21 @@ class AuthSessionCookieTest extends TestCase
         $this->assertSame('.amiosh.com', $rememberCookie->getDomain());
         $this->assertTrue($rememberCookie->isSecure());
         $this->assertTrue($rememberCookie->isHttpOnly());
-        $this->assertSame('lax', strtolower((string) $rememberCookie->getSameSite()));
+        $this->assertSame('strict', strtolower((string) $sessionCookie->getSameSite()));
+        $this->assertSame('strict', strtolower((string) $rememberCookie->getSameSite()));
 
         $session = UserSession::where('user_id', $user->id)->firstOrFail();
+        $this->assertSame('pwa', $session->client_mode);
         $this->assertNotNull($session->remember_token_hash);
         $this->assertNotNull($session->remember_expires_at);
         $this->assertStringNotContainsString((string) $session->remember_token_hash, (string) $rememberCookie->getValue());
         $this->assertTrue($session->expires_at->between(now()->addMinutes(719), now()->addMinutes(721)));
         $this->assertTrue($session->remember_expires_at->between(now()->addDays(29)->addHours(23), now()->addDays(30)->addHour()));
+        $this->assertDatabaseHas('login_attempts', [
+            'user_id' => $user->id,
+            'status' => 'Success',
+            'client_mode' => 'pwa',
+        ]);
     }
 
     public function test_valid_remember_cookie_restores_expired_session_and_rotates_token(): void
@@ -280,7 +290,7 @@ class AuthSessionCookieTest extends TestCase
         $provider->shouldReceive('user')->once()->andReturn($googleUser);
         Socialite::shouldReceive('driver')->once()->with('google')->andReturn($provider);
 
-        $state = Crypt::encryptString(json_encode(['remember' => true]));
+        $state = Crypt::encryptString(json_encode(['remember' => true, 'client_mode' => 'pwa']));
         $response = $this->get('/api/auth/google/callback?state=' . urlencode($state));
 
         $response->assertRedirect('https://vmecc.amiosh.com/login?status=success');
@@ -292,6 +302,12 @@ class AuthSessionCookieTest extends TestCase
         $this->assertTrue($cookie->isSecure());
         $this->assertTrue($cookie->isHttpOnly());
         $this->assertSame('lax', strtolower((string) $cookie->getSameSite()));
+        $this->assertSame('pwa', UserSession::where('user_id', $user->id)->firstOrFail()->client_mode);
+        $this->assertDatabaseHas('login_attempts', [
+            'user_id' => $user->id,
+            'status' => 'Success',
+            'client_mode' => 'pwa',
+        ]);
     }
 
     /**

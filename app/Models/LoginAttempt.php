@@ -19,6 +19,7 @@ class LoginAttempt extends Model
         'user_agent',
         'device_id',
         'device_info',
+        'client_mode',
     ];
 
     public function user(): BelongsTo

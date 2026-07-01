@@ -22,6 +22,7 @@ class SocialAuthController extends Controller
     {
         $state = Crypt::encryptString(json_encode([
             'remember' => $request->boolean('remember'),
+            'client_mode' => $this->sessions->clientModeFromRequest($request),
         ]));
 
         $url = Socialite::driver('google')
@@ -39,17 +40,18 @@ class SocialAuthController extends Controller
         $ua = substr((string) $request->userAgent(), 0, 255);
         $deviceId = $request->header('X-Client-Id');
         $deviceInfo = $ua;
+        $clientMode = $this->clientModeRequested($request);
         $remember = $this->rememberRequested($request);
 
         try {
             $googleUser = Socialite::driver('google')->stateless()->user();
         } catch (\Throwable $e) {
-            $this->logAttempt(null, $request->input('email', ''), 'Failed', 'Google authentication error', $ip, $ua, $deviceId, $deviceInfo);
+            $this->logAttempt(null, $request->input('email', ''), 'Failed', 'Google authentication error', $ip, $ua, $deviceId, $deviceInfo, $clientMode);
             return $this->redirectToFrontend('error', 'Unable to authenticate with Google.');
         }
 
         if (! $googleUser->getEmail()) {
-            $this->logAttempt(null, '', 'Failed', 'Google account missing email', $ip, $ua, $deviceId, $deviceInfo);
+            $this->logAttempt(null, '', 'Failed', 'Google account missing email', $ip, $ua, $deviceId, $deviceInfo, $clientMode);
             return $this->redirectToFrontend('error', 'Google account does not have an email address.');
         }
 
@@ -57,14 +59,14 @@ class SocialAuthController extends Controller
 
         if (! $user || strcasecmp((string) $user->status, 'Active') !== 0 || $user->locked_at) {
             $reason = $user && $user->locked_at ? 'Account locked' : 'Account not enabled for Google login';
-            $this->logAttempt($user, $googleUser->getEmail(), 'Failed', $reason, $ip, $ua, $deviceId, $deviceInfo);
+            $this->logAttempt($user, $googleUser->getEmail(), 'Failed', $reason, $ip, $ua, $deviceId, $deviceInfo, $clientMode);
             return $this->redirectToFrontend('error', 'Your account is not enabled for Google sign-in. Please try logging in with your email and password.');
         }
 
-        $created = $this->sessions->createSession($user, $request, $remember);
+        $created = $this->sessions->createSession($user, $request, $remember, $clientMode);
         $session = $created['session'];
         $user->forceFill(['last_login_at' => now()])->save();
-        $this->logAttempt($user, $googleUser->getEmail(), 'Success', null, $ip, $ua, $deviceId, $deviceInfo);
+        $this->logAttempt($user, $googleUser->getEmail(), 'Success', null, $ip, $ua, $deviceId, $deviceInfo, $clientMode);
 
         $response = $this->redirectToFrontend('success')
             ->withCookie($this->sessions->buildSessionCookie($session->id));
@@ -89,21 +91,32 @@ class SocialAuthController extends Controller
 
     private function rememberRequested(Request $request): bool
     {
-        $state = (string) $request->query('state', '');
-        if ($state === '') {
-            return false;
-        }
-
-        try {
-            $payload = json_decode(Crypt::decryptString($state), true, flags: JSON_THROW_ON_ERROR);
-        } catch (\Throwable) {
-            return false;
-        }
-
+        $payload = $this->statePayload($request);
         return (bool) ($payload['remember'] ?? false);
     }
 
-    private function logAttempt(?User $user, string $email, string $status, ?string $reason, ?string $ip, ?string $ua, ?string $deviceId, ?string $deviceInfo): void
+    private function clientModeRequested(Request $request): string
+    {
+        $mode = strtolower(trim((string) ($this->statePayload($request)['client_mode'] ?? 'browser')));
+
+        return in_array($mode, ['pwa', 'browser'], true) ? $mode : 'browser';
+    }
+
+    private function statePayload(Request $request): array
+    {
+        $state = (string) $request->query('state', '');
+        if ($state === '') {
+            return [];
+        }
+
+        try {
+            return json_decode(Crypt::decryptString($state), true, flags: JSON_THROW_ON_ERROR);
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    private function logAttempt(?User $user, string $email, string $status, ?string $reason, ?string $ip, ?string $ua, ?string $deviceId, ?string $deviceInfo, ?string $clientMode): void
     {
         LoginAttempt::create([
             'user_id' => $user?->id,
@@ -114,6 +127,7 @@ class SocialAuthController extends Controller
             'user_agent' => $ua,
             'device_id' => $deviceId,
             'device_info' => $deviceInfo,
+            'client_mode' => $clientMode,
         ]);
     }
 }

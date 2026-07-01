@@ -438,6 +438,48 @@ class TeamControllerTest extends TestCase
 
     // ─── index / show ────────────────────────────────────────────────────────
 
+    public function test_member_options_requires_team_management_and_excludes_sensitive_fields(): void
+    {
+        $target = User::factory()->create([
+            'status' => 'active',
+            'banking_info' => ['bank' => 'Sensitive Bank'],
+            'medical_info' => ['condition' => 'Private'],
+        ]);
+        $team = Team::factory()->create(['name' => 'Options Team']);
+        TeamMember::factory()->create([
+            'team_id' => $team->id,
+            'user_id' => $target->id,
+            'name' => $target->name,
+            'ended_at' => null,
+        ]);
+
+        $viewer = User::factory()->create(['status' => 'active']);
+        $viewerRole = Role::firstOrCreate(['name' => 'Team Viewer', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => 'teams.view', 'guard_name' => 'web']);
+        $viewerRole->givePermissionTo('teams.view');
+        UserRoleAssignment::create([
+            'user_id' => $viewer->id,
+            'role_id' => $viewerRole->id,
+            'scope_type' => RoleCatalog::GLOBAL,
+            'is_primary' => true,
+        ]);
+        $this->actingAs($viewer);
+        $this->getJson('/api/teams/member-options')->assertForbidden();
+
+        $this->actingAsAdmin();
+        $response = $this->getJson('/api/teams/member-options')->assertOk();
+        $row = collect($response->json('data'))->firstWhere('id', $target->id);
+
+        $this->assertNotNull($row);
+        $this->assertSame('Options Team', $row['team']);
+        $this->assertArrayHasKey('roles', $row);
+        $this->assertArrayNotHasKey('banking_info', $row);
+        $this->assertArrayNotHasKey('medical_info', $row);
+        $this->assertArrayNotHasKey('login_records', $row);
+        $this->assertArrayNotHasKey('permissions', $row);
+        $this->assertArrayNotHasKey('role_assignments', $row);
+    }
+
     public function test_index_returns_all_teams_with_members(): void
     {
         $this->actingAsAdmin();

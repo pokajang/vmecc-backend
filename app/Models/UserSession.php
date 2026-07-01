@@ -20,6 +20,7 @@ class UserSession extends Model
         'ip_address',
         'user_agent',
         'device_id',
+        'client_mode',
         'expires_at',
         'logged_out_at',
         'last_seen_at',

@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\CustomShift;
 use App\Models\Setting;
+use App\Services\InspectionWorkflowService;
+use App\Services\ReportingWorkflowService;
 use App\Services\LeaveWorkflowService;
 use App\Services\OvertimeWorkflowService;
 use App\Services\PayrollClaimWorkflowService;
@@ -20,6 +22,8 @@ class SettingsController extends Controller
         private readonly LeaveWorkflowService $leaveWorkflowService,
         private readonly OvertimeWorkflowService $overtimeWorkflowService,
         private readonly PayrollClaimWorkflowService $payrollClaimWorkflowService,
+        private readonly InspectionWorkflowService $inspectionWorkflowService,
+        private readonly ReportingWorkflowService $reportingWorkflowService,
         private readonly SystemMaintenanceService $systemMaintenanceService,
     ) {}
 
@@ -254,6 +258,119 @@ class SettingsController extends Controller
         return response()->json([
             'message' => 'Overtime approval rules updated.',
             'data' => $this->overtimeWorkflowService->loadApprovalRules(),
+        ]);
+    }
+
+    public function getInspectionWorkflowRules(): JsonResponse
+    {
+        try {
+            $rules = $this->inspectionWorkflowService->loadWorkflowRules();
+        } catch (QueryException $e) {
+            return response()->json(['message' => 'Settings table not available. Please run migrations.'], 500);
+        }
+
+        return response()->json(['data' => $rules]);
+    }
+
+    public function getReportingWorkflowRules(): JsonResponse
+    {
+        try {
+            $rules = $this->reportingWorkflowService->loadWorkflowRules();
+        } catch (QueryException $e) {
+            return response()->json(['message' => 'Settings table not available. Please run migrations.'], 500);
+        }
+
+        return response()->json(['data' => $rules]);
+    }
+
+    public function updateInspectionWorkflowRules(Request $request): JsonResponse
+    {
+        $roleRequired = ['required', 'string', 'max:255', Rule::exists('roles', 'name')];
+        $data = $request->validate([
+            'fallback' => ['required', 'array'],
+            'fallback.reviewRole' => $roleRequired,
+            'fallback.fallbackReviewRole' => $roleRequired,
+            'fallback.approveRole' => $roleRequired,
+            'options' => ['nullable', 'array'],
+            'options.useTeamScopedAic' => ['nullable', 'boolean'],
+            'options.allowSubmitWithoutTeam' => ['nullable', 'boolean'],
+            'options.allowIcFallbackReview' => ['nullable', 'boolean'],
+            'options.preventSelfReview' => ['nullable', 'boolean'],
+            'options.preventSelfApprove' => ['nullable', 'boolean'],
+        ]);
+
+        try {
+            $this->inspectionWorkflowService->saveWorkflowRules($data);
+        } catch (QueryException $e) {
+            return response()->json(['message' => 'Settings table not available. Please run migrations.'], 500);
+        }
+
+        return response()->json([
+            'message' => 'Inspection workflow rules updated.',
+            'data' => $this->inspectionWorkflowService->loadWorkflowRules(),
+        ]);
+    }
+
+    public function updateReportingWorkflowRules(Request $request): JsonResponse
+    {
+        $roleRequired = ['required', 'string', 'max:255', Rule::exists('roles', 'name')];
+        $data = $request->validate([
+            'modules' => ['required', 'array'],
+            'modules.inspection' => ['required', 'array'],
+            'modules.inspection.fallback' => ['required', 'array'],
+            'modules.inspection.fallback.reviewRole' => $roleRequired,
+            'modules.inspection.fallback.fallbackReviewRole' => $roleRequired,
+            'modules.inspection.fallback.approveRole' => $roleRequired,
+            'modules.inspection.options' => ['nullable', 'array'],
+            'modules.inspection.options.useTeamScopedAic' => ['nullable', 'boolean'],
+            'modules.inspection.options.allowSubmitWithoutTeam' => ['nullable', 'boolean'],
+            'modules.inspection.options.allowIcFallbackReview' => ['nullable', 'boolean'],
+            'modules.inspection.options.preventSelfReview' => ['nullable', 'boolean'],
+            'modules.inspection.options.preventSelfApprove' => ['nullable', 'boolean'],
+            'modules.erco' => ['nullable', 'array'],
+            'modules.erco.fallback' => ['nullable', 'array'],
+            'modules.erco.fallback.reviewRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.erco.fallback.fallbackReviewRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.erco.fallback.approveRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.erco.options' => ['nullable', 'array'],
+            'modules.erco.options.useTeamScopedAic' => ['nullable', 'boolean'],
+            'modules.erco.options.allowSubmitWithoutTeam' => ['nullable', 'boolean'],
+            'modules.erco.options.allowIcFallbackReview' => ['nullable', 'boolean'],
+            'modules.erco.options.preventSelfReview' => ['nullable', 'boolean'],
+            'modules.erco.options.preventSelfApprove' => ['nullable', 'boolean'],
+            'modules.drill' => ['nullable', 'array'],
+            'modules.drill.fallback' => ['nullable', 'array'],
+            'modules.drill.fallback.reviewRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.drill.fallback.fallbackReviewRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.drill.fallback.approveRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.drill.options' => ['nullable', 'array'],
+            'modules.drill.options.useTeamScopedAic' => ['nullable', 'boolean'],
+            'modules.drill.options.allowSubmitWithoutTeam' => ['nullable', 'boolean'],
+            'modules.drill.options.allowIcFallbackReview' => ['nullable', 'boolean'],
+            'modules.drill.options.preventSelfReview' => ['nullable', 'boolean'],
+            'modules.drill.options.preventSelfApprove' => ['nullable', 'boolean'],
+            'modules.fitness-test' => ['nullable', 'array'],
+            'modules.fitness-test.fallback' => ['nullable', 'array'],
+            'modules.fitness-test.fallback.reviewRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.fitness-test.fallback.fallbackReviewRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.fitness-test.fallback.approveRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.fitness-test.options' => ['nullable', 'array'],
+            'modules.fitness-test.options.useTeamScopedAic' => ['nullable', 'boolean'],
+            'modules.fitness-test.options.allowSubmitWithoutTeam' => ['nullable', 'boolean'],
+            'modules.fitness-test.options.allowIcFallbackReview' => ['nullable', 'boolean'],
+            'modules.fitness-test.options.preventSelfReview' => ['nullable', 'boolean'],
+            'modules.fitness-test.options.preventSelfApprove' => ['nullable', 'boolean'],
+        ]);
+
+        try {
+            $saved = $this->reportingWorkflowService->saveWorkflowRules($data);
+        } catch (QueryException $e) {
+            return response()->json(['message' => 'Settings table not available. Please run migrations.'], 500);
+        }
+
+        return response()->json([
+            'message' => 'Reporting workflow rules updated.',
+            'data' => $saved,
         ]);
     }
 

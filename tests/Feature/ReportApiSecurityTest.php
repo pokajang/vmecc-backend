@@ -2,8 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\Report;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class ReportApiSecurityTest extends TestCase
@@ -14,6 +17,49 @@ class ReportApiSecurityTest extends TestCase
     {
         $this->getJson('/api/reports')->assertStatus(401);
         $this->postJson('/api/reports', [])->assertStatus(401);
+    }
+
+    public function test_inspection_all_scope_lists_records_from_other_owners(): void
+    {
+        $owner = User::factory()->create(['status' => 'active']);
+        $otherOwner = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($owner);
+
+        Report::query()->create([
+            'report_uid' => 'inspection-owner-record',
+            'display_id' => 'INS-OWNER-001',
+            'owner_user_id' => $owner->id,
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'version' => 1,
+            'revision' => 1,
+            'payload' => ['incidentType' => 'Hydraulic Rescue Tools Inspection', 'location' => 'FRT'],
+            'submitted_at' => now(),
+        ]);
+        Report::query()->create([
+            'report_uid' => 'inspection-other-record',
+            'display_id' => 'INS-OTHER-001',
+            'owner_user_id' => $otherOwner->id,
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'version' => 1,
+            'revision' => 1,
+            'payload' => ['incidentType' => 'Hydraulic Rescue Tools Inspection', 'location' => 'Store'],
+            'submitted_at' => now(),
+        ]);
+
+        $this->actingAs($owner);
+
+        $mine = $this->getJson('/api/reports?reportType=inspection');
+        $mine->assertOk();
+        $this->assertSame(['INS-OWNER-001'], collect($mine->json('data'))->pluck('displayId')->all());
+
+        $all = $this->getJson('/api/reports?reportType=inspection&scope=all');
+        $all->assertOk();
+        $this->assertEqualsCanonicalizing(
+            ['INS-OWNER-001', 'INS-OTHER-001'],
+            collect($all->json('data'))->pluck('displayId')->all(),
+        );
     }
 
     public function test_user_cannot_transition_other_users_report(): void
@@ -86,5 +132,21 @@ class ReportApiSecurityTest extends TestCase
 
         $delete = $this->deleteJson("/api/reports/{$reportUid}");
         $delete->assertNoContent();
+    }
+
+    private function grantInspectionPermission(User $user): void
+    {
+        $permission = Permission::query()->firstOrCreate([
+            'name' => 'reports.inspection.view',
+            'guard_name' => 'web',
+        ]);
+        $role = Role::query()->firstOrCreate([
+            'name' => 'Inspection Scope Tester',
+            'guard_name' => 'web',
+        ]);
+        if (! $role->hasPermissionTo($permission)) {
+            $role->givePermissionTo($permission);
+        }
+        $user->assignRole($role);
     }
 }

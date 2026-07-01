@@ -7,6 +7,7 @@ use App\Models\Team;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Notifications\TeamDisbandedNotification;
+use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\TeamMemberSyncService;
 use Illuminate\Http\JsonResponse;
@@ -19,6 +20,7 @@ class TeamController extends Controller
     public function __construct(
         private readonly TeamMemberSyncService $teamMemberSync,
         private readonly \App\Services\WorkflowNotificationService $workflowNotifications,
+        private readonly AssignmentAuthorizationService $authorizationService,
     ) {
     }
 
@@ -94,6 +96,33 @@ class TeamController extends Controller
             ->map(fn(Team $team) => $this->teamPayload($team, true));
 
         return response()->json(['data' => $teams]);
+    }
+
+    public function memberOptions(): JsonResponse
+    {
+        $teamMap = \App\Models\TeamMember::with('team')->get()->groupBy('user_id');
+
+        $users = User::query()
+            ->whereNull('deleted_at')
+            ->orderBy('name')
+            ->get()
+            ->map(function (User $user) use ($teamMap) {
+                $teamEntry = $teamMap?->get($user->id)?->first();
+                $team = $teamEntry?->team;
+
+                return [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'status' => $user->status,
+                    'roles' => $this->authorizationService->getActiveRoleNames($user)->values()->all(),
+                    'team' => $team?->name ?? $user->team,
+                    'team_status' => $team?->status,
+                    'profile_image_url' => $this->resolveProfileImageUrl($user->profile_image_url),
+                ];
+            });
+
+        return response()->json(['data' => $users]);
     }
 
     /**
@@ -414,5 +443,18 @@ class TeamController extends Controller
     private function publicUploadsDisk(): string
     {
         return (string) config('filesystems.public_uploads_disk', 'public');
+    }
+
+    private function resolveProfileImageUrl(?string $value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+
+        if (str_starts_with($value, 'http://') || str_starts_with($value, 'https://')) {
+            return $value;
+        }
+
+        return Storage::disk($this->publicUploadsDisk())->url($value);
     }
 }

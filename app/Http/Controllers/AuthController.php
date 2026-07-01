@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Models\UserOnboardingState;
 use App\Models\UserSession;
 use App\Models\LoginAttempt;
 use App\Services\AssignmentAuthorizationService;
@@ -39,24 +40,25 @@ class AuthController extends Controller
         $ua = substr((string) $request->userAgent(), 0, 255);
         $deviceId = $request->header('X-Client-Id');
         $deviceInfo = $ua;
+        $clientMode = $this->sessions->clientModeFromRequest($request);
         $user = User::where('email', $credentials['email'])->first();
 
         if (! $user) {
-            $this->logAttempt(null, $credentials['email'], 'Failed', 'Account not found', $ip, $ua, $deviceId, $deviceInfo);
+            $this->logAttempt(null, $credentials['email'], 'Failed', 'Account not found', $ip, $ua, $deviceId, $deviceInfo, $clientMode);
             throw ValidationException::withMessages([
                 'email' => [__('auth.failed')],
             ]);
         }
 
         if (strcasecmp((string) $user->status, 'Active') !== 0) {
-            $this->logAttempt($user, $credentials['email'], 'Failed', 'Inactive account', $ip, $ua, $deviceId, $deviceInfo);
+            $this->logAttempt($user, $credentials['email'], 'Failed', 'Inactive account', $ip, $ua, $deviceId, $deviceInfo, $clientMode);
             throw ValidationException::withMessages([
                 'email' => [__('auth.failed')],
             ]);
         }
 
         if ($user->locked_at) {
-            $this->logAttempt($user, $credentials['email'], 'Failed', 'Account locked', $ip, $ua, $deviceId, $deviceInfo);
+            $this->logAttempt($user, $credentials['email'], 'Failed', 'Account locked', $ip, $ua, $deviceId, $deviceInfo, $clientMode);
             throw ValidationException::withMessages([
                 'email' => ['Account locked. Please contact your administrator.'],
             ]);
@@ -84,7 +86,7 @@ class AuthController extends Controller
                     ]);
             }
 
-            $this->logAttempt($user, $credentials['email'], 'Failed', 'Invalid credentials', $ip, $ua, $deviceId, $deviceInfo);
+            $this->logAttempt($user, $credentials['email'], 'Failed', 'Invalid credentials', $ip, $ua, $deviceId, $deviceInfo, $clientMode);
             throw ValidationException::withMessages([
                 'email' => [__('auth.failed')],
             ]);
@@ -100,7 +102,7 @@ class AuthController extends Controller
             'locked_by' => null,
             'lock_reason' => null,
         ])->save();
-        $this->logAttempt($user, $credentials['email'], 'Success', null, $ip, $ua, $deviceId, $deviceInfo);
+        $this->logAttempt($user, $credentials['email'], 'Success', null, $ip, $ua, $deviceId, $deviceInfo, $clientMode);
 
         $response = $this->respondWithUser($user, $csrfToken)
             ->withCookie($this->sessions->buildSessionCookie($session->id));
@@ -214,7 +216,7 @@ class AuthController extends Controller
         $loginRecords = $user->loginAttempts()
             ->latest()
             ->limit(10)
-            ->get(['created_at as timestamp', 'status', 'reason', 'ip_address', 'user_agent', 'device_id', 'device_info'])
+            ->get(['created_at as timestamp', 'status', 'reason', 'ip_address', 'user_agent', 'device_id', 'device_info', 'client_mode'])
             ->map(function ($record) {
                 return [
                     'timestamp' => $record->timestamp,
@@ -224,6 +226,7 @@ class AuthController extends Controller
                     'user_agent' => $record->user_agent,
                     'device_id' => $record->device_id,
                     'device_info' => $record->device_info,
+                    'client_mode' => $record->client_mode,
                 ];
             });
 
@@ -246,6 +249,7 @@ class AuthController extends Controller
                 'banking_info' => $user->banking_info ?? null,
                 'statutory_info' => $user->statutory_info ?? null,
                 'medical_info' => $user->medical_info ?? null,
+                'onboarding' => UserOnboardingState::payloadForUser($user),
                 'login_records' => $loginRecords,
             ],
         ];
@@ -380,7 +384,7 @@ class AuthController extends Controller
         return $token;
     }
 
-    private function logAttempt(?User $user, string $email, string $status, ?string $reason, ?string $ip, ?string $ua, ?string $deviceId, ?string $deviceInfo): void
+    private function logAttempt(?User $user, string $email, string $status, ?string $reason, ?string $ip, ?string $ua, ?string $deviceId, ?string $deviceInfo, ?string $clientMode): void
     {
         LoginAttempt::create([
             'user_id' => $user?->id,
@@ -391,6 +395,7 @@ class AuthController extends Controller
             'user_agent' => $ua,
             'device_id' => $deviceId,
             'device_info' => $deviceInfo,
+            'client_mode' => $clientMode,
         ]);
     }
 

@@ -79,6 +79,14 @@ class SettingsControllerTest extends TestCase
         $this->getJson('/api/settings/shift-windows')->assertOk();
     }
 
+    public function test_team_view_can_read_shift_windows_but_cannot_update_them(): void
+    {
+        $this->actingAsSettingsManager('teams.view');
+
+        $this->getJson('/api/settings/shift-windows')->assertOk();
+        $this->postJson('/api/settings/shift-windows', $this->validWindows())->assertStatus(403);
+    }
+
     public function test_staff_salary_manage_can_access_custom_shifts(): void
     {
         $this->actingAsSettingsManager('staff.salary.manage');

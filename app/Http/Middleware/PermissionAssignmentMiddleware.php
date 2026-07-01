@@ -20,6 +20,14 @@ class PermissionAssignmentMiddleware
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
+        if ($permissions === '*') {
+            $roles = $this->authorizationService->getActiveRoleNames($user)
+                ->map(fn (string $role) => strtolower(trim($role)));
+            if ($roles->contains('system administrator') || $roles->contains('system admin')) {
+                return $next($request);
+            }
+        }
+
         if (! $this->authorizationService->hasPermission($user, $permissions)) {
             return response()->json(['message' => 'Forbidden'], 403);
         }

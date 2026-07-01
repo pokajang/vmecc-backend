@@ -44,6 +44,13 @@ class InspectionReportPdfTest extends TestCase
         $create->assertCreated();
         $reportUid = (string) $create->json('data.id');
 
+        $commander = User::factory()->create([
+            'status' => 'active',
+            'name' => 'Inspection Commander',
+        ]);
+        $this->grantInspectionPermission($commander, 'Incident Commander');
+        $this->actingAs($commander);
+
         $review = $this->postJson("/api/reports/{$reportUid}/review", [
             'version' => 1,
             'remarks' => 'Reviewed by supervisor',
@@ -56,6 +63,8 @@ class InspectionReportPdfTest extends TestCase
         ]);
         $approve->assertOk();
         $currentVersion = (int) $approve->json('data.version');
+
+        $this->actingAs($user);
 
         $capturedRecord = null;
         $document = Mockery::mock(DomPdfWrapper::class);
@@ -157,6 +166,28 @@ class InspectionReportPdfTest extends TestCase
                     'description' => 'One label faded and unreadable.',
                 ],
             ],
+            'checklist' => [
+                [
+                    'id' => 'housekeeping-5s-inspection:area-clean',
+                    'label' => 'Area clean',
+                    'inspectionType' => 'Housekeeping 5S Inspection',
+                    'selected' => true,
+                    'selectedAt' => '2026-04-29T09:16:00+08:00',
+                ],
+            ],
+            'hydraulicChecks' => [
+                [
+                    'location' => 'FRT',
+                    'equipment' => 'Hydraulic Pump Motor 1',
+                    'equipmentDescription' => 'FRT primary rescue pump.',
+                    'physicalCondition' => 'OK',
+                    'mechanicalCondition' => 'OK',
+                    'noLeakage' => 'N/A',
+                    'noLeakageRemarks' => 'Leak test skipped because tool was isolated.',
+                    'functionTest' => 'Defect',
+                    'remarks' => 'Slow response.',
+                ],
+            ],
             'timeline' => [
                 [
                     'action' => 'Submitted',
@@ -182,6 +213,13 @@ class InspectionReportPdfTest extends TestCase
             'Warehouse Block A',
             'Housekeeping inspection found minor labelling gaps.',
             'Label on aisle rack requires replacement.',
+            'Area clean',
+            'Hydraulic Equipment Checks',
+            'Hydraulic Pump Motor 1',
+            'FRT primary rescue pump.',
+            'N/A Reason: Hydraulic Pump Motor 1 - No Leakage',
+            'Leak test skipped because tool was isolated.',
+            'Slow response.',
             'Inspector User',
             'Supervisor User',
         ];
@@ -191,14 +229,354 @@ class InspectionReportPdfTest extends TestCase
         }
     }
 
-    private function grantInspectionPermission(User $user): void
+    public function test_pdf_template_renders_er_aux_equipment_section(): void
+    {
+        $record = [
+            'displayId' => 'INS-ERAUX-29042026',
+            'status' => 'Submitted',
+            'incidentType' => 'ER Aux Equipment Inspection',
+            'location' => 'Store',
+            'description' => 'ER Aux equipment checked at Store by Inspector One on 2026-06-28.',
+            'erAuxInspectedBy' => 'Inspector One',
+            'erAuxInspectionDate' => '2026-06-28',
+            'erAuxChecks' => [
+                [
+                    'location' => 'Store',
+                    'equipment' => 'Fire Jacket',
+                    'quantity' => '15',
+                    'condition' => 'OK',
+                    'remarks' => '',
+                ],
+                [
+                    'location' => 'Store',
+                    'equipment' => 'Chainsaw',
+                    'quantity' => '0',
+                    'condition' => 'Missing',
+                    'remarks' => 'Sent for replacement.',
+                ],
+            ],
+        ];
+
+        $html = view('pdf.inspection_report', [
+            'record' => $record,
+        ])->render();
+
+        foreach ([
+            'ER Aux Equipment Checks',
+            'Inspector One',
+            '2026-06-28',
+            'Fire Jacket',
+            'Chainsaw',
+            'Missing',
+            'Sent for replacement.',
+        ] as $text) {
+            $this->assertStringContainsString($text, $html);
+        }
+    }
+
+    public function test_pdf_template_renders_scba_section(): void
+    {
+        $record = [
+            'displayId' => 'INS-SCBA-29042026',
+            'status' => 'Submitted',
+            'incidentType' => 'SCBA Inspection',
+            'location' => 'FRT',
+            'description' => 'SCBA checked at FRT by Inspector SCBA on 2026-06-28.',
+            'scbaInspectedBy' => 'Inspector SCBA',
+            'scbaInspectionDate' => '2026-06-28',
+            'scbaBackPlateChecks' => [
+                [
+                    'location' => 'FRT',
+                    'brand' => 'MSA',
+                    'serialNo' => '06',
+                    'backPlateHarnessCondition' => 'Good',
+                    'highPressureHose' => 'Not Good',
+                    'pressureGauge' => 'Good',
+                    'alarmDevice' => 'Good',
+                    'demandValve' => 'Good',
+                    'sealing' => 'Good',
+                    'cleanliness' => 'Good',
+                    'remarks' => 'Hose coupling worn.',
+                ],
+            ],
+            'scbaCylinderChecks' => [
+                [
+                    'location' => 'FRT',
+                    'brand' => 'MSA',
+                    'serialNo' => '6.8L/08',
+                    'size' => '6.8',
+                    'cylinderType' => 'Composite',
+                    'servicePressure' => '300',
+                    'containedPressure' => '280',
+                    'physicalCondition' => 'Good',
+                    'handwheelCondition' => 'Good',
+                    'valveBodyCondition' => 'Good',
+                    'screwPlugCondition' => 'Good',
+                    'cleanliness' => 'Good',
+                    'remarks' => '',
+                ],
+            ],
+            'scbaFaceMaskChecks' => [
+                [
+                    'location' => 'FRT',
+                    'brand' => 'Drager',
+                    'serialNo' => '02',
+                    'visorCondition' => 'Good',
+                    'ldvPort' => 'Good',
+                    'ldvReleaseButton' => 'Good',
+                    'leakTest' => 'Not Good',
+                    'speechDiaphragm' => 'Good',
+                    'harness' => 'Good',
+                    'neckStrap' => 'Good',
+                    'remarks' => 'Leak test failed on seal.',
+                ],
+            ],
+        ];
+
+        $html = view('pdf.inspection_report', [
+            'record' => $record,
+        ])->render();
+
+        foreach ([
+            'SCBA Checks',
+            'Inspector SCBA',
+            '2026-06-28',
+            'Back Plate',
+            'Cylinder',
+            'Face Mask',
+            'Sealing',
+            'Cleanliness',
+            'Harness',
+            'MSA',
+            '6.8L/08',
+            'Composite',
+            '300',
+            '280',
+            'Drager',
+            'Not Good',
+            'Hose coupling worn.',
+            'Leak test failed on seal.',
+        ] as $text) {
+            $this->assertStringContainsString($text, $html);
+        }
+
+        $this->assertTrue(
+            strpos($html, 'Back Plate') < strpos($html, 'Cylinder')
+            && strpos($html, 'Cylinder') < strpos($html, 'Face Mask')
+        );
+    }
+
+    public function test_pdf_template_renders_high_angle_section(): void
+    {
+        $record = [
+            'displayId' => 'INS-HA-29042026',
+            'status' => 'Submitted',
+            'incidentType' => 'High Angle Rescue Equipment Inspection',
+            'location' => 'Response Kit #1',
+            'description' => 'High Angle rescue equipment checked for Response Kit #1 by Inspector Rope on 2026-06-28.',
+            'highAngleInspectedBy' => 'Inspector Rope',
+            'highAngleInspectionDate' => '2026-06-28',
+            'highAngleChecks' => [
+                [
+                    'rowNumber' => '1',
+                    'mainLocation' => 'Response Kit #1',
+                    'location' => 'N/A',
+                    'subLocation' => 'N/A',
+                    'equipment' => 'Heavy Duty Organizer Bag',
+                    'quantity' => '1',
+                    'condition' => 'Good',
+                    'remarks' => '',
+                ],
+                [
+                    'rowNumber' => '3',
+                    'mainLocation' => 'Response Kit #1',
+                    'location' => 'Heavy Duty Organizer Bag',
+                    'subLocation' => 'Main Compartment',
+                    'equipment' => 'Locking Carabiner - CT - Steel - S',
+                    'quantity' => '10',
+                    'condition' => 'Not Good',
+                    'remarks' => 'Gate spring is sticking.',
+                ],
+            ],
+        ];
+
+        $html = view('pdf.inspection_report', [
+            'record' => $record,
+        ])->render();
+
+        foreach ([
+            'High Angle Rescue Equipment Checks',
+            'Inspector Rope',
+            '2026-06-28',
+            'General Kit Items',
+            'Main Compartment',
+            'Heavy Duty Organizer Bag',
+            'Locking Carabiner - CT - Steel - S',
+            '10',
+            'Not Good',
+            'Gate spring is sticking.',
+        ] as $text) {
+            $this->assertStringContainsString($text, $html);
+        }
+    }
+
+    public function test_pdf_template_renders_frt_daily_section(): void
+    {
+        $record = [
+            'displayId' => 'INS-FRT-29062026',
+            'status' => 'Submitted',
+            'incidentType' => 'FRT Daily Inspection',
+            'location' => 'FIRE TRUCK',
+            'description' => 'FRT Daily inspection checked for FIRE TRUCK on 2026-06-29.',
+            'frtInspectedBy' => 'Inspector Truck',
+            'frtInspectionDate' => '2026-06-29',
+            'frtShift' => 'Day',
+            'frtTruckReference' => [
+                'plateNo' => 'AJG9555',
+                'roadTaxExpiry' => '13/02/2026',
+                'insuranceExpiry' => '13/02/2026',
+                'puspakomExpiry' => '19/02/2026',
+            ],
+            'frtDailyRemarks' => 'Truck ready for dispatch.',
+            'frtOneOffRemarks' => 'One-off issues tracked.',
+            'frtDailyChecks' => [
+                [
+                    'rowNumber' => '1',
+                    'mainLocation' => 'FIRE TRUCK',
+                    'location' => 'LOCKER 01',
+                    'equipment' => 'FIRE HOSE 2.5"',
+                    'quantity' => '6',
+                    'rowKind' => 'status',
+                    'status' => 'Checked',
+                    'remarks' => '',
+                ],
+                [
+                    'rowNumber' => '90',
+                    'mainLocation' => 'FIRE TRUCK',
+                    'location' => 'FIRE TRUCK',
+                    'equipment' => 'OVERALL BODY',
+                    'quantity' => 'N/A',
+                    'rowKind' => 'status',
+                    'status' => 'Issue',
+                    'remarks' => 'Panel dent needs repair.',
+                ],
+                [
+                    'rowNumber' => '91',
+                    'mainLocation' => 'FIRE TRUCK',
+                    'location' => 'FIRE TRUCK',
+                    'equipment' => 'MILEAGE (ODOMETER)',
+                    'quantity' => '',
+                    'rowKind' => 'reading',
+                    'readingValue' => '123456',
+                    'remarks' => '',
+                ],
+                [
+                    'rowNumber' => '92',
+                    'mainLocation' => 'FIRE TRUCK',
+                    'location' => 'FIRE TRUCK',
+                    'equipment' => 'FUEL LEVEL (%)',
+                    'quantity' => '',
+                    'rowKind' => 'reading',
+                    'readingValue' => '85',
+                    'remarks' => '',
+                ],
+            ],
+            'frtOneOffChecks' => [
+                [
+                    'rowNumber' => '16',
+                    'mainLocation' => 'FIRE TRUCK',
+                    'location' => 'TRUCK CHECKLIST',
+                    'equipment' => 'ELECTRONIC SIREN',
+                    'condition' => 'Not Good',
+                    'remarks' => 'Mute switch sticking.',
+                ],
+            ],
+        ];
+
+        $html = view('pdf.inspection_report', [
+            'record' => $record,
+        ])->render();
+
+        foreach ([
+            'FRT Daily Inspection',
+            'Inspector Truck',
+            '2026-06-29',
+            'Day',
+            'AJG9555',
+            'FRT Daily Roster',
+            'FRT One Off Checklist',
+            'LOCKER 01',
+            'TRUCK CHECKLIST',
+            'MILEAGE (ODOMETER)',
+            '123456',
+            'FUEL LEVEL (%)',
+            '85',
+            'Not Good',
+            'Panel dent needs repair.',
+            'Mute switch sticking.',
+            'Truck ready for dispatch.',
+            'One-off issues tracked.',
+        ] as $text) {
+            $this->assertStringContainsString($text, $html);
+        }
+
+        $this->assertTrue(
+            strpos($html, 'FRT Daily Roster') < strpos($html, 'FRT One Off Checklist')
+        );
+    }
+
+    public function test_pdf_template_renders_hse_observation_section(): void
+    {
+        $record = [
+            'displayId' => 'INS-HSE-29062026',
+            'status' => 'Submitted',
+            'incidentType' => 'Health Safety Environment Inspection',
+            'location' => 'Zone A > Dock',
+            'description' => 'HSE inspection found unsafe act and environmental issue.',
+            'hseInspectedBy' => 'Inspector HSE',
+            'hseInspectionDate' => '2026-06-29',
+            'hseSelections' => ['unsafeAct', 'environmental'],
+            'hseUnsafeActDetails' => 'Worker crossed active barricade.',
+            'hseEnvironmentalDetails' => 'Minor oil sheen observed near drain.',
+            'hseSeverity' => 'High',
+            'hseImmediateAction' => 'Stopped work and placed absorbent pads.',
+            'hseCorrectiveAction' => 'Brief contractor team before restart.',
+            'hseResponsiblePerson' => 'Area Supervisor',
+            'hseTargetDate' => '2026-06-30',
+            'hseRemarks' => 'Follow up during next patrol.',
+        ];
+
+        $html = view('pdf.inspection_report', [
+            'record' => $record,
+        ])->render();
+
+        foreach ([
+            'HSE Observation',
+            'Inspector HSE',
+            '2026-06-29',
+            'Unsafe Act',
+            'Environmental',
+            'High',
+            'Worker crossed active barricade.',
+            'Minor oil sheen observed near drain.',
+            'Stopped work and placed absorbent pads.',
+            'Brief contractor team before restart.',
+            'Area Supervisor',
+            '2026-06-30',
+            'Follow up during next patrol.',
+        ] as $text) {
+            $this->assertStringContainsString($text, $html);
+        }
+    }
+
+    private function grantInspectionPermission(User $user, string $roleName = 'Inspection Pdf Tester'): void
     {
         $permission = Permission::query()->firstOrCreate([
             'name' => 'reports.inspection.view',
             'guard_name' => 'web',
         ]);
         $role = Role::query()->firstOrCreate([
-            'name' => 'Inspection Pdf Tester',
+            'name' => $roleName,
             'guard_name' => 'web',
         ]);
         if (! $role->hasPermissionTo($permission)) {

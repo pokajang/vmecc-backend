@@ -17,7 +17,7 @@ class AuthSessionService
     /**
      * @return array{session: UserSession, remember_token: string|null}
      */
-    public function createSession(User $user, Request $request, bool $remember = false): array
+    public function createSession(User $user, Request $request, bool $remember = false, ?string $clientMode = null): array
     {
         $rememberToken = $remember ? Str::random(64) : null;
 
@@ -27,6 +27,7 @@ class AuthSessionService
             'ip_address' => $request->ip(),
             'user_agent' => substr((string) $request->userAgent(), 0, 255),
             'device_id' => $request->header('X-Client-Id'),
+            'client_mode' => $this->normalizeClientMode($clientMode ?? $request->header('X-Client-Mode', 'browser')),
             'expires_at' => now()->addMinutes($this->sessionLifetimeMinutes()),
             'last_seen_at' => now(),
             'remember_token_hash' => $rememberToken ? $this->hashToken($rememberToken) : null,
@@ -112,7 +113,7 @@ class AuthSessionService
             domain: config('session.domain'),
             secure: (bool) config('session.secure'),
             httpOnly: true,
-            sameSite: 'lax'
+            sameSite: $this->sameSite()
         );
     }
 
@@ -126,7 +127,7 @@ class AuthSessionService
             domain: config('session.domain'),
             secure: (bool) config('session.secure'),
             httpOnly: true,
-            sameSite: 'lax'
+            sameSite: $this->sameSite()
         );
     }
 
@@ -195,6 +196,11 @@ class AuthSessionService
         return 'inactive';
     }
 
+    public function clientModeFromRequest(Request $request): string
+    {
+        return $this->normalizeClientMode($request->header('X-Client-Mode', 'browser'));
+    }
+
     private function forgetCookie(string $name): Cookie
     {
         return cookie(
@@ -205,8 +211,22 @@ class AuthSessionService
             domain: config('session.domain'),
             secure: (bool) config('session.secure'),
             httpOnly: true,
-            sameSite: 'lax'
+            sameSite: $this->sameSite()
         );
+    }
+
+    private function sameSite(): ?string
+    {
+        $sameSite = config('session.same_site', 'lax');
+
+        return $sameSite === null ? null : (string) $sameSite;
+    }
+
+    private function normalizeClientMode(mixed $mode): string
+    {
+        $mode = strtolower(trim((string) $mode));
+
+        return in_array($mode, ['pwa', 'browser'], true) ? $mode : 'browser';
     }
 
     /**
