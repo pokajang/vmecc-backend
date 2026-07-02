@@ -6,10 +6,11 @@ use App\Models\LoginAttempt;
 use App\Models\Team;
 use App\Models\TeamMember;
 use App\Models\User;
+use App\Models\UserInvitationDelivery;
 use App\Models\UserRoleAssignment;
 use App\Models\UserSession;
+use App\Jobs\SendUserInvitationEmailJob;
 use App\Notifications\AdminResetPasswordNotification;
-use App\Notifications\UserInvitationNotification;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\RoleCatalog;
@@ -19,6 +20,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -219,15 +221,46 @@ class UserManagementController extends Controller
             $this->teamMemberSync->syncForUser($user, false, true);
         });
 
-        $frontendUrl = config('app.frontend_url', config('app.url'));
-        $user->notify(new UserInvitationNotification($frontendUrl));
+        $invitationSent = true;
+        $invitationDelivery = null;
+        try {
+            $invitationDelivery = UserInvitationDelivery::create([
+                'user_id' => $user->id,
+                'recipient_email' => $user->email,
+                'status' => 'queued',
+                'attempts' => 0,
+            ]);
+            SendUserInvitationEmailJob::dispatch($invitationDelivery->id)
+                ->onConnection('database')
+                ->onQueue('emails');
+        } catch (\Throwable $exception) {
+            $invitationSent = false;
+            if ($invitationDelivery) {
+                $invitationDelivery->update([
+                    'status' => 'failed',
+                    'last_error' => $exception->getMessage(),
+                ]);
+            }
+            Log::warning('User invitation email failed after user creation.', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'exception' => $exception::class,
+                'message' => $exception->getMessage(),
+            ]);
+        }
 
         AuditLogger::log($request, 'user_created', $user, [
             'roles' => $this->authorizationService->getActiveRoleNames($user)->values()->all(),
+            'invitation_sent' => $invitationSent,
+            'invitation_delivery_id' => $invitationDelivery?->id,
+            'invitation_delivery_status' => $invitationDelivery?->status,
         ]);
 
         return response()->json([
-            'message' => 'User created and invitation sent',
+            'message' => $invitationSent
+                ? 'User created and invitation queued'
+                : 'User created, but the invitation email could not be sent',
+            'invitation_sent' => $invitationSent,
             'user' => $this->formatUserPayload($user),
         ], 201);
     }

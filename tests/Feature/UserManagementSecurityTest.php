@@ -5,10 +5,13 @@ namespace Tests\Feature;
 use App\Models\LoginAttempt;
 use App\Models\Team;
 use App\Models\TeamMember;
+use App\Models\UserInvitationDelivery;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
+use App\Jobs\SendUserInvitationEmailJob;
 use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -157,6 +160,82 @@ class UserManagementSecurityTest extends TestCase
         $this->assertArrayHasKey('statutory_info', $row);
         $this->assertArrayHasKey('medical_info', $row);
         $this->assertArrayHasKey('emergency_contact', $row);
+    }
+
+    public function test_user_creation_queues_invitation_email_for_new_user(): void
+    {
+        Role::firstOrCreate(['name' => 'Contract Manager', 'guard_name' => 'web']);
+        $actor = $this->userWithRole('System Administrator', ['users.manage', '*']);
+        $this->actingAs($actor);
+        Queue::fake();
+
+        $response = $this->postJson('/api/users', [
+            'name' => 'New Staff User',
+            'email' => 'new.staff@example.test',
+            'role_assignments' => [
+                [
+                    'role' => 'Contract Manager',
+                    'scope_type' => RoleCatalog::OFFICE,
+                    'team_id' => null,
+                    'start_date' => now()->toDateString(),
+                    'end_date' => null,
+                    'is_primary' => true,
+                ],
+            ],
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('invitation_sent', true)
+            ->assertJsonPath('user.email', 'new.staff@example.test');
+
+        $delivery = UserInvitationDelivery::query()
+            ->where('recipient_email', 'new.staff@example.test')
+            ->first();
+        $this->assertNotNull($delivery);
+        $this->assertSame('queued', $delivery->status);
+        $this->assertSame(0, $delivery->attempts);
+        Queue::assertPushed(SendUserInvitationEmailJob::class);
+        $this->assertDatabaseHas('users', [
+            'email' => 'new.staff@example.test',
+            'status' => 'Active',
+        ]);
+    }
+
+    public function test_user_creation_marks_invitation_delivery_as_failed_when_dispatch_fails(): void
+    {
+        Role::firstOrCreate(['name' => 'Contract Manager', 'guard_name' => 'web']);
+        $actor = $this->userWithRole('System Administrator', ['users.manage', '*']);
+        $this->actingAs($actor);
+
+        config([
+            'queue.connections.database.driver' => 'invalid',
+        ]);
+
+        $response = $this->postJson('/api/users', [
+            'name' => 'Dispatch Failed User',
+            'email' => 'dispatch.fail@example.test',
+            'role_assignments' => [
+                [
+                    'role' => 'Contract Manager',
+                    'scope_type' => RoleCatalog::OFFICE,
+                    'team_id' => null,
+                    'start_date' => now()->toDateString(),
+                    'end_date' => null,
+                    'is_primary' => true,
+                ],
+            ],
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('invitation_sent', false)
+            ->assertJsonPath('user.email', 'dispatch.fail@example.test');
+
+        $delivery = UserInvitationDelivery::query()
+            ->where('recipient_email', 'dispatch.fail@example.test')
+            ->first();
+        $this->assertNotNull($delivery);
+        $this->assertSame('failed', $delivery->status);
+        $this->assertNotNull($delivery->last_error);
     }
 
     public function test_team_member_options_are_manage_only_and_redacted(): void
