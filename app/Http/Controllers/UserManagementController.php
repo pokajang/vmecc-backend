@@ -614,13 +614,8 @@ class UserManagementController extends Controller
         }
 
         if ($force) {
-            if (! $user->trashed()) {
-                return response()->json([
-                    'message' => 'User must be deleted before permanent delete.',
-                ], 422);
-            }
-
             AuditLogger::log($request, 'user_permanently_deleted', $user);
+            $this->revokeActiveSessions($request, $user, 'terminated');
             $user->forceDelete();
 
             return response()->json(['message' => 'User permanently deleted.']);

@@ -238,6 +238,21 @@ class UserManagementSecurityTest extends TestCase
         $this->assertNotNull($delivery->last_error);
     }
 
+    public function test_user_manager_can_permanently_delete_active_user_with_force(): void
+    {
+        $actor = $this->userWithRole('System Administrator', ['users.manage', '*']);
+        $target = User::factory()->create(['status' => 'Active']);
+        $this->actingAs($actor);
+
+        $this->deleteJson("/api/users/{$target->id}?force=1")
+            ->assertOk()
+            ->assertJsonPath('message', 'User permanently deleted.');
+
+        $this->assertDatabaseMissing('users', [
+            'id' => $target->id,
+        ]);
+    }
+
     public function test_team_member_options_are_manage_only_and_redacted(): void
     {
         $target = $this->sensitiveTargetUser();
