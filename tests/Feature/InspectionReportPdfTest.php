@@ -152,7 +152,16 @@ class InspectionReportPdfTest extends TestCase
             'location' => 'Warehouse Block A',
             'description' => 'Housekeeping inspection found minor labelling gaps.',
             'submittedBy' => 'Inspector User',
+            'submittedByRole' => 'Tactical Response Team',
+            'submittedByRoleCode' => 'TRT',
             'submittedAt' => '2026-04-29T09:15:00+08:00',
+            'inspectionActor' => [
+                'userId' => 10,
+                'name' => 'Inspector User',
+                'email' => 'inspector@example.test',
+                'role' => 'Tactical Response Team',
+                'roleCode' => 'TRT',
+            ],
             'photos' => [
                 [
                     'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
@@ -193,11 +202,19 @@ class InspectionReportPdfTest extends TestCase
                     'action' => 'Submitted',
                     'by' => 'Inspector User',
                     'at' => '2026-04-29T09:15:00+08:00',
+                    'meta' => [
+                        'actorRole' => 'Tactical Response Team',
+                        'actorRoleCode' => 'TRT',
+                    ],
                 ],
                 [
                     'action' => 'Reviewed',
                     'by' => 'Supervisor User',
                     'at' => '2026-04-29T10:10:00+08:00',
+                    'meta' => [
+                        'actorRole' => 'Assistant Incident Commander',
+                        'actorRoleCode' => 'AIC',
+                    ],
                 ],
             ],
         ];
@@ -221,7 +238,9 @@ class InspectionReportPdfTest extends TestCase
             'Leak test skipped because tool was isolated.',
             'Slow response.',
             'Inspector User',
+            'Tactical Response Team (TRT)',
             'Supervisor User',
+            'Assistant Incident Commander (AIC)',
         ];
 
         foreach ($expectedText as $text) {
@@ -331,6 +350,36 @@ class InspectionReportPdfTest extends TestCase
                     'remarks' => 'Leak test failed on seal.',
                 ],
             ],
+            'scbaCustomSections' => [
+                [
+                    'title' => 'Regulator',
+                    'shortLabel' => 'Regulator',
+                    'fields' => [
+                        ['key' => 'purgeValve', 'label' => 'Purge Valve', 'kind' => 'status'],
+                    ],
+                    'rows' => [
+                        [
+                            'location' => 'FRT',
+                            'brand' => 'MSA',
+                            'serialNo' => 'R-01',
+                            'purgeValve' => 'Not Good',
+                            'purgeValveRemarks' => 'Purge valve sticks.',
+                            'purgeValvePhotos' => [
+                                [
+                                    'url' => 'data:image/png;base64,QUFB',
+                                    'description' => 'Purge valve photo caption.',
+                                ],
+                            ],
+                            'photos' => [
+                                [
+                                    'url' => 'data:image/png;base64,QkJC',
+                                    'description' => 'General regulator photo.',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
         ];
 
         $html = view('pdf.inspection_report', [
@@ -344,6 +393,8 @@ class InspectionReportPdfTest extends TestCase
             'Back Plate',
             'Cylinder',
             'Face Mask',
+            'Regulator',
+            'Purge Valve',
             'Sealing',
             'Cleanliness',
             'Harness',
@@ -356,6 +407,9 @@ class InspectionReportPdfTest extends TestCase
             'Not Good',
             'Hose coupling worn.',
             'Leak test failed on seal.',
+            'Purge valve sticks.',
+            'Purge valve photo caption.',
+            'General regulator photo.',
         ] as $text) {
             $this->assertStringContainsString($text, $html);
         }
@@ -363,6 +417,7 @@ class InspectionReportPdfTest extends TestCase
         $this->assertTrue(
             strpos($html, 'Back Plate') < strpos($html, 'Cylinder')
             && strpos($html, 'Cylinder') < strpos($html, 'Face Mask')
+            && strpos($html, 'Face Mask') < strpos($html, 'Regulator')
         );
     }
 
@@ -459,6 +514,14 @@ class InspectionReportPdfTest extends TestCase
                     'rowKind' => 'status',
                     'status' => 'Issue',
                     'remarks' => 'Panel dent needs repair.',
+                    'photos' => [
+                        [
+                            'id' => 'frt-daily-pdf-photo',
+                            'fileName' => 'frt-daily-pdf-photo.png',
+                            'description' => 'Panel dent evidence.',
+                            'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+                        ],
+                    ],
                 ],
                 [
                     'rowNumber' => '91',
@@ -489,6 +552,14 @@ class InspectionReportPdfTest extends TestCase
                     'equipment' => 'ELECTRONIC SIREN',
                     'condition' => 'Not Good',
                     'remarks' => 'Mute switch sticking.',
+                    'photos' => [
+                        [
+                            'id' => 'frt-one-off-pdf-photo',
+                            'fileName' => 'frt-one-off-pdf-photo.png',
+                            'description' => 'Siren switch evidence.',
+                            'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+                        ],
+                    ],
                 ],
             ],
         ];
@@ -498,13 +569,12 @@ class InspectionReportPdfTest extends TestCase
         ])->render();
 
         foreach ([
-            'FRT Daily Inspection',
+            'Fire Truck Daily Readiness',
             'Inspector Truck',
             '2026-06-29',
-            'Day',
             'AJG9555',
-            'FRT Daily Roster',
-            'FRT One Off Checklist',
+            'Daily Readiness Roster',
+            'One-Off Readiness Checklist',
             'LOCKER 01',
             'TRUCK CHECKLIST',
             'MILEAGE (ODOMETER)',
@@ -514,6 +584,10 @@ class InspectionReportPdfTest extends TestCase
             'Not Good',
             'Panel dent needs repair.',
             'Mute switch sticking.',
+            'Issue Evidence - Row 90',
+            'Panel dent evidence.',
+            'Issue Evidence - Row 16',
+            'Siren switch evidence.',
             'Truck ready for dispatch.',
             'One-off issues tracked.',
         ] as $text) {
@@ -521,7 +595,7 @@ class InspectionReportPdfTest extends TestCase
         }
 
         $this->assertTrue(
-            strpos($html, 'FRT Daily Roster') < strpos($html, 'FRT One Off Checklist')
+            strpos($html, 'Daily Readiness Roster') < strpos($html, 'One-Off Readiness Checklist')
         );
     }
 

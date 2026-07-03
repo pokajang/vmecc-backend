@@ -35,6 +35,19 @@ class RoleCatalog
         'Representative' => 10,
     ];
 
+    public const ROLE_ABBREVIATIONS = [
+        'System Administrator' => 'SA',
+        'Contract Manager' => 'CM',
+        'Human Resource' => 'HR',
+        'Finance' => 'Fin',
+        'Admin' => 'Adm',
+        'Incident Commander' => 'IC',
+        'Assistant Incident Commander' => 'AIC',
+        'Tactical Response Team' => 'TRT',
+        'Client Contract Manager' => 'Client CM',
+        'Representative' => 'Client Rep',
+    ];
+
     public const ROLE_SCOPE = [
         'System Administrator' => self::GLOBAL,
         'Contract Manager' => self::OFFICE,
@@ -118,5 +131,15 @@ class RoleCatalog
     {
         $scope = self::scopeForRole($roleName);
         return in_array($scope, [self::SITE, self::CLIENT_SITE], true);
+    }
+
+    public static function abbreviationForRole(?string $roleName): ?string
+    {
+        $roleName = trim((string) ($roleName ?? ''));
+        if ($roleName === '') {
+            return null;
+        }
+
+        return self::ROLE_ABBREVIATIONS[$roleName] ?? null;
     }
 }

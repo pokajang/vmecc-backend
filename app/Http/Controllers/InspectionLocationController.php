@@ -135,12 +135,6 @@ class InspectionLocationController extends Controller
     {
         $this->ensureInspectionPermission($request);
         $location = $this->findActiveLocation($locationId);
-        if ($location->source === 'seed' && ! $this->canManageSeedLocations($request)) {
-            return response()->json([
-                'message' => 'Seeded inspection locations can only be changed by report managers.',
-                'code' => 'INSPECTION_LOCATION_SEED_PROTECTED',
-            ], 403);
-        }
 
         $data = $request->validate([
             'name' => ['required', 'string', 'max:190'],
@@ -177,12 +171,6 @@ class InspectionLocationController extends Controller
     {
         $this->ensureInspectionPermission($request);
         $location = $this->findActiveLocation($locationId);
-        if ($location->source === 'seed' && ! $this->canManageSeedLocations($request)) {
-            return response()->json([
-                'message' => 'Seeded inspection locations can only be archived by report managers.',
-                'code' => 'INSPECTION_LOCATION_SEED_PROTECTED',
-            ], 403);
-        }
 
         DB::transaction(function () use ($location) {
             $location->update(['is_active' => false]);
@@ -241,7 +229,7 @@ class InspectionLocationController extends Controller
             [
                 'inspection_type_label' => $type['label'],
                 'is_default' => true,
-                'sort_order' => $this->nextTypeSortOrder($type['key']),
+                'sort_order' => (int) ($type['sort_order'] ?? $this->nextTypeSortOrder($type['key'])),
             ]
         );
     }
@@ -279,8 +267,8 @@ class InspectionLocationController extends Controller
             'iconKey' => (string) ($location->icon_key ?? ''),
             'source' => $location->source,
             'custom' => $location->source !== 'seed',
-            'canEdit' => $location->source !== 'seed',
-            'canDelete' => $location->source !== 'seed',
+            'canEdit' => true,
+            'canDelete' => true,
             'subLocations' => $location->relationLoaded('activeChildren')
                 ? $location->activeChildren
                     ->map(fn (InspectionLocation $child) => $this->formatLocation($child))
@@ -296,12 +284,6 @@ class InspectionLocationController extends Controller
         if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.view')) {
             abort(403, 'Missing inspection report permission.');
         }
-    }
-
-    private function canManageSeedLocations(Request $request): bool
-    {
-        $user = $request->user();
-        return (bool) ($user && $this->authorizationService->hasPermission($user, 'reports.manage'));
     }
 
     private function normalizeTypeKey(string $value): string

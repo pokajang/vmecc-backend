@@ -85,12 +85,6 @@ class InspectionFireExtinguisherController extends Controller
     {
         $this->ensureInspectionPermission($request);
         $row = $this->findActiveRow($extinguisherId);
-        if ($row->source === 'seed' && ! $this->canManageSeedRows($request)) {
-            return response()->json([
-                'message' => 'Seeded fire extinguisher rows can only be changed by report managers.',
-                'code' => 'INSPECTION_FIRE_EXTINGUISHER_SEED_PROTECTED',
-            ], 403);
-        }
 
         $data = $request->validate($this->rules());
         $row->fill($this->payloadToAttributes($data))->save();
@@ -102,12 +96,6 @@ class InspectionFireExtinguisherController extends Controller
     {
         $this->ensureInspectionPermission($request);
         $row = $this->findActiveRow($extinguisherId);
-        if ($row->source === 'seed' && ! $this->canManageSeedRows($request)) {
-            return response()->json([
-                'message' => 'Seeded fire extinguisher rows can only be archived by report managers.',
-                'code' => 'INSPECTION_FIRE_EXTINGUISHER_SEED_PROTECTED',
-            ], 403);
-        }
 
         $row->update(['is_active' => false]);
 
@@ -169,8 +157,6 @@ class InspectionFireExtinguisherController extends Controller
 
     private function formatRow(InspectionFireExtinguisher $row, Request $request): array
     {
-        $canManageSeed = $this->canManageSeedRows($request);
-        $canManageRow = $row->source !== 'seed' || $canManageSeed;
         $validity = $row->certification_validity;
 
         return [
@@ -191,8 +177,8 @@ class InspectionFireExtinguisherController extends Controller
             'daysLeftToExpire' => (string) ($row->days_left_to_expire ?? ''),
             'sortOrder' => $row->sort_order,
             'isActive' => $row->is_active,
-            'canEdit' => $canManageRow,
-            'canDelete' => $canManageRow,
+            'canEdit' => true,
+            'canDelete' => true,
         ];
     }
 
@@ -209,12 +195,6 @@ class InspectionFireExtinguisherController extends Controller
         if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.view')) {
             abort(403, 'Missing inspection report permission.');
         }
-    }
-
-    private function canManageSeedRows(Request $request): bool
-    {
-        $user = $request->user();
-        return (bool) ($user && $this->authorizationService->hasPermission($user, 'reports.manage'));
     }
 
     private function text(mixed $value): string

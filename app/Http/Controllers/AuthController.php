@@ -8,6 +8,7 @@ use App\Models\UserSession;
 use App\Models\LoginAttempt;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuthSessionService;
+use App\Services\RoleCatalog;
 use App\Support\MalaysiaStateCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -230,6 +231,9 @@ class AuthController extends Controller
                 ];
             });
 
+        $roles = $authz->getActiveRoleNames($user)->values()->all();
+        $primaryRole = trim((string) ($roles[0] ?? '')) ?: null;
+
         $payload = [
             'user' => [
                 'id' => $user->id,
@@ -242,7 +246,9 @@ class AuthController extends Controller
                 'profile_image_url' => $this->resolveProfileImageUrl($user->profile_image_url),
                 'status' => $user->status,
                 'last_login_at' => $user->last_login_at,
-                'roles' => $authz->getActiveRoleNames($user)->values()->all(),
+                'roles' => $roles,
+                'primary_role' => $primaryRole,
+                'primary_role_code' => RoleCatalog::abbreviationForRole($primaryRole),
                 'permissions' => $authz->getActivePermissionNames($user)->values()->all(),
                 'role_assignments' => $authz->getRoleAssignmentsPayload($user),
                 'emergency_contact' => $user->emergency_contact ?? null,

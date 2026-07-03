@@ -83,6 +83,18 @@ class AssignmentAuthorizationService
         return $this->sortRoleNames($roles);
     }
 
+    public function getPrimaryRoleName(User $user): ?string
+    {
+        $roleName = trim((string) ($this->getActiveRoleNames($user)->first() ?? ''));
+
+        return $roleName !== '' ? $roleName : null;
+    }
+
+    public function getPrimaryRoleCode(User $user): ?string
+    {
+        return RoleCatalog::abbreviationForRole($this->getPrimaryRoleName($user));
+    }
+
     public function getRoleAssignmentsPayload(User $user): array
     {
         $assignments = $this->activeAssignmentsQuery($user)

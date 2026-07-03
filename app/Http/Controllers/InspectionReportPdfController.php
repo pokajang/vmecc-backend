@@ -29,7 +29,7 @@ class InspectionReportPdfController extends Controller
         }
         $report = Report::query()
             ->with('timelineEntries')
-            ->where('owner_user_id', $user?->id)
+            ->where('owner_user_id', $user->id)
             ->where('report_uid', $reportUid)
             ->where('report_type', 'inspection')
             ->first();

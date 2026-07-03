@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
             InspectionLocationCatalogSeeder::class,
             InspectionEquipmentCatalogSeeder::class,
             InspectionFireExtinguisherCatalogSeeder::class,
+            InspectionFireTruckCatalogSeeder::class,
             AdminUserSeeder::class,
         ]);
     }

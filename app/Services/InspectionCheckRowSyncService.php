@@ -386,6 +386,8 @@ class InspectionCheckRowSyncService
             $quantity = trim((string) ($item['quantity'] ?? $item['qty'] ?? $item['defaultQuantity'] ?? $item['default_quantity'] ?? ''));
             $condition = trim((string) ($item['condition'] ?? ''));
             $remarks = trim((string) ($item['remarks'] ?? $item['remark'] ?? ''));
+            $defectRemarks = trim((string) ($item['defectRemarks'] ?? $item['defect_remarks'] ?? ''));
+            $additionalNotes = trim((string) ($item['additionalNotes'] ?? $item['additional_notes'] ?? ''));
             $parts = [];
             if ($quantity !== '') {
                 $parts[] = 'Qty: '.$quantity;
@@ -398,6 +400,12 @@ class InspectionCheckRowSyncService
             }
             if ($remarks !== '') {
                 $parts[] = 'Remarks: '.$remarks;
+            }
+            if ($defectRemarks !== '') {
+                $parts[] = 'Defect: '.$defectRemarks;
+            }
+            if ($additionalNotes !== '') {
+                $parts[] = 'Additional: '.$additionalNotes;
             }
 
             $rows[] = $this->baseRow(
@@ -413,7 +421,8 @@ class InspectionCheckRowSyncService
                 checkName: 'Condition',
                 checkValue: $condition,
                 remarks: implode('; ', $parts),
-                evidenceCount: $this->countEvidencePhotos($item['photos'] ?? []),
+                evidenceCount: $this->countEvidencePhotos($item['photos'] ?? [])
+                    + $this->countEvidencePhotos($item['defectPhotos'] ?? $item['defect_photos'] ?? []),
                 sourceRowId: $sourceRowId,
                 sortOrder: $sortOrder++,
                 checkGroup: 'ER Aux Equipment Checks',
@@ -721,13 +730,15 @@ class InspectionCheckRowSyncService
                     $sourceRowId = $this->slug($sectionKey.' '.$locationParts['location'].' '.$equipment) ?: 'scba-check-'.$sectionKey.'-'.$index;
                 }
 
-                $rowRemarks = trim((string) ($item['remarks'] ?? $item['remark'] ?? ''));
-
                 foreach ($sectionMeta['fields'] as $field => $checkMeta) {
                     $snakeField = Str::snake($field);
                     $checkValue = trim((string) ($item[$field] ?? $item[$snakeField] ?? ''));
                     $hasDefect = isset($checkMeta['defectValue'])
                         && strcasecmp($checkValue, (string) $checkMeta['defectValue']) === 0;
+                    $remarksKey = $field.'Remarks';
+                    $photosKey = $field.'Photos';
+                    $fieldRemarks = trim((string) ($item[$remarksKey] ?? $item[Str::snake($remarksKey)] ?? ''));
+                    $fieldEvidenceCount = $this->countEvidencePhotos($item[$photosKey] ?? $item[Str::snake($photosKey)] ?? []);
 
                     $rows[] = $this->baseRow(
                         report: $report,
@@ -741,14 +752,89 @@ class InspectionCheckRowSyncService
                         checkKey: $checkMeta['key'],
                         checkName: $checkMeta['name'],
                         checkValue: $checkValue,
-                        remarks: $hasDefect ? $rowRemarks : '',
-                        evidenceCount: 0,
+                        remarks: $hasDefect ? $fieldRemarks : '',
+                        evidenceCount: $hasDefect ? $fieldEvidenceCount : 0,
                         sourceRowId: $sourceRowId,
                         sortOrder: $sortOrder++,
                         checkGroup: $sectionMeta['checkGroup'],
                         sourcePayloadKey: $payloadKey,
                         hasDefectOverride: $hasDefect,
                     );
+                }
+            }
+        }
+
+        $customSections = $payload['scbaCustomSections'] ?? $payload['scba_custom_sections'] ?? [];
+        if (is_array($customSections)) {
+            foreach ($customSections as $sectionIndex => $section) {
+                if (! is_array($section)) {
+                    continue;
+                }
+                if (($section['removed'] ?? false) === true) {
+                    continue;
+                }
+                $sectionTitle = trim((string) ($section['title'] ?? 'Custom SCBA Section'));
+                $fields = is_array($section['fields'] ?? null) ? $section['fields'] : [];
+                $checks = is_array($section['rows'] ?? null) ? $section['rows'] : [];
+                foreach ($checks as $index => $item) {
+                    if (! is_array($item)) {
+                        continue;
+                    }
+                    if (($item['removed'] ?? false) === true) {
+                        continue;
+                    }
+
+                    $locationParts = $this->resolveLocationParts($payload, $item);
+                    $brand = trim((string) ($item['brand'] ?? ''));
+                    $serialNo = trim((string) ($item['serialNo'] ?? $item['serial_no'] ?? $item['serialNumber'] ?? ''));
+                    $equipment = trim($brand.' '.$serialNo);
+                    if ($equipment === '') {
+                        $equipment = $sectionTitle.' '.($index + 1);
+                    }
+
+                    $sourceRowId = trim((string) ($item['id'] ?? ''));
+                    if ($sourceRowId === '') {
+                        $sourceRowId = $this->slug($sectionTitle.' '.$locationParts['location'].' '.$equipment) ?: 'scba-custom-check-'.$sectionIndex.'-'.$index;
+                    }
+
+                    foreach ($fields as $field) {
+                        if (! is_array($field)) {
+                            continue;
+                        }
+                        $fieldKey = trim((string) ($field['key'] ?? ''));
+                        $fieldLabel = trim((string) ($field['label'] ?? $fieldKey));
+                        if ($fieldKey === '' || $fieldLabel === '') {
+                            continue;
+                        }
+                        $snakeField = Str::snake($fieldKey);
+                        $checkValue = trim((string) ($item[$fieldKey] ?? $item[$snakeField] ?? ''));
+                        $hasDefect = strcasecmp($checkValue, 'Not Good') === 0;
+                        $remarksKey = $fieldKey.'Remarks';
+                        $photosKey = $fieldKey.'Photos';
+                        $fieldRemarks = trim((string) ($item[$remarksKey] ?? $item[Str::snake($remarksKey)] ?? ''));
+                        $fieldEvidenceCount = $this->countEvidencePhotos($item[$photosKey] ?? $item[Str::snake($photosKey)] ?? []);
+
+                        $rows[] = $this->baseRow(
+                            report: $report,
+                            inspectionType: $inspectionType,
+                            inspectionTypeKey: $inspectionTypeKey,
+                            actorUserId: $actorUserId,
+                            locationParts: $locationParts,
+                            equipment: $equipment,
+                            equipmentCatalogId: null,
+                            equipmentSource: 'custom',
+                            checkKey: $this->slug($fieldKey) ?: $fieldKey,
+                            checkName: $fieldLabel,
+                            checkValue: $checkValue,
+                            remarks: $hasDefect ? $fieldRemarks : '',
+                            evidenceCount: $hasDefect ? $fieldEvidenceCount : 0,
+                            sourceRowId: $sourceRowId,
+                            sortOrder: $sortOrder++,
+                            checkGroup: 'SCBA '.$sectionTitle.' Checks',
+                            sourcePayloadKey: 'scbaCustomSections',
+                            hasDefectOverride: $hasDefect,
+                        );
+                    }
                 }
             }
         }

@@ -141,6 +141,31 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
     {
         $user = $this->actingAsInspectionUser();
         $payload = $this->scbaPayload('FRT');
+        $payload['scbaCustomSections'] = [
+            [
+                'title' => 'Regulator',
+                'fields' => [
+                    ['key' => 'purgeValve', 'label' => 'Purge Valve', 'kind' => 'status'],
+                ],
+                'rows' => [
+                    [
+                        'id' => 'customScba-regulator:frt:msa:r-01',
+                        'location' => 'FRT',
+                        'brand' => 'MSA',
+                        'serialNo' => 'R-01',
+                        'purgeValve' => 'Not Good',
+                        'purgeValveRemarks' => 'Purge valve sticks.',
+                        'purgeValvePhotos' => [
+                            [
+                                'id' => 'purge-photo',
+                                'description' => 'Purge valve evidence',
+                                'url' => $this->makeImageDataUrl(16),
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
 
         $this->postJson('/api/reports', [
             'display_id' => 'INS-SCBA-ANALYTICS-001',
@@ -151,7 +176,7 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
 
         $report = Report::query()->where('display_id', 'INS-SCBA-ANALYTICS-001')->firstOrFail();
 
-        $this->assertSame(21, InspectionCheckRow::query()->where('report_id', $report->id)->count());
+        $this->assertSame(22, InspectionCheckRow::query()->where('report_id', $report->id)->count());
         $this->assertDatabaseHas('inspection_check_rows', [
             'report_id' => $report->id,
             'owner_user_id' => $user->id,
@@ -163,6 +188,8 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
             'check_value' => 'Not Good',
             'remarks' => 'Hose coupling worn.',
             'has_defect' => true,
+            'has_evidence' => true,
+            'evidence_count' => 1,
             'source_payload_key' => 'scbaBackPlateChecks',
         ]);
         $this->assertDatabaseHas('inspection_check_rows', [
@@ -182,7 +209,22 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
             'check_value' => 'Not Good',
             'remarks' => 'Leak test failed on seal.',
             'has_defect' => true,
+            'has_evidence' => true,
+            'evidence_count' => 1,
             'source_payload_key' => 'scbaFaceMaskChecks',
+        ]);
+        $this->assertDatabaseHas('inspection_check_rows', [
+            'report_id' => $report->id,
+            'equipment' => 'MSA R-01',
+            'equipment_source' => 'custom',
+            'check_group' => 'SCBA Regulator Checks',
+            'check_key' => 'purgevalve',
+            'check_value' => 'Not Good',
+            'remarks' => 'Purge valve sticks.',
+            'has_defect' => true,
+            'has_evidence' => true,
+            'evidence_count' => 1,
+            'source_payload_key' => 'scbaCustomSections',
         ]);
     }
 
@@ -236,7 +278,7 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
             'report_id' => $report->id,
             'owner_user_id' => $user->id,
             'inspection_type_key' => 'frt-daily-inspection',
-            'main_location' => 'FIRE TRUCK',
+            'main_location' => 'AJG9555',
             'location' => 'FIRE TRUCK',
             'sub_location' => '',
             'equipment' => 'OVERALL BODY',
@@ -250,7 +292,7 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
         $this->assertDatabaseHas('inspection_check_rows', [
             'report_id' => $report->id,
             'inspection_type_key' => 'frt-daily-inspection',
-            'main_location' => 'FIRE TRUCK',
+            'main_location' => 'AJG9555',
             'location' => 'FIRE TRUCK',
             'equipment' => 'MILEAGE (ODOMETER)',
             'check_group' => 'FRT Daily Roster',
@@ -262,7 +304,7 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
         $this->assertDatabaseHas('inspection_check_rows', [
             'report_id' => $report->id,
             'inspection_type_key' => 'frt-daily-inspection',
-            'main_location' => 'FIRE TRUCK',
+            'main_location' => 'AJG9555',
             'location' => 'TRUCK CHECKLIST',
             'sub_location' => '',
             'equipment' => 'ELECTRONIC SIREN',
@@ -569,6 +611,14 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
                     'sealing' => 'Good',
                     'cleanliness' => 'Good',
                     'remarks' => 'Hose coupling worn.',
+                    'highPressureHoseRemarks' => 'Hose coupling worn.',
+                    'highPressureHosePhotos' => [
+                        [
+                            'id' => 'scba-hose-photo',
+                            'description' => 'Hose coupling photo.',
+                            'url' => $this->makeImageDataUrl(16),
+                        ],
+                    ],
                 ],
             ],
             'scbaCylinderChecks' => [
@@ -602,6 +652,14 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
                     'harness' => 'Good',
                     'neckStrap' => 'Good',
                     'remarks' => 'Leak test failed on seal.',
+                    'leakTestRemarks' => 'Leak test failed on seal.',
+                    'leakTestPhotos' => [
+                        [
+                            'id' => 'scba-mask-photo',
+                            'description' => 'Face mask seal photo.',
+                            'url' => $this->makeImageDataUrl(16),
+                        ],
+                    ],
                 ],
             ],
             'checklist' => [
@@ -645,6 +703,14 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
                 },
                 'condition' => $rowNumber === 3 ? 'Not Good' : 'Good',
                 'remarks' => $rowNumber === 3 ? 'Gate spring is sticking.' : '',
+                'conditionRemarks' => $rowNumber === 3 ? 'Gate spring is sticking.' : '',
+                'conditionPhotos' => $rowNumber === 3 ? [
+                    [
+                        'id' => 'high-angle-gate-photo',
+                        'description' => 'Gate spring evidence.',
+                        'url' => $this->makeImageDataUrl(16),
+                    ],
+                ] : [],
             ];
         }
 
@@ -704,6 +770,13 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
                     default => '',
                 },
                 'remarks' => $rowNumber === 90 ? 'Panel dent needs repair.' : '',
+                'photos' => $rowNumber === 90 ? [
+                    [
+                        'id' => 'frt-daily-panel-photo',
+                        'url' => $this->makeImageDataUrl(8),
+                        'description' => 'Panel dent evidence.',
+                    ],
+                ] : [],
             ];
         }
 
@@ -733,6 +806,13 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
                 },
                 'condition' => $rowNumber === 16 ? 'Not Good' : 'Good',
                 'remarks' => $rowNumber === 16 ? 'Mute switch sticking.' : '',
+                'photos' => $rowNumber === 16 ? [
+                    [
+                        'id' => 'frt-one-off-siren-photo',
+                        'url' => $this->makeImageDataUrl(8),
+                        'description' => 'Siren switch evidence.',
+                    ],
+                ] : [],
             ];
         }
 

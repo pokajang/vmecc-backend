@@ -260,6 +260,9 @@
     $scbaFaceMaskChecks = array_values(array_filter(is_array($record['scbaFaceMaskChecks'] ?? null) ? $record['scbaFaceMaskChecks'] : (is_array($record['scba_face_mask_checks'] ?? null) ? $record['scba_face_mask_checks'] : []), function ($item) {
         return is_array($item) && trim((string) ($item['serialNo'] ?? $item['serial_no'] ?? '')) !== '';
     }));
+    $scbaCustomSections = array_values(array_filter(is_array($record['scbaCustomSections'] ?? null) ? $record['scbaCustomSections'] : (is_array($record['scba_custom_sections'] ?? null) ? $record['scba_custom_sections'] : []), function ($item) {
+        return is_array($item) && ($item['removed'] ?? false) !== true && trim((string) ($item['title'] ?? '')) !== '';
+    }));
     $erAuxInspectedBy = trim((string) ($record['erAuxInspectedBy'] ?? $record['er_aux_inspected_by'] ?? ''));
     $erAuxInspectionDate = trim((string) ($record['erAuxInspectionDate'] ?? $record['er_aux_inspection_date'] ?? ''));
     $fireExtinguisherInspectedBy = trim((string) ($record['fireExtinguisherInspectedBy'] ?? $record['fire_extinguisher_inspected_by'] ?? ''));
@@ -270,6 +273,10 @@
     $frtTruckReference = is_array($record['frtTruckReference'] ?? null)
         ? $record['frtTruckReference']
         : (is_array($record['frt_truck_reference'] ?? null) ? $record['frt_truck_reference'] : []);
+    $frtTruckPlate = trim((string) ($record['frtTruckPlateNo'] ?? $record['frt_truck_plate_no'] ?? $frtTruckReference['plateNo'] ?? $frtTruckReference['plate_no'] ?? $record['mainLocation'] ?? $record['main_location'] ?? ''));
+    if (strtolower($frtTruckPlate) === 'fire truck') {
+        $frtTruckPlate = trim((string) ($frtTruckReference['plateNo'] ?? $frtTruckReference['plate_no'] ?? ''));
+    }
     $frtDailyRemarks = trim((string) ($record['frtDailyRemarks'] ?? $record['frt_daily_remarks'] ?? ''));
     $frtOneOffRemarks = trim((string) ($record['frtOneOffRemarks'] ?? $record['frt_one_off_remarks'] ?? ''));
     $highAngleInspectedBy = trim((string) ($record['highAngleInspectedBy'] ?? $record['high_angle_inspected_by'] ?? ''));
@@ -302,6 +309,17 @@
     $hasHseObservation = count($hseSelections) > 0 || $hseInspectedBy !== '' || $hseInspectionDate !== '';
     $submittedBy = trim((string) ($record['submittedBy'] ?? ''));
     $submittedAtRaw = trim((string) ($record['submittedAt'] ?? ''));
+    $inspectionActor = is_array($record['inspectionActor'] ?? null) ? $record['inspectionActor'] : [];
+    $formatRole = function ($role, $roleCode) {
+        $role = trim((string) ($role ?? ''));
+        $roleCode = trim((string) ($roleCode ?? ''));
+        if ($role !== '' && $roleCode !== '') {
+            return "{$role} ({$roleCode})";
+        }
+        return $role !== '' ? $role : $roleCode;
+    };
+    $submittedByRole = $formatRole($record['submittedByRole'] ?? '', $record['submittedByRoleCode'] ?? '');
+    $inspectedByRole = $formatRole($inspectionActor['role'] ?? '', $inspectionActor['roleCode'] ?? '');
     $timeline = is_array($record['timeline'] ?? null) ? $record['timeline'] : [];
     $photos = is_array($record['photos'] ?? null) ? $record['photos'] : [];
     $hydraulicCheckFields = [
@@ -359,6 +377,15 @@
                 ['label' => 'Cleanliness', 'camel' => 'cleanliness', 'snake' => 'cleanliness'],
                 ['label' => 'Remarks', 'camel' => 'remarks', 'snake' => 'remarks'],
             ],
+            'status_fields' => [
+                ['label' => 'Back Plate & Harness', 'status' => 'backPlateHarnessCondition', 'status_snake' => 'back_plate_harness_condition', 'remarks' => 'backPlateHarnessConditionRemarks', 'remarks_snake' => 'back_plate_harness_condition_remarks', 'photos' => 'backPlateHarnessConditionPhotos', 'photos_snake' => 'back_plate_harness_condition_photos'],
+                ['label' => 'High Pressure Hose', 'status' => 'highPressureHose', 'status_snake' => 'high_pressure_hose', 'remarks' => 'highPressureHoseRemarks', 'remarks_snake' => 'high_pressure_hose_remarks', 'photos' => 'highPressureHosePhotos', 'photos_snake' => 'high_pressure_hose_photos'],
+                ['label' => 'Pressure Gauge', 'status' => 'pressureGauge', 'status_snake' => 'pressure_gauge', 'remarks' => 'pressureGaugeRemarks', 'remarks_snake' => 'pressure_gauge_remarks', 'photos' => 'pressureGaugePhotos', 'photos_snake' => 'pressure_gauge_photos'],
+                ['label' => 'Alarm Device', 'status' => 'alarmDevice', 'status_snake' => 'alarm_device', 'remarks' => 'alarmDeviceRemarks', 'remarks_snake' => 'alarm_device_remarks', 'photos' => 'alarmDevicePhotos', 'photos_snake' => 'alarm_device_photos'],
+                ['label' => 'Demand Valve', 'status' => 'demandValve', 'status_snake' => 'demand_valve', 'remarks' => 'demandValveRemarks', 'remarks_snake' => 'demand_valve_remarks', 'photos' => 'demandValvePhotos', 'photos_snake' => 'demand_valve_photos'],
+                ['label' => 'Sealing', 'status' => 'sealing', 'status_snake' => 'sealing', 'remarks' => 'sealingRemarks', 'remarks_snake' => 'sealing_remarks', 'photos' => 'sealingPhotos', 'photos_snake' => 'sealing_photos'],
+                ['label' => 'Cleanliness', 'status' => 'cleanliness', 'status_snake' => 'cleanliness', 'remarks' => 'cleanlinessRemarks', 'remarks_snake' => 'cleanliness_remarks', 'photos' => 'cleanlinessPhotos', 'photos_snake' => 'cleanliness_photos'],
+            ],
         ],
         [
             'title' => 'Cylinder',
@@ -378,6 +405,13 @@
                 ['label' => 'Cleanliness', 'camel' => 'cleanliness', 'snake' => 'cleanliness'],
                 ['label' => 'Remarks', 'camel' => 'remarks', 'snake' => 'remarks'],
             ],
+            'status_fields' => [
+                ['label' => 'Physical Condition', 'status' => 'physicalCondition', 'status_snake' => 'physical_condition', 'remarks' => 'physicalConditionRemarks', 'remarks_snake' => 'physical_condition_remarks', 'photos' => 'physicalConditionPhotos', 'photos_snake' => 'physical_condition_photos'],
+                ['label' => 'Handwheel Condition', 'status' => 'handwheelCondition', 'status_snake' => 'handwheel_condition', 'remarks' => 'handwheelConditionRemarks', 'remarks_snake' => 'handwheel_condition_remarks', 'photos' => 'handwheelConditionPhotos', 'photos_snake' => 'handwheel_condition_photos'],
+                ['label' => 'Valve Body Condition', 'status' => 'valveBodyCondition', 'status_snake' => 'valve_body_condition', 'remarks' => 'valveBodyConditionRemarks', 'remarks_snake' => 'valve_body_condition_remarks', 'photos' => 'valveBodyConditionPhotos', 'photos_snake' => 'valve_body_condition_photos'],
+                ['label' => 'Screw Plug Condition', 'status' => 'screwPlugCondition', 'status_snake' => 'screw_plug_condition', 'remarks' => 'screwPlugConditionRemarks', 'remarks_snake' => 'screw_plug_condition_remarks', 'photos' => 'screwPlugConditionPhotos', 'photos_snake' => 'screw_plug_condition_photos'],
+                ['label' => 'Cleanliness', 'status' => 'cleanliness', 'status_snake' => 'cleanliness', 'remarks' => 'cleanlinessRemarks', 'remarks_snake' => 'cleanliness_remarks', 'photos' => 'cleanlinessPhotos', 'photos_snake' => 'cleanliness_photos'],
+            ],
         ],
         [
             'title' => 'Face Mask',
@@ -395,9 +429,62 @@
                 ['label' => 'Neck Strap', 'camel' => 'neckStrap', 'snake' => 'neck_strap'],
                 ['label' => 'Remarks', 'camel' => 'remarks', 'snake' => 'remarks'],
             ],
+            'status_fields' => [
+                ['label' => 'Visor Condition', 'status' => 'visorCondition', 'status_snake' => 'visor_condition', 'remarks' => 'visorConditionRemarks', 'remarks_snake' => 'visor_condition_remarks', 'photos' => 'visorConditionPhotos', 'photos_snake' => 'visor_condition_photos'],
+                ['label' => 'LDV Port', 'status' => 'ldvPort', 'status_snake' => 'ldv_port', 'remarks' => 'ldvPortRemarks', 'remarks_snake' => 'ldv_port_remarks', 'photos' => 'ldvPortPhotos', 'photos_snake' => 'ldv_port_photos'],
+                ['label' => 'LDV Release Button', 'status' => 'ldvReleaseButton', 'status_snake' => 'ldv_release_button', 'remarks' => 'ldvReleaseButtonRemarks', 'remarks_snake' => 'ldv_release_button_remarks', 'photos' => 'ldvReleaseButtonPhotos', 'photos_snake' => 'ldv_release_button_photos'],
+                ['label' => 'Leak Test', 'status' => 'leakTest', 'status_snake' => 'leak_test', 'remarks' => 'leakTestRemarks', 'remarks_snake' => 'leak_test_remarks', 'photos' => 'leakTestPhotos', 'photos_snake' => 'leak_test_photos'],
+                ['label' => 'Speech Diaphragm', 'status' => 'speechDiaphragm', 'status_snake' => 'speech_diaphragm', 'remarks' => 'speechDiaphragmRemarks', 'remarks_snake' => 'speech_diaphragm_remarks', 'photos' => 'speechDiaphragmPhotos', 'photos_snake' => 'speech_diaphragm_photos'],
+                ['label' => 'Harness', 'status' => 'harness', 'status_snake' => 'harness', 'remarks' => 'harnessRemarks', 'remarks_snake' => 'harness_remarks', 'photos' => 'harnessPhotos', 'photos_snake' => 'harness_photos'],
+                ['label' => 'Neck Strap', 'status' => 'neckStrap', 'status_snake' => 'neck_strap', 'remarks' => 'neckStrapRemarks', 'remarks_snake' => 'neck_strap_remarks', 'photos' => 'neckStrapPhotos', 'photos_snake' => 'neck_strap_photos'],
+            ],
         ],
     ];
-    $hasScbaChecks = count($scbaBackPlateChecks) > 0 || count($scbaCylinderChecks) > 0 || count($scbaFaceMaskChecks) > 0;
+    $toSnake = function ($value) {
+        $value = preg_replace('/([a-z0-9])([A-Z])/', '$1_$2', (string) $value);
+        return strtolower((string) $value);
+    };
+    foreach ($scbaCustomSections as $customSection) {
+        $fields = array_values(array_filter(is_array($customSection['fields'] ?? null) ? $customSection['fields'] : [], function ($field) {
+            return is_array($field) && trim((string) ($field['key'] ?? '')) !== '' && trim((string) ($field['label'] ?? '')) !== '';
+        }));
+        $rows = array_values(array_filter(is_array($customSection['rows'] ?? null) ? $customSection['rows'] : [], function ($item) {
+            return is_array($item) && ($item['removed'] ?? false) !== true && (trim((string) ($item['serialNo'] ?? $item['serial_no'] ?? '')) !== '' || trim((string) ($item['brand'] ?? '')) !== '');
+        }));
+        if (count($fields) === 0 && count($rows) === 0) {
+            continue;
+        }
+        $columns = [
+            ['label' => 'Location', 'camel' => 'location', 'snake' => 'location'],
+            ['label' => 'Brand', 'camel' => 'brand', 'snake' => 'brand'],
+            ['label' => 'Serial No.', 'camel' => 'serialNo', 'snake' => 'serial_no'],
+        ];
+        $statusFields = [];
+        foreach ($fields as $field) {
+            $fieldKey = trim((string) ($field['key'] ?? ''));
+            $fieldLabel = trim((string) ($field['label'] ?? $fieldKey));
+            $remarksKey = $fieldKey.'Remarks';
+            $photosKey = $fieldKey.'Photos';
+            $columns[] = ['label' => $fieldLabel, 'camel' => $fieldKey, 'snake' => $toSnake($fieldKey)];
+            $statusFields[] = [
+                'label' => $fieldLabel,
+                'status' => $fieldKey,
+                'status_snake' => $toSnake($fieldKey),
+                'remarks' => $remarksKey,
+                'remarks_snake' => $toSnake($remarksKey),
+                'photos' => $photosKey,
+                'photos_snake' => $toSnake($photosKey),
+            ];
+        }
+        $columns[] = ['label' => 'Remarks', 'camel' => 'remarks', 'snake' => 'remarks'];
+        $scbaSections[] = [
+            'title' => trim((string) ($customSection['title'] ?? 'Custom SCBA Section')),
+            'rows' => $rows,
+            'columns' => $columns,
+            'status_fields' => $statusFields,
+        ];
+    }
+    $hasScbaChecks = collect($scbaSections)->contains(fn ($section) => count($section['rows']) > 0);
     $frtDailyGroups = [];
     foreach ($frtDailyChecks as $check) {
         $group = trim((string) ($check['location'] ?? ''));
@@ -462,6 +549,22 @@
             return (bool) preg_match('/^data:image\/[a-z0-9.+-]+;base64,/i', $url);
         }));
     };
+    $formatPhotoDescription = function ($photo) {
+        $description = trim((string) ($photo['description'] ?? ''));
+        if ($description === '') {
+            $description = 'Image description not provided by user';
+        }
+        $description = preg_replace('/\s+/u', ' ', trim($description));
+        if ($description !== '') {
+            $descriptionLower = mb_strtolower($description, 'UTF-8');
+            $description = mb_strtoupper(mb_substr($descriptionLower, 0, 1, 'UTF-8'), 'UTF-8')
+                . mb_substr($descriptionLower, 1, null, 'UTF-8');
+        }
+        if (!preg_match('/[.!?]$/u', $description)) {
+            $description .= '.';
+        }
+        return $description;
+    };
     $photoColumns = count($photos) > 1 ? 2 : 1;
 
     $submittedEntry = collect($timeline)->first(function ($entry) {
@@ -485,6 +588,14 @@
         } catch (\Throwable) {
             return $raw;
         }
+    };
+    $entryActorRole = function ($entry) use ($formatRole) {
+        if (!is_array($entry)) return '';
+        $meta = is_array($entry['meta'] ?? null) ? $entry['meta'] : [];
+        return $formatRole(
+            $entry['actorRole'] ?? $meta['actorRole'] ?? '',
+            $entry['actorRoleCode'] ?? $meta['actorRoleCode'] ?? ''
+        );
     };
 
     $submittedAt = $submittedAtRaw !== '' ? $fmtDateTime($submittedAtRaw) : '';
@@ -533,6 +644,9 @@
             <div class="meta-cell">
                 <div class="meta-label">Submitted By</div>
                 <div class="meta-value">{{ $submittedBy ?: '--' }}</div>
+                @if ($submittedByRole !== '')
+                    <div class="person-meta">{{ $submittedByRole }}</div>
+                @endif
             </div>
         </div>
     </div>
@@ -567,6 +681,9 @@
             <div class="meta-cell">
                 <div class="meta-label">Inspected By</div>
                 <div class="meta-value">{{ $hseInspectedBy !== '' ? $hseInspectedBy : '--' }}</div>
+                @if ($inspectedByRole !== '')
+                    <div class="person-meta">{{ $inspectedByRole }}</div>
+                @endif
             </div>
             <div class="meta-cell">
                 <div class="meta-label">Inspection Date</div>
@@ -624,6 +741,9 @@
             <div class="meta-cell">
                 <div class="meta-label">Inspected By</div>
                 <div class="meta-value">{{ $fireExtinguisherInspectedBy !== '' ? $fireExtinguisherInspectedBy : '--' }}</div>
+                @if ($inspectedByRole !== '')
+                    <div class="person-meta">{{ $inspectedByRole }}</div>
+                @endif
             </div>
             <div class="meta-cell">
                 <div class="meta-label">Inspection Date</div>
@@ -671,23 +791,53 @@
             @php
                 $feName = trim((string) ($check['idLocNo'] ?? $check['id_loc_no'] ?? $check['barcodeNo'] ?? $check['barcode_no'] ?? '')) ?: 'Fire extinguisher';
                 $fireFields = [
-                    ['status' => 'physicalCondition', 'status_snake' => 'physical_condition', 'label' => 'FE Physical Condition', 'remarks' => 'physicalConditionRemarks', 'remarks_snake' => 'physical_condition_remarks'],
-                    ['status' => 'signageCondition', 'status_snake' => 'signage_condition', 'label' => 'FE Signage Condition', 'remarks' => 'signageConditionRemarks', 'remarks_snake' => 'signage_condition_remarks'],
-                    ['status' => 'boxKeyAvailability', 'status_snake' => 'box_key_availability', 'label' => 'FE Box Key Availability', 'remarks' => 'boxKeyAvailabilityRemarks', 'remarks_snake' => 'box_key_availability_remarks'],
-                    ['status' => 'boxGlassAvailability', 'status_snake' => 'box_glass_availability', 'label' => 'FE Box Glass Availability', 'remarks' => 'boxGlassAvailabilityRemarks', 'remarks_snake' => 'box_glass_availability_remarks'],
-                    ['status' => 'operationalCondition', 'status_snake' => 'operational_condition', 'label' => 'Operational Condition', 'remarks' => 'operationalConditionRemarks', 'remarks_snake' => 'operational_condition_remarks'],
+                    ['status' => 'physicalCondition', 'status_snake' => 'physical_condition', 'label' => 'FE Physical Condition', 'remarks' => 'physicalConditionRemarks', 'remarks_snake' => 'physical_condition_remarks', 'photos' => 'physicalConditionPhotos', 'photos_snake' => 'physical_condition_photos'],
+                    ['status' => 'signageCondition', 'status_snake' => 'signage_condition', 'label' => 'FE Signage Condition', 'remarks' => 'signageConditionRemarks', 'remarks_snake' => 'signage_condition_remarks', 'photos' => 'signageConditionPhotos', 'photos_snake' => 'signage_condition_photos'],
+                    ['status' => 'boxKeyAvailability', 'status_snake' => 'box_key_availability', 'label' => 'FE Box Key Availability', 'remarks' => 'boxKeyAvailabilityRemarks', 'remarks_snake' => 'box_key_availability_remarks', 'photos' => 'boxKeyAvailabilityPhotos', 'photos_snake' => 'box_key_availability_photos'],
+                    ['status' => 'boxGlassAvailability', 'status_snake' => 'box_glass_availability', 'label' => 'FE Box Glass Availability', 'remarks' => 'boxGlassAvailabilityRemarks', 'remarks_snake' => 'box_glass_availability_remarks', 'photos' => 'boxGlassAvailabilityPhotos', 'photos_snake' => 'box_glass_availability_photos'],
+                    ['status' => 'operationalCondition', 'status_snake' => 'operational_condition', 'label' => 'Operational Condition', 'remarks' => 'operationalConditionRemarks', 'remarks_snake' => 'operational_condition_remarks', 'photos' => 'operationalConditionPhotos', 'photos_snake' => 'operational_condition_photos'],
                 ];
             @endphp
             @foreach ($fireFields as $field)
                 @php
                     $statusValue = strtolower(trim((string) ($check[$field['status']] ?? $check[$field['status_snake']] ?? '')));
                     $remarksValue = trim((string) ($check[$field['remarks']] ?? $check[$field['remarks_snake']] ?? ''));
+                    $defectPhotos = $filterInlinePhotos($check[$field['photos']] ?? $check[$field['photos_snake']] ?? []);
+                    $defectPhotoColumns = count($defectPhotos) > 1 ? 2 : 1;
                 @endphp
-                @if (in_array($statusValue, ['not good', 'no', 'not operational'], true) && $remarksValue !== '')
+                @if (in_array($statusValue, ['not good', 'no', 'not operational'], true) && ($remarksValue !== '' || count($defectPhotos) > 0))
                     <div class="text-block-label" style="margin-top: 10px;">
-                        Defect Remarks: {{ $feName }} - {{ $field['label'] }}
+                        Defect Evidence: {{ $feName }} - {{ $field['label'] }}
                     </div>
-                    <div class="text-block-value">{{ $remarksValue }}</div>
+                    @if ($remarksValue !== '')
+                        <div class="text-block-value">{{ $remarksValue }}</div>
+                    @endif
+                    @if (count($defectPhotos) > 0)
+                        <table class="photo-grid">
+                            @foreach (array_chunk($defectPhotos, $defectPhotoColumns) as $photoRow)
+                                <tr>
+                                    @foreach ($photoRow as $photo)
+                                        @php $description = $formatPhotoDescription($photo); @endphp
+                                        <td style="width: {{ $defectPhotoColumns === 1 ? '100%' : '50%' }};">
+                                            <div class="photo-card">
+                                                <div class="photo-figure">
+                                                    <div class="photo-image-wrap">
+                                                        <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="Fire extinguisher defect photo">
+                                                    </div>
+                                                    <div class="photo-caption">
+                                                        <div class="photo-description">{{ $description }}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    @endforeach
+                                    @if ($defectPhotoColumns === 2 && count($photoRow) === 1)
+                                        <td></td>
+                                    @endif
+                                </tr>
+                            @endforeach
+                        </table>
+                    @endif
                 @endif
             @endforeach
         @endforeach
@@ -854,30 +1004,33 @@
 
 @if ($hasFrtChecks)
 <div class="card">
-    <div class="card-head">FRT Daily Inspection</div>
+    <div class="card-head">Fire Truck Daily Readiness</div>
     <div class="card-body">
         <div class="meta-grid meta-grid-4" style="margin-bottom: 8px;">
             <div class="meta-cell">
                 <div class="meta-label">Inspected By</div>
                 <div class="meta-value">{{ $frtInspectedBy !== '' ? $frtInspectedBy : '--' }}</div>
+                @if ($inspectedByRole !== '')
+                    <div class="person-meta">{{ $inspectedByRole }}</div>
+                @endif
             </div>
             <div class="meta-cell">
                 <div class="meta-label">Inspection Date</div>
                 <div class="meta-value">{{ $frtInspectionDate !== '' ? $frtInspectionDate : '--' }}</div>
             </div>
             <div class="meta-cell">
-                <div class="meta-label">Shift</div>
-                <div class="meta-value">{{ $frtShift !== '' ? $frtShift : '--' }}</div>
+                <div class="meta-label">Plate No</div>
+                <div class="meta-value">{{ $frtTruckPlate !== '' ? $frtTruckPlate : '--' }}</div>
             </div>
             <div class="meta-cell">
-                <div class="meta-label">Main Location</div>
-                <div class="meta-value">FIRE TRUCK</div>
+                <div class="meta-label">Truck</div>
+                <div class="meta-value">{{ trim((string) ($frtTruckReference['name'] ?? $frtTruckReference['truckName'] ?? $frtTruckReference['truck_name'] ?? '')) ?: '--' }}</div>
             </div>
         </div>
         <div class="meta-grid meta-grid-4" style="margin-bottom: 8px;">
             <div class="meta-cell">
-                <div class="meta-label">Plate No</div>
-                <div class="meta-value">{{ trim((string) ($frtTruckReference['plateNo'] ?? $frtTruckReference['plate_no'] ?? '')) ?: '--' }}</div>
+                <div class="meta-label">Truck Details</div>
+                <div class="meta-value">Daily readiness</div>
             </div>
             <div class="meta-cell">
                 <div class="meta-label">Road Tax Expiry</div>
@@ -895,7 +1048,7 @@
 
         @if (count($frtDailyChecks) > 0)
             <div class="text-block-label" style="margin: 0 0 4px; font-weight: 700; color: #374151;">
-                FRT Daily Roster
+                Daily Readiness Roster
             </div>
             @foreach ($frtDailyGroups as $group)
                 <div class="text-block-label" style="margin: {{ $loop->first ? '0' : '10px' }} 0 4px; font-weight: 700; color: #374151;">
@@ -932,6 +1085,41 @@
                         @endforeach
                     </tbody>
                 </table>
+                @foreach ($group['rows'] as $check)
+                    @php
+                        $status = trim((string) ($check['status'] ?? ''));
+                        $issuePhotos = strcasecmp($status, 'Issue') === 0 ? $filterInlinePhotos($check['photos'] ?? []) : [];
+                        $issuePhotoColumns = count($issuePhotos) > 1 ? 2 : 1;
+                    @endphp
+                    @if (count($issuePhotos) > 0)
+                        <div class="text-block-label" style="margin-top: 6px; font-weight: 700; color: #374151;">
+                            Issue Evidence - Row {{ trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--' }}: {{ trim((string) ($check['equipment'] ?? '')) ?: '--' }}
+                        </div>
+                        <table class="photo-grid">
+                            @foreach (array_chunk($issuePhotos, $issuePhotoColumns) as $photoRow)
+                                <tr>
+                                    @foreach ($photoRow as $photo)
+                                        <td style="width: {{ $issuePhotoColumns === 1 ? '100%' : '50%' }};">
+                                            <div class="photo-card">
+                                                <div class="photo-image-wrap">
+                                                    <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="FRT issue photo">
+                                                </div>
+                                                @if (trim((string) ($photo['description'] ?? '')) !== '')
+                                                    <div class="photo-caption">
+                                                        <div class="photo-description">{{ trim((string) ($photo['description'] ?? '')) }}</div>
+                                                    </div>
+                                                @endif
+                                            </div>
+                                        </td>
+                                    @endforeach
+                                    @if ($issuePhotoColumns === 2 && count($photoRow) === 1)
+                                        <td></td>
+                                    @endif
+                                </tr>
+                            @endforeach
+                        </table>
+                    @endif
+                @endforeach
             @endforeach
             @if ($frtDailyRemarks !== '')
                 <div class="text-block-label" style="margin-top: 10px;">Daily Remarks</div>
@@ -941,7 +1129,7 @@
 
         @if (count($frtOneOffChecks) > 0)
             <div class="text-block-label" style="margin: {{ count($frtDailyChecks) > 0 ? '10px' : '0' }} 0 4px; font-weight: 700; color: #374151;">
-                FRT One Off Checklist
+                One-Off Readiness Checklist
             </div>
             @foreach ($frtOneOffGroups as $group)
                 <div class="text-block-label" style="margin: {{ $loop->first ? '0' : '10px' }} 0 4px; font-weight: 700; color: #374151;">
@@ -967,6 +1155,41 @@
                         @endforeach
                     </tbody>
                 </table>
+                @foreach ($group['rows'] as $check)
+                    @php
+                        $condition = trim((string) ($check['condition'] ?? ''));
+                        $issuePhotos = strcasecmp($condition, 'Not Good') === 0 ? $filterInlinePhotos($check['photos'] ?? []) : [];
+                        $issuePhotoColumns = count($issuePhotos) > 1 ? 2 : 1;
+                    @endphp
+                    @if (count($issuePhotos) > 0)
+                        <div class="text-block-label" style="margin-top: 6px; font-weight: 700; color: #374151;">
+                            Issue Evidence - Row {{ trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--' }}: {{ trim((string) ($check['equipment'] ?? '')) ?: '--' }}
+                        </div>
+                        <table class="photo-grid">
+                            @foreach (array_chunk($issuePhotos, $issuePhotoColumns) as $photoRow)
+                                <tr>
+                                    @foreach ($photoRow as $photo)
+                                        <td style="width: {{ $issuePhotoColumns === 1 ? '100%' : '50%' }};">
+                                            <div class="photo-card">
+                                                <div class="photo-image-wrap">
+                                                    <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="FRT one-off issue photo">
+                                                </div>
+                                                @if (trim((string) ($photo['description'] ?? '')) !== '')
+                                                    <div class="photo-caption">
+                                                        <div class="photo-description">{{ trim((string) ($photo['description'] ?? '')) }}</div>
+                                                    </div>
+                                                @endif
+                                            </div>
+                                        </td>
+                                    @endforeach
+                                    @if ($issuePhotoColumns === 2 && count($photoRow) === 1)
+                                        <td></td>
+                                    @endif
+                                </tr>
+                            @endforeach
+                        </table>
+                    @endif
+                @endforeach
             @endforeach
             @if ($frtOneOffRemarks !== '')
                 <div class="text-block-label" style="margin-top: 10px;">One-off Remarks</div>
@@ -985,6 +1208,9 @@
             <div class="meta-cell" style="width: 50%;">
                 <div class="meta-label">Inspected By</div>
                 <div class="meta-value">{{ $scbaInspectedBy !== '' ? $scbaInspectedBy : '--' }}</div>
+                @if ($inspectedByRole !== '')
+                    <div class="person-meta">{{ $inspectedByRole }}</div>
+                @endif
             </div>
             <div class="meta-cell" style="width: 50%;">
                 <div class="meta-label">Inspection Date</div>
@@ -1017,6 +1243,114 @@
                         @endforeach
                     </tbody>
                 </table>
+                @foreach ($section['rows'] as $check)
+                    @php
+                        $brand = trim((string) ($check['brand'] ?? ''));
+                        $serialNo = trim((string) ($check['serialNo'] ?? $check['serial_no'] ?? ''));
+                        $equipmentName = trim($brand.' '.$serialNo) ?: 'SCBA item';
+                        $additionalPhotos = $filterInlinePhotos($check['photos'] ?? []);
+                        $additionalPhotoColumns = count($additionalPhotos) > 1 ? 2 : 1;
+                    @endphp
+                    @foreach ($section['status_fields'] as $field)
+                        @php
+                            $statusValue = trim((string) ($check[$field['status']] ?? $check[$field['status_snake']] ?? ''));
+                            $issueRemarks = trim((string) ($check[$field['remarks']] ?? $check[$field['remarks_snake']] ?? ''));
+                            $issuePhotos = $filterInlinePhotos($check[$field['photos']] ?? $check[$field['photos_snake']] ?? []);
+                            $issuePhotoColumns = count($issuePhotos) > 1 ? 2 : 1;
+                        @endphp
+                        @if (strcasecmp($statusValue, 'Not Good') === 0 && ($issueRemarks !== '' || count($issuePhotos) > 0))
+                            <div class="text-block-label" style="margin-top: 10px;">
+                                Issue Evidence: {{ $equipmentName }} - {{ $field['label'] }}
+                            </div>
+                            @if ($issueRemarks !== '')
+                                <div class="text-block-value">{{ $issueRemarks }}</div>
+                            @endif
+                            @if (count($issuePhotos) > 0)
+                                <table class="photo-grid">
+                                    @foreach (array_chunk($issuePhotos, $issuePhotoColumns) as $photoRow)
+                                        <tr>
+                                            @foreach ($photoRow as $photo)
+                                                @php
+                                                    $description = trim((string) ($photo['description'] ?? ''));
+                                                    if ($description === '') {
+                                                        $description = 'Image description not provided by user';
+                                                    }
+                                                    $description = preg_replace('/\s+/u', ' ', trim($description));
+                                                    if ($description !== '') {
+                                                        $descriptionLower = mb_strtolower($description, 'UTF-8');
+                                                        $description = mb_strtoupper(mb_substr($descriptionLower, 0, 1, 'UTF-8'), 'UTF-8')
+                                                            . mb_substr($descriptionLower, 1, null, 'UTF-8');
+                                                    }
+                                                    if (!preg_match('/[.!?]$/u', $description)) {
+                                                        $description .= '.';
+                                                    }
+                                                @endphp
+                                                <td style="width: {{ $issuePhotoColumns === 1 ? '100%' : '50%' }};">
+                                                    <div class="photo-card">
+                                                        <div class="photo-figure">
+                                                            <div class="photo-image-wrap">
+                                                                <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="SCBA issue photo">
+                                                            </div>
+                                                            <div class="photo-caption">
+                                                                <div class="photo-description">{{ $description }}</div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            @endforeach
+                                            @if ($issuePhotoColumns === 2 && count($photoRow) === 1)
+                                                <td></td>
+                                            @endif
+                                        </tr>
+                                    @endforeach
+                                </table>
+                            @endif
+                        @endif
+                    @endforeach
+                    @if (count($additionalPhotos) > 0)
+                        <div class="text-block-label" style="margin-top: 10px;">
+                            Equipment Evidence: {{ $equipmentName }}
+                        </div>
+                        <table class="photo-grid">
+                            @foreach (array_chunk($additionalPhotos, $additionalPhotoColumns) as $photoRow)
+                                <tr>
+                                    @foreach ($photoRow as $photo)
+                                        @php
+                                            $description = trim((string) ($photo['description'] ?? ''));
+                                            if ($description === '') {
+                                                $description = 'Image description not provided by user';
+                                            }
+                                            $description = preg_replace('/\s+/u', ' ', trim($description));
+                                            if ($description !== '') {
+                                                $descriptionLower = mb_strtolower($description, 'UTF-8');
+                                                $description = mb_strtoupper(mb_substr($descriptionLower, 0, 1, 'UTF-8'), 'UTF-8')
+                                                    . mb_substr($descriptionLower, 1, null, 'UTF-8');
+                                            }
+                                            if (!preg_match('/[.!?]$/u', $description)) {
+                                                $description .= '.';
+                                            }
+                                        @endphp
+                                        <td style="width: {{ $additionalPhotoColumns === 1 ? '100%' : '50%' }};">
+                                            <div class="photo-card">
+                                                <div class="photo-figure">
+                                                    <div class="photo-image-wrap">
+                                                        <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="SCBA equipment photo">
+                                                    </div>
+                                                    <div class="photo-caption">
+                                                        <div class="photo-description">{{ $description }}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    @endforeach
+                                    @if ($additionalPhotoColumns === 2 && count($photoRow) === 1)
+                                        <td></td>
+                                    @endif
+                                </tr>
+                            @endforeach
+                        </table>
+                    @endif
+                @endforeach
             @endif
         @endforeach
     </div>
@@ -1031,6 +1365,9 @@
             <div class="meta-cell" style="width: 50%;">
                 <div class="meta-label">Inspected By</div>
                 <div class="meta-value">{{ $highAngleInspectedBy !== '' ? $highAngleInspectedBy : '--' }}</div>
+                @if ($inspectedByRole !== '')
+                    <div class="person-meta">{{ $inspectedByRole }}</div>
+                @endif
             </div>
             <div class="meta-cell" style="width: 50%;">
                 <div class="meta-label">Inspection Date</div>
@@ -1062,11 +1399,57 @@
                             <td>{{ trim((string) ($check['equipment'] ?? '')) ?: '--' }}</td>
                             <td>{{ trim((string) ($check['quantity'] ?? '')) ?: '--' }}</td>
                             <td>{{ trim((string) ($check['condition'] ?? '')) ?: '--' }}</td>
-                            <td>{{ trim((string) ($check['remarks'] ?? '')) ?: '--' }}</td>
+                            <td>{{ trim((string) ($check['conditionRemarks'] ?? $check['condition_remarks'] ?? $check['remarks'] ?? '')) ?: '--' }}</td>
                         </tr>
                     @endforeach
                 </tbody>
             </table>
+            @foreach ($group['rows'] as $check)
+                @php
+                    $condition = trim((string) ($check['condition'] ?? ''));
+                    $issueRemarks = trim((string) ($check['conditionRemarks'] ?? $check['condition_remarks'] ?? $check['remarks'] ?? ''));
+                    $issuePhotos = $filterInlinePhotos($check['conditionPhotos'] ?? $check['condition_photos'] ?? []);
+                    if (count($issuePhotos) === 0) {
+                        $issuePhotos = $filterInlinePhotos($check['photos'] ?? []);
+                    }
+                    $issuePhotoColumns = count($issuePhotos) > 1 ? 2 : 1;
+                    $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: 'High Angle equipment';
+                @endphp
+                @if (strcasecmp($condition, 'Not Good') === 0 && ($issueRemarks !== '' || count($issuePhotos) > 0))
+                    <div class="text-block-label" style="margin-top: 10px;">
+                        Issue Evidence: {{ $equipmentName }}
+                    </div>
+                    @if ($issueRemarks !== '')
+                        <div class="text-block-value">{{ $issueRemarks }}</div>
+                    @endif
+                    @if (count($issuePhotos) > 0)
+                        <table class="photo-grid">
+                            @foreach (array_chunk($issuePhotos, $issuePhotoColumns) as $photoRow)
+                                <tr>
+                                    @foreach ($photoRow as $photo)
+                                        @php $description = $formatPhotoDescription($photo); @endphp
+                                        <td style="width: {{ $issuePhotoColumns === 1 ? '100%' : '50%' }};">
+                                            <div class="photo-card">
+                                                <div class="photo-figure">
+                                                    <div class="photo-image-wrap">
+                                                        <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="High Angle issue photo">
+                                                    </div>
+                                                    <div class="photo-caption">
+                                                        <div class="photo-description">{{ $description }}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    @endforeach
+                                    @if ($issuePhotoColumns === 2 && count($photoRow) === 1)
+                                        <td></td>
+                                    @endif
+                                </tr>
+                            @endforeach
+                        </table>
+                    @endif
+                @endif
+            @endforeach
         @endforeach
     </div>
 </div>
@@ -1080,6 +1463,9 @@
             <div class="meta-cell" style="width: 50%;">
                 <div class="meta-label">Inspected By</div>
                 <div class="meta-value">{{ $erAuxInspectedBy !== '' ? $erAuxInspectedBy : '--' }}</div>
+                @if ($inspectedByRole !== '')
+                    <div class="person-meta">{{ $inspectedByRole }}</div>
+                @endif
             </div>
             <div class="meta-cell" style="width: 50%;">
                 <div class="meta-label">Inspection Date</div>
@@ -1103,6 +1489,19 @@
                         $quantity = trim((string) ($check['quantity'] ?? $check['qty'] ?? $check['defaultQuantity'] ?? $check['default_quantity'] ?? ''));
                         $condition = trim((string) ($check['condition'] ?? ''));
                         $remarks = trim((string) ($check['remarks'] ?? $check['remark'] ?? ''));
+                        $defectRemarks = trim((string) ($check['defectRemarks'] ?? $check['defect_remarks'] ?? ''));
+                        $additionalNotes = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? ''));
+                        $defectPhotos = $filterInlinePhotos($check['defectPhotos'] ?? $check['defect_photos'] ?? []);
+                        $additionalPhotos = $filterInlinePhotos($check['photos'] ?? []);
+                        $erAuxEvidence = [];
+                        if ($defectRemarks !== '') {
+                            $erAuxEvidence[] = 'Defect: '.$defectRemarks;
+                        }
+                        if ($additionalNotes !== '') {
+                            $erAuxEvidence[] = 'Additional: '.$additionalNotes;
+                        } elseif ($remarks !== '') {
+                            $erAuxEvidence[] = $remarks;
+                        }
                     @endphp
                     <tr>
                         <td>
@@ -1117,11 +1516,90 @@
                         <td>{{ trim((string) ($check['location'] ?? '')) ?: '--' }}</td>
                         <td>{{ $quantity !== '' ? $quantity : '--' }}</td>
                         <td>{{ $condition !== '' ? $condition : '--' }}</td>
-                        <td>{{ $remarks !== '' ? $remarks : '--' }}</td>
+                        <td>{{ count($erAuxEvidence) > 0 ? implode('; ', $erAuxEvidence) : '--' }}</td>
                     </tr>
                 @endforeach
             </tbody>
         </table>
+        @foreach ($erAuxChecks as $check)
+            @php
+                $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: 'ER Aux equipment';
+                $defectRemarks = trim((string) ($check['defectRemarks'] ?? $check['defect_remarks'] ?? ''));
+                $defectPhotos = $filterInlinePhotos($check['defectPhotos'] ?? $check['defect_photos'] ?? []);
+                $defectPhotoColumns = count($defectPhotos) > 1 ? 2 : 1;
+                $additionalRemarks = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? $check['remarks'] ?? $check['remark'] ?? ''));
+                $additionalPhotos = $filterInlinePhotos($check['photos'] ?? []);
+                $additionalPhotoColumns = count($additionalPhotos) > 1 ? 2 : 1;
+            @endphp
+            @if ($defectRemarks !== '' || count($defectPhotos) > 0)
+                <div class="text-block-label" style="margin-top: 10px;">
+                    Defect Evidence: {{ $equipmentName }}
+                </div>
+                @if ($defectRemarks !== '')
+                    <div class="text-block-value">{{ $defectRemarks }}</div>
+                @endif
+                @if (count($defectPhotos) > 0)
+                    <table class="photo-grid">
+                        @foreach (array_chunk($defectPhotos, $defectPhotoColumns) as $photoRow)
+                            <tr>
+                                @foreach ($photoRow as $photo)
+                                    @php $description = $formatPhotoDescription($photo); @endphp
+                                    <td style="width: {{ $defectPhotoColumns === 1 ? '100%' : '50%' }};">
+                                        <div class="photo-card">
+                                            <div class="photo-figure">
+                                                <div class="photo-image-wrap">
+                                                    <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="ER Aux defect photo">
+                                                </div>
+                                                <div class="photo-caption">
+                                                    <div class="photo-description">{{ $description }}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                @endforeach
+                                @if ($defectPhotoColumns === 2 && count($photoRow) === 1)
+                                    <td></td>
+                                @endif
+                            </tr>
+                        @endforeach
+                    </table>
+                @endif
+            @endif
+            @if ($additionalRemarks !== '' || count($additionalPhotos) > 0)
+                <div class="text-block-label" style="margin-top: 10px;">
+                    Additional Evidence: {{ $equipmentName }}
+                </div>
+                @if ($additionalRemarks !== '')
+                    <div class="text-block-value">{{ $additionalRemarks }}</div>
+                @endif
+                @if (count($additionalPhotos) > 0)
+                    <table class="photo-grid">
+                        @foreach (array_chunk($additionalPhotos, $additionalPhotoColumns) as $photoRow)
+                            <tr>
+                                @foreach ($photoRow as $photo)
+                                    @php $description = $formatPhotoDescription($photo); @endphp
+                                    <td style="width: {{ $additionalPhotoColumns === 1 ? '100%' : '50%' }};">
+                                        <div class="photo-card">
+                                            <div class="photo-figure">
+                                                <div class="photo-image-wrap">
+                                                    <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="ER Aux additional photo">
+                                                </div>
+                                                <div class="photo-caption">
+                                                    <div class="photo-description">{{ $description }}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                @endforeach
+                                @if ($additionalPhotoColumns === 2 && count($photoRow) === 1)
+                                    <td></td>
+                                @endif
+                            </tr>
+                        @endforeach
+                    </table>
+                @endif
+            @endif
+        @endforeach
     </div>
 </div>
 @endif
@@ -1195,9 +1673,13 @@
                                 $preparedBy = trim((string) ($submittedEntry['by'] ?? $submittedBy));
                                 $preparedAt = $fmtDateTime($submittedEntry['at'] ?? $submittedAtRaw);
                                 $preparedRemarks = trim((string) ($submittedEntry['remarks'] ?? ''));
+                                $preparedRole = $entryActorRole($submittedEntry) ?: $submittedByRole;
                             @endphp
                             @if ($preparedBy !== '')
                                 <div class="person-name">{{ $preparedBy }}</div>
+                            @endif
+                            @if ($preparedRole !== '')
+                                <div class="person-meta">{{ $preparedRole }}</div>
                             @endif
                             @if ($preparedAt !== '')
                                 <div class="person-meta">{{ $preparedAt }}</div>
@@ -1208,6 +1690,9 @@
                         @elseif ($submittedBy !== '' || $submittedAt !== '')
                             @if ($submittedBy !== '')
                                 <div class="person-name">{{ $submittedBy }}</div>
+                            @endif
+                            @if ($submittedByRole !== '')
+                                <div class="person-meta">{{ $submittedByRole }}</div>
                             @endif
                             @if ($submittedAt !== '')
                                 <div class="person-meta">{{ $submittedAt }}</div>
@@ -1222,9 +1707,13 @@
                                 $reviewedBy = trim((string) ($reviewedEntry['by'] ?? ''));
                                 $reviewedAt = $fmtDateTime($reviewedEntry['at'] ?? '');
                                 $reviewedRemarks = trim((string) ($reviewedEntry['remarks'] ?? ''));
+                                $reviewedRole = $entryActorRole($reviewedEntry);
                             @endphp
                             @if ($reviewedBy !== '')
                                 <div class="person-name">{{ $reviewedBy }}</div>
+                            @endif
+                            @if ($reviewedRole !== '')
+                                <div class="person-meta">{{ $reviewedRole }}</div>
                             @endif
                             @if ($reviewedAt !== '')
                                 <div class="person-meta">{{ $reviewedAt }}</div>
@@ -1242,9 +1731,13 @@
                                 $approvedBy = trim((string) ($approvedEntry['by'] ?? ''));
                                 $approvedAt = $fmtDateTime($approvedEntry['at'] ?? '');
                                 $approvedRemarks = trim((string) ($approvedEntry['remarks'] ?? ''));
+                                $approvedRole = $entryActorRole($approvedEntry);
                             @endphp
                             @if ($approvedBy !== '')
                                 <div class="person-name">{{ $approvedBy }}</div>
+                            @endif
+                            @if ($approvedRole !== '')
+                                <div class="person-meta">{{ $approvedRole }}</div>
                             @endif
                             @if ($approvedAt !== '')
                                 <div class="person-meta">{{ $approvedAt }}</div>

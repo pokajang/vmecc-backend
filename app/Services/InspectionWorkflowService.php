@@ -249,7 +249,7 @@ class InspectionWorkflowService
             'remarks' => (string) ($remarks ?? ''),
             'stage' => $workflow['workflow_stage'],
             'role' => $workflow['next_action_role'],
-        ];
+        ] + $this->actorRoleSnapshot($actor);
         $history = collect(is_array($report->approval_history) ? $report->approval_history : [])
             ->push($entry)
             ->take(-30)
@@ -298,10 +298,20 @@ class InspectionWorkflowService
             'remarks' => (string) ($remarks ?? ''),
             'stage' => $workflowFields['workflow_stage'] ?? null,
             'role' => $workflowFields['next_action_role'] ?? null,
-        ];
+        ] + $this->actorRoleSnapshot($actor);
         $workflowFields['approval_history'] = collect($history)->take(-30)->values()->all();
 
         return $workflowFields;
+    }
+
+    private function actorRoleSnapshot(User $actor): array
+    {
+        $role = $this->authorizationService->getPrimaryRoleName($actor);
+
+        return [
+            'actorRole' => trim((string) ($role ?? '')),
+            'actorRoleCode' => trim((string) (RoleCatalog::abbreviationForRole($role) ?? '')),
+        ];
     }
 
     public function recipientUserIdsForNextAction(Report $report): array

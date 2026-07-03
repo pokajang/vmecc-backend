@@ -26,7 +26,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         $response->assertOk();
         $this->assertSame('database', $response->json('meta.source'));
         $this->assertCount(23, $response->json('data'));
-        $this->assertSame(false, $response->json('data.0.canEdit'));
+        $this->assertSame(true, $response->json('data.0.canEdit'));
         $this->assertSame('Manjung Hub', $response->json('data.0.mainLocation'));
 
         $search = $this->getJson('/api/inspection/fire-extinguishers?mainLocation=Manjung%20Hub&search=ADO-003');
@@ -81,15 +81,38 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         $this->assertFalse(InspectionFireExtinguisher::query()->findOrFail($id)->is_active);
     }
 
-    public function test_seeded_fire_extinguisher_rows_are_protected_for_regular_inspection_users(): void
+    public function test_regular_inspection_user_can_update_seeded_fire_extinguisher_row(): void
+    {
+        $this->seed(InspectionFireExtinguisherCatalogSeeder::class);
+        $this->actingAsInspectionUser();
+        $seed = InspectionFireExtinguisher::query()->where('source', 'seed')->firstOrFail();
+
+        $this->patchJson("/api/inspection/fire-extinguishers/{$seed->id}", [
+            'zone' => $seed->zone,
+            'mainLocation' => $seed->main_location_name,
+            'subLocation' => $seed->sub_location_name,
+            'idLocNo' => 'ADO-001-UPDATED',
+            'barcodeNo' => $seed->barcode_no,
+            'feType' => $seed->fe_type,
+        ])->assertOk()->assertJsonPath('data.idLocNo', 'ADO-001-UPDATED');
+    }
+
+    public function test_regular_inspection_user_can_archive_seeded_fire_extinguisher_row(): void
     {
         $this->seed(InspectionFireExtinguisherCatalogSeeder::class);
         $this->actingAsInspectionUser();
         $seed = InspectionFireExtinguisher::query()->where('source', 'seed')->firstOrFail();
 
         $this->deleteJson("/api/inspection/fire-extinguishers/{$seed->id}")
-            ->assertStatus(403)
-            ->assertJsonPath('code', 'INSPECTION_FIRE_EXTINGUISHER_SEED_PROTECTED');
+            ->assertNoContent();
+
+        $this->assertFalse($seed->fresh()->is_active);
+
+        $index = $this->getJson('/api/inspection/fire-extinguishers?mainLocation='.urlencode((string) $seed->main_location_name));
+        $index->assertOk();
+        $this->assertNull(
+            collect($index->json('data'))->firstWhere('catalogId', $seed->id)
+        );
     }
 
     public function test_fire_extinguisher_submission_requires_defect_remarks_and_creates_analytics_rows(): void

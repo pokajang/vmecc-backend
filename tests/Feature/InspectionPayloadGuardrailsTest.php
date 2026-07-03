@@ -124,6 +124,33 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonValidationErrors(['payload.photos']);
     }
 
+    public function test_inspection_report_counts_nested_frt_issue_photos_against_photo_limit(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $payload = $this->frtPayload();
+        $payload['frtDailyChecks'][89]['photos'] = [];
+        for ($i = 0; $i < 11; $i++) {
+            $payload['frtDailyChecks'][89]['photos'][] = [
+                'id' => "frt-issue-photo-{$i}",
+                'description' => "frt issue photo {$i}",
+                'url' => $this->makeImageDataUrl(32),
+            ];
+        }
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-FRT-NESTED-PHOTOS',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['payload.photos']);
+    }
+
     public function test_inspection_report_accepts_structured_checklist_payload(): void
     {
         $user = User::factory()->create(['status' => 'active']);
@@ -171,6 +198,143 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $filtered->assertOk();
         $filtered->assertJsonCount(1, 'data');
         $filtered->assertJsonPath('data.0.displayId', 'INS-GUARD-CHECKLIST');
+    }
+
+    public function test_inspection_report_overwrites_spoofed_actor_role_with_session_role(): void
+    {
+        $user = User::factory()->create(['status' => 'active', 'name' => 'Session Inspector']);
+        $this->grantInspectionPermission($user, 'Tactical Response Team');
+        $this->grantInspectionPermission($user, 'Incident Commander');
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-ROLE-SNAPSHOT',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'Routine Inspection',
+                'location' => 'Zone Role',
+                'description' => 'Role snapshot guardrail.',
+                'photos' => [
+                    [
+                        'id' => 'photo-1',
+                        'description' => 'ok',
+                        'url' => $this->makeImageDataUrl(16),
+                    ],
+                ],
+                'inspectionActor' => [
+                    'userId' => 999,
+                    'name' => 'Spoofed User',
+                    'email' => 'spoofed@example.test',
+                    'role' => 'Spoofed Role',
+                    'roleCode' => 'BAD',
+                ],
+                'submittedByRole' => 'Spoofed Role',
+                'submittedByRoleCode' => 'BAD',
+            ],
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.inspectionActor.userId', $user->id);
+        $response->assertJsonPath('data.inspectionActor.name', 'Session Inspector');
+        $response->assertJsonPath('data.inspectionActor.role', 'Incident Commander');
+        $response->assertJsonPath('data.inspectionActor.roleCode', 'IC');
+        $response->assertJsonPath('data.submittedByRole', 'Incident Commander');
+        $response->assertJsonPath('data.submittedByRoleCode', 'IC');
+        $response->assertJsonPath('data.approvalHistory.0.actorRole', 'Incident Commander');
+        $response->assertJsonPath('data.approvalHistory.0.actorRoleCode', 'IC');
+        $response->assertJsonPath('data.timeline.0.meta.actorRole', 'Incident Commander');
+        $response->assertJsonPath('data.timeline.0.meta.actorRoleCode', 'IC');
+
+        $report = Report::query()->where('display_id', 'INS-ROLE-SNAPSHOT')->firstOrFail();
+        $this->assertSame('Incident Commander', $report->payload['inspectionActor']['role'] ?? null);
+        $this->assertSame('IC', $report->payload['inspectionActor']['roleCode'] ?? null);
+        $this->assertSame('Incident Commander', $report->payload['submittedByRole'] ?? null);
+        $this->assertSame('IC', $report->payload['submittedByRoleCode'] ?? null);
+    }
+
+    public function test_inspection_draft_overwrites_spoofed_actor_role_with_session_role(): void
+    {
+        $user = User::factory()->create(['status' => 'active', 'name' => 'Draft Inspector']);
+        $this->grantInspectionPermission($user, 'Tactical Response Team');
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports/draft', [
+            'report_type' => 'inspection',
+            'payload' => [
+                'incidentType' => 'Routine Inspection',
+                'location' => 'Zone Draft Role',
+                'description' => 'Draft role snapshot guardrail.',
+                'inspection_actor' => [
+                    'user_id' => 999,
+                    'name' => 'Spoofed Draft User',
+                    'email' => 'spoofed@example.test',
+                    'role' => 'Spoofed Role',
+                    'role_code' => 'BAD',
+                ],
+                'submitted_by_role' => 'Spoofed Role',
+                'submitted_by_role_code' => 'BAD',
+            ],
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.payload.inspectionActor.userId', $user->id);
+        $response->assertJsonPath('data.payload.inspectionActor.name', 'Draft Inspector');
+        $response->assertJsonPath('data.payload.inspectionActor.role', 'Tactical Response Team');
+        $response->assertJsonPath('data.payload.inspectionActor.roleCode', 'TRT');
+        $response->assertJsonPath('data.payload.submittedByRole', 'Tactical Response Team');
+        $response->assertJsonPath('data.payload.submittedByRoleCode', 'TRT');
+
+        $draft = ReportDraft::query()
+            ->where('user_id', $user->id)
+            ->where('report_type', 'inspection')
+            ->firstOrFail();
+
+        $this->assertSame('Tactical Response Team', $draft->payload['inspectionActor']['role'] ?? null);
+        $this->assertSame('TRT', $draft->payload['inspectionActor']['roleCode'] ?? null);
+        $this->assertSame('Tactical Response Team', $draft->payload['submittedByRole'] ?? null);
+        $this->assertSame('TRT', $draft->payload['submittedByRoleCode'] ?? null);
+    }
+
+    public function test_inspection_workflow_review_snapshots_actor_role(): void
+    {
+        $submitter = User::factory()->create(['status' => 'active', 'name' => 'Submitter']);
+        $reviewer = User::factory()->create(['status' => 'active', 'name' => 'Reviewer']);
+        $this->grantInspectionPermission($submitter, 'Tactical Response Team');
+        $this->grantInspectionPermission($reviewer, 'Incident Commander');
+
+        $this->actingAs($submitter);
+        $create = $this->postJson('/api/reports', [
+            'display_id' => 'INS-ROLE-REVIEW',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'Routine Inspection',
+                'location' => 'Zone Review Role',
+                'description' => 'Workflow role snapshot guardrail.',
+                'photos' => [
+                    [
+                        'id' => 'photo-1',
+                        'description' => 'ok',
+                        'url' => $this->makeImageDataUrl(16),
+                    ],
+                ],
+            ],
+        ]);
+        $create->assertCreated();
+
+        $this->actingAs($reviewer);
+        $review = $this->postJson('/api/reports/'.$create->json('data.id').'/review', [
+            'version' => 1,
+            'remarks' => 'Checked by IC.',
+        ]);
+
+        $review->assertOk();
+        $review->assertJsonPath('data.approvalHistory.1.action', 'Reviewed');
+        $review->assertJsonPath('data.approvalHistory.1.actorRole', 'Incident Commander');
+        $review->assertJsonPath('data.approvalHistory.1.actorRoleCode', 'IC');
+        $review->assertJsonPath('data.timeline.1.meta.actorRole', 'Incident Commander');
+        $review->assertJsonPath('data.timeline.1.meta.actorRoleCode', 'IC');
     }
 
     public function test_hydraulic_inspection_report_persists_structured_checks_to_database_and_response(): void
@@ -366,13 +530,13 @@ class InspectionPayloadGuardrailsTest extends TestCase
         ]);
 
         $response->assertCreated();
-        $response->assertJsonPath('data.erAuxInspectedBy', 'Inspector One');
+        $response->assertJsonPath('data.erAuxInspectedBy', $user->name);
         $response->assertJsonPath('data.erAuxInspectionDate', '2026-06-28');
         $response->assertJsonPath('data.erAuxChecks.1.condition', 'Missing');
         $response->assertJsonPath('data.erAuxChecks.1.remarks', 'Sent for replacement.');
 
         $report = Report::query()->where('display_id', 'INS-ERAUX-DB')->firstOrFail();
-        $this->assertSame('Inspector One', $report->payload['erAuxInspectedBy'] ?? null);
+        $this->assertSame($user->name, $report->payload['erAuxInspectedBy'] ?? null);
         $this->assertSame('2026-06-28', $report->payload['erAuxInspectionDate'] ?? null);
         $this->assertSame('Fire Jacket', $report->payload['erAuxChecks'][0]['equipment'] ?? null);
         $this->assertSame('15', $report->payload['erAuxChecks'][0]['quantity'] ?? null);
@@ -411,6 +575,21 @@ class InspectionPayloadGuardrailsTest extends TestCase
                         'sealing' => 'Good',
                         'cleanliness' => 'Good',
                         'remarks' => 'Hose coupling worn.',
+                        'photos' => [
+                            [
+                                'id' => 'scba-additional-photo',
+                                'description' => 'General SCBA additional photo.',
+                                'url' => $this->makeImageDataUrl(16),
+                            ],
+                        ],
+                        'highPressureHoseRemarks' => 'Hose coupling worn.',
+                        'highPressureHosePhotos' => [
+                            [
+                                'id' => 'scba-hose-photo',
+                                'description' => 'Hose coupling photo.',
+                                'url' => $this->makeImageDataUrl(16),
+                            ],
+                        ],
                     ],
                 ],
                 'scbaCylinderChecks' => [
@@ -444,16 +623,26 @@ class InspectionPayloadGuardrailsTest extends TestCase
                         'harness' => 'Good',
                         'neckStrap' => 'Good',
                         'remarks' => 'Leak test failed on seal.',
+                        'leakTestRemarks' => 'Leak test failed on seal.',
+                        'leakTestPhotos' => [
+                            [
+                                'id' => 'scba-mask-photo',
+                                'description' => 'Face mask seal photo.',
+                                'url' => $this->makeImageDataUrl(16),
+                            ],
+                        ],
                     ],
                 ],
             ],
         ]);
 
         $response->assertCreated();
-        $response->assertJsonPath('data.scbaInspectedBy', 'Inspector SCBA');
+        $response->assertJsonPath('data.scbaInspectedBy', $user->name);
         $response->assertJsonPath('data.scbaInspectionDate', '2026-06-28');
         $response->assertJsonPath('data.scbaBackPlateChecks.0.backPlateHarnessCondition', 'Good');
         $response->assertJsonPath('data.scbaBackPlateChecks.0.highPressureHose', 'Not Good');
+        $response->assertJsonPath('data.scbaBackPlateChecks.0.highPressureHoseRemarks', 'Hose coupling worn.');
+        $response->assertJsonPath('data.scbaBackPlateChecks.0.photos.0.description', 'General SCBA additional photo.');
         $response->assertJsonPath('data.scbaBackPlateChecks.0.sealing', 'Good');
         $response->assertJsonPath('data.scbaBackPlateChecks.0.cleanliness', 'Good');
         $response->assertJsonPath('data.scbaCylinderChecks.0.cylinderType', 'Composite');
@@ -461,13 +650,17 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonPath('data.scbaCylinderChecks.0.containedPressure', '280');
         $response->assertJsonPath('data.scbaCylinderChecks.0.cleanliness', 'Good');
         $response->assertJsonPath('data.scbaFaceMaskChecks.0.leakTest', 'Not Good');
+        $response->assertJsonPath('data.scbaFaceMaskChecks.0.leakTestRemarks', 'Leak test failed on seal.');
         $response->assertJsonPath('data.scbaFaceMaskChecks.0.harness', 'Good');
 
         $report = Report::query()->where('display_id', 'INS-SCBA-DB')->firstOrFail();
-        $this->assertSame('Inspector SCBA', $report->payload['scbaInspectedBy'] ?? null);
+        $this->assertSame($user->name, $report->payload['scbaInspectedBy'] ?? null);
         $this->assertSame('2026-06-28', $report->payload['scbaInspectionDate'] ?? null);
         $this->assertSame('Good', $report->payload['scbaBackPlateChecks'][0]['backPlateHarnessCondition'] ?? null);
         $this->assertSame('Not Good', $report->payload['scbaBackPlateChecks'][0]['highPressureHose'] ?? null);
+        $this->assertSame('Hose coupling worn.', $report->payload['scbaBackPlateChecks'][0]['highPressureHoseRemarks'] ?? null);
+        $this->assertSame('General SCBA additional photo.', $report->payload['scbaBackPlateChecks'][0]['photos'][0]['description'] ?? null);
+        $this->assertCount(1, $report->payload['scbaBackPlateChecks'][0]['highPressureHosePhotos'] ?? []);
         $this->assertSame('Good', $report->payload['scbaBackPlateChecks'][0]['sealing'] ?? null);
         $this->assertSame('Good', $report->payload['scbaBackPlateChecks'][0]['cleanliness'] ?? null);
         $this->assertSame('Composite', $report->payload['scbaCylinderChecks'][0]['cylinderType'] ?? null);
@@ -475,7 +668,116 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $this->assertSame('280', $report->payload['scbaCylinderChecks'][0]['containedPressure'] ?? null);
         $this->assertSame('Good', $report->payload['scbaCylinderChecks'][0]['cleanliness'] ?? null);
         $this->assertSame('Not Good', $report->payload['scbaFaceMaskChecks'][0]['leakTest'] ?? null);
+        $this->assertSame('Leak test failed on seal.', $report->payload['scbaFaceMaskChecks'][0]['leakTestRemarks'] ?? null);
+        $this->assertCount(1, $report->payload['scbaFaceMaskChecks'][0]['leakTestPhotos'] ?? []);
         $this->assertSame('Good', $report->payload['scbaFaceMaskChecks'][0]['harness'] ?? null);
+    }
+
+    public function test_scba_inspection_report_persists_custom_sections_and_field_evidence(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $payload = [
+            'incidentType' => 'SCBA Inspection',
+            'location' => 'Custom Bay',
+            'mainLocation' => 'Custom Bay',
+            'photos' => [],
+            'scbaCustomSections' => [
+                [
+                    'title' => 'Regulator',
+                    'shortLabel' => 'Regulator',
+                    'fields' => [
+                        ['key' => 'purgeValve', 'label' => 'Purge Valve', 'kind' => 'status'],
+                    ],
+                    'rows' => [
+                        [
+                            'id' => 'customScba-regulator:custom-bay:msa:r-01',
+                            'location' => 'Custom Bay',
+                            'brand' => 'MSA',
+                            'serialNo' => 'R-01',
+                            'purgeValve' => 'Not Good',
+                            'purgeValveRemarks' => 'Purge valve sticks.',
+                            'purgeValvePhotos' => [
+                                [
+                                    'id' => 'purge-photo',
+                                    'description' => 'Purge valve issue.',
+                                    'url' => $this->makeImageDataUrl(16),
+                                ],
+                            ],
+                            'photos' => [
+                                [
+                                    'id' => 'regulator-photo',
+                                    'description' => 'General regulator photo.',
+                                    'url' => $this->makeImageDataUrl(16),
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-SCBA-CUSTOM-DB',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.scbaCustomSections.0.title', 'Regulator');
+        $response->assertJsonPath('data.scbaCustomSections.0.rows.0.purgeValve', 'Not Good');
+        $response->assertJsonPath('data.scbaCustomSections.0.rows.0.purgeValvePhotos.0.description', 'Purge valve issue.');
+
+        $report = Report::query()->where('display_id', 'INS-SCBA-CUSTOM-DB')->firstOrFail();
+        $this->assertSame('Regulator', $report->payload['scbaCustomSections'][0]['title'] ?? null);
+        $this->assertSame('Not Good', $report->payload['scbaCustomSections'][0]['rows'][0]['purgeValve'] ?? null);
+        $this->assertSame('Purge valve sticks.', $report->payload['scbaCustomSections'][0]['rows'][0]['purgeValveRemarks'] ?? null);
+        $this->assertSame('General regulator photo.', $report->payload['scbaCustomSections'][0]['rows'][0]['photos'][0]['description'] ?? null);
+    }
+
+    public function test_scba_custom_section_rejects_not_good_without_issue_photo(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-SCBA-CUSTOM-BAD',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'SCBA Inspection',
+                'location' => 'Custom Bay',
+                'mainLocation' => 'Custom Bay',
+                'photos' => [],
+                'scbaCustomSections' => [
+                    [
+                        'title' => 'Regulator',
+                        'fields' => [
+                            ['key' => 'purgeValve', 'label' => 'Purge Valve', 'kind' => 'status'],
+                        ],
+                        'rows' => [
+                            [
+                                'location' => 'Custom Bay',
+                                'brand' => 'MSA',
+                                'serialNo' => 'R-02',
+                                'purgeValve' => 'Not Good',
+                                'purgeValveRemarks' => 'Purge valve sticks.',
+                                'purgeValvePhotos' => [],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        $response->assertUnprocessable();
+        $response->assertJsonValidationErrors([
+            'payload.scbaCustomSections.0.rows.0.purgeValvePhotos',
+        ]);
     }
 
     public function test_scba_inspection_draft_persists_structured_checks_to_database(): void
@@ -540,7 +842,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         ]);
 
         $response->assertCreated();
-        $response->assertJsonPath('data.payload.scbaInspectedBy', 'Draft Inspector');
+        $response->assertJsonPath('data.payload.scbaInspectedBy', $user->name);
         $response->assertJsonPath('data.payload.scbaInspectionDate', '2026-06-28');
         $response->assertJsonPath('data.payload.scbaBackPlateChecks.0.serialNo', '01');
         $response->assertJsonPath('data.payload.scbaBackPlateChecks.0.cleanliness', 'Good');
@@ -556,7 +858,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
             ->where('report_type', 'inspection')
             ->firstOrFail();
 
-        $this->assertSame('Draft Inspector', $draft->payload['scbaInspectedBy'] ?? null);
+        $this->assertSame($user->name, $draft->payload['scbaInspectedBy'] ?? null);
         $this->assertSame('Good', $draft->payload['scbaBackPlateChecks'][0]['cleanliness'] ?? null);
         $this->assertSame('Steel', $draft->payload['scbaCylinderChecks'][0]['cylinderType'] ?? null);
         $this->assertSame('200', $draft->payload['scbaCylinderChecks'][0]['servicePressure'] ?? null);
@@ -608,26 +910,37 @@ class InspectionPayloadGuardrailsTest extends TestCase
                         'quantity' => '10',
                         'condition' => 'Not Good',
                         'remarks' => 'Gate spring is sticking.',
+                        'conditionRemarks' => 'Gate spring is sticking.',
+                        'conditionPhotos' => [
+                            [
+                                'id' => 'high-angle-gate-photo',
+                                'description' => 'Gate spring evidence.',
+                                'url' => $this->makeImageDataUrl(16),
+                            ],
+                        ],
                     ],
                 ],
             ],
         ]);
 
         $response->assertCreated();
-        $response->assertJsonPath('data.highAngleInspectedBy', 'Inspector Rope');
+        $response->assertJsonPath('data.highAngleInspectedBy', $user->name);
         $response->assertJsonPath('data.highAngleInspectionDate', '2026-06-28');
         $response->assertJsonPath('data.highAngleChecks.0.condition', 'Good');
         $response->assertJsonPath('data.highAngleChecks.1.subLocation', 'Main Compartment');
         $response->assertJsonPath('data.highAngleChecks.1.quantity', '10');
         $response->assertJsonPath('data.highAngleChecks.1.remarks', 'Gate spring is sticking.');
+        $response->assertJsonPath('data.highAngleChecks.1.conditionRemarks', 'Gate spring is sticking.');
 
         $report = Report::query()->where('display_id', 'INS-HA-DB')->firstOrFail();
-        $this->assertSame('Inspector Rope', $report->payload['highAngleInspectedBy'] ?? null);
+        $this->assertSame($user->name, $report->payload['highAngleInspectedBy'] ?? null);
         $this->assertSame('2026-06-28', $report->payload['highAngleInspectionDate'] ?? null);
         $this->assertSame('Good', $report->payload['highAngleChecks'][0]['condition'] ?? null);
         $this->assertSame('Main Compartment', $report->payload['highAngleChecks'][1]['subLocation'] ?? null);
         $this->assertSame('10', $report->payload['highAngleChecks'][1]['quantity'] ?? null);
         $this->assertSame('Gate spring is sticking.', $report->payload['highAngleChecks'][1]['remarks'] ?? null);
+        $this->assertSame('Gate spring is sticking.', $report->payload['highAngleChecks'][1]['conditionRemarks'] ?? null);
+        $this->assertCount(1, $report->payload['highAngleChecks'][1]['conditionPhotos'] ?? []);
     }
 
     public function test_high_angle_inspection_draft_persists_structured_checks_to_database(): void
@@ -655,28 +968,39 @@ class InspectionPayloadGuardrailsTest extends TestCase
                         'quantity' => '1',
                         'condition' => 'Not Good',
                         'remarks' => 'Outer sheath frayed.',
+                        'condition_remarks' => 'Outer sheath frayed.',
+                        'condition_photos' => [
+                            [
+                                'id' => 'high-angle-draft-photo',
+                                'description' => 'Rope sheath evidence.',
+                                'url' => $this->makeImageDataUrl(16),
+                            ],
+                        ],
                     ],
                 ],
             ],
         ]);
 
         $response->assertCreated();
-        $response->assertJsonPath('data.payload.highAngleInspectedBy', 'Draft Rope Inspector');
+        $response->assertJsonPath('data.payload.highAngleInspectedBy', $user->name);
         $response->assertJsonPath('data.payload.highAngleInspectionDate', '2026-06-28');
         $response->assertJsonPath('data.payload.highAngleChecks.0.rowNumber', '101');
         $response->assertJsonPath('data.payload.highAngleChecks.0.mainLocation', 'Rescue Rope');
         $response->assertJsonPath('data.payload.highAngleChecks.0.remarks', 'Outer sheath frayed.');
+        $response->assertJsonPath('data.payload.highAngleChecks.0.conditionRemarks', 'Outer sheath frayed.');
 
         $draft = ReportDraft::query()
             ->where('user_id', $user->id)
             ->where('report_type', 'inspection')
             ->firstOrFail();
 
-        $this->assertSame('Draft Rope Inspector', $draft->payload['highAngleInspectedBy'] ?? null);
+        $this->assertSame($user->name, $draft->payload['highAngleInspectedBy'] ?? null);
         $this->assertSame('2026-06-28', $draft->payload['highAngleInspectionDate'] ?? null);
         $this->assertSame('101', $draft->payload['highAngleChecks'][0]['rowNumber'] ?? null);
         $this->assertSame('Rescue Rope', $draft->payload['highAngleChecks'][0]['mainLocation'] ?? null);
         $this->assertSame('Outer sheath frayed.', $draft->payload['highAngleChecks'][0]['remarks'] ?? null);
+        $this->assertSame('Outer sheath frayed.', $draft->payload['highAngleChecks'][0]['conditionRemarks'] ?? null);
+        $this->assertCount(1, $draft->payload['highAngleChecks'][0]['conditionPhotos'] ?? []);
         $this->assertArrayNotHasKey('high_angle_checks', $draft->payload);
     }
 
@@ -694,7 +1018,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         ]);
 
         $response->assertCreated();
-        $response->assertJsonPath('data.frtInspectedBy', 'Inspector Truck');
+        $response->assertJsonPath('data.frtInspectedBy', $user->name);
         $response->assertJsonPath('data.frtInspectionDate', '2026-06-28');
         $response->assertJsonPath('data.frtShift', 'Day');
         $response->assertJsonPath('data.frtTruckReference.plateNo', 'AJG9555');
@@ -702,11 +1026,13 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $oneOffRows = collect($response->json('data.frtOneOffChecks') ?? [])->keyBy('id');
         $this->assertSame('Checked', $dailyRows->get('daily:fire-truck:56')['status'] ?? null);
         $this->assertSame('123456', $dailyRows->get('daily:fire-truck:91')['readingValue'] ?? null);
+        $this->assertSame('frt-daily-photo-1', $dailyRows->get('daily:fire-truck:90')['photos'][0]['id'] ?? null);
         $this->assertSame('Not Good', $oneOffRows->get('one-off:fire-truck:16')['condition'] ?? null);
         $this->assertSame('Siren mute switch sticking.', $oneOffRows->get('one-off:fire-truck:16')['remarks'] ?? null);
+        $this->assertSame('frt-one-off-photo-1', $oneOffRows->get('one-off:fire-truck:16')['photos'][0]['id'] ?? null);
 
         $report = Report::query()->where('display_id', 'INS-FRT-DB')->firstOrFail();
-        $this->assertSame('Inspector Truck', $report->payload['frtInspectedBy'] ?? null);
+        $this->assertSame($user->name, $report->payload['frtInspectedBy'] ?? null);
         $this->assertSame('2026-06-28', $report->payload['frtInspectionDate'] ?? null);
         $this->assertSame('Day', $report->payload['frtShift'] ?? null);
         $this->assertSame('AJG9555', $report->payload['frtTruckReference']['plateNo'] ?? null);
@@ -714,8 +1040,10 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $reportOneOffRows = collect($report->payload['frtOneOffChecks'] ?? [])->keyBy('id');
         $this->assertSame('Checked', $reportDailyRows->get('daily:fire-truck:56')['status'] ?? null);
         $this->assertSame('123456', $reportDailyRows->get('daily:fire-truck:91')['readingValue'] ?? null);
+        $this->assertSame('frt-daily-photo-1', $reportDailyRows->get('daily:fire-truck:90')['photos'][0]['id'] ?? null);
         $this->assertSame('Not Good', $reportOneOffRows->get('one-off:fire-truck:16')['condition'] ?? null);
         $this->assertSame('Siren mute switch sticking.', $reportOneOffRows->get('one-off:fire-truck:16')['remarks'] ?? null);
+        $this->assertSame('frt-one-off-photo-1', $reportOneOffRows->get('one-off:fire-truck:16')['photos'][0]['id'] ?? null);
     }
 
     public function test_frt_inspection_draft_persists_structured_checks_to_database(): void
@@ -730,28 +1058,32 @@ class InspectionPayloadGuardrailsTest extends TestCase
         ]);
 
         $response->assertCreated();
-        $response->assertJsonPath('data.payload.frtInspectedBy', 'Inspector Truck');
+        $response->assertJsonPath('data.payload.frtInspectedBy', $user->name);
         $response->assertJsonPath('data.payload.frtInspectionDate', '2026-06-28');
         $response->assertJsonPath('data.payload.frtShift', 'Day');
         $response->assertJsonPath('data.payload.frtTruckReference.plateNo', 'AJG9555');
         $draftResponseDailyRows = collect($response->json('data.payload.frtDailyChecks') ?? [])->keyBy('id');
         $draftResponseOneOffRows = collect($response->json('data.payload.frtOneOffChecks') ?? [])->keyBy('id');
         $this->assertSame('123456', $draftResponseDailyRows->get('daily:fire-truck:91')['readingValue'] ?? null);
+        $this->assertSame('frt-daily-photo-1', $draftResponseDailyRows->get('daily:fire-truck:90')['photos'][0]['id'] ?? null);
         $this->assertSame('Not Good', $draftResponseOneOffRows->get('one-off:fire-truck:16')['condition'] ?? null);
+        $this->assertSame('frt-one-off-photo-1', $draftResponseOneOffRows->get('one-off:fire-truck:16')['photos'][0]['id'] ?? null);
 
         $draft = ReportDraft::query()
             ->where('user_id', $user->id)
             ->where('report_type', 'inspection')
             ->firstOrFail();
 
-        $this->assertSame('Inspector Truck', $draft->payload['frtInspectedBy'] ?? null);
+        $this->assertSame($user->name, $draft->payload['frtInspectedBy'] ?? null);
         $this->assertSame('2026-06-28', $draft->payload['frtInspectionDate'] ?? null);
         $this->assertSame('Day', $draft->payload['frtShift'] ?? null);
         $this->assertSame('AJG9555', $draft->payload['frtTruckReference']['plateNo'] ?? null);
         $draftDailyRows = collect($draft->payload['frtDailyChecks'] ?? [])->keyBy('id');
         $draftOneOffRows = collect($draft->payload['frtOneOffChecks'] ?? [])->keyBy('id');
         $this->assertSame('123456', $draftDailyRows->get('daily:fire-truck:91')['readingValue'] ?? null);
+        $this->assertSame('frt-daily-photo-1', $draftDailyRows->get('daily:fire-truck:90')['photos'][0]['id'] ?? null);
         $this->assertSame('Not Good', $draftOneOffRows->get('one-off:fire-truck:16')['condition'] ?? null);
+        $this->assertSame('frt-one-off-photo-1', $draftOneOffRows->get('one-off:fire-truck:16')['photos'][0]['id'] ?? null);
         $this->assertArrayNotHasKey('frt_daily_checks', $draft->payload);
         $this->assertArrayNotHasKey('frt_one_off_checks', $draft->payload);
     }
@@ -856,6 +1188,66 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonValidationErrors(['payload.frtOneOffChecks.15.remarks']);
     }
 
+    public function test_inspection_report_rejects_frt_issue_rows_without_photos(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $payload = $this->frtPayload();
+        $payload['frtDailyChecks'][89]['photos'] = [];
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-FRT-ISSUE-PHOTOS',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['payload.frtDailyChecks.89.photos']);
+    }
+
+    public function test_inspection_report_rejects_frt_not_good_rows_without_photos(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $payload = $this->frtPayload();
+        $payload['frtOneOffChecks'][15]['photos'] = [];
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-FRT-NOT-GOOD-PHOTOS',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['payload.frtOneOffChecks.15.photos']);
+    }
+
+    public function test_inspection_report_rejects_invalid_frt_issue_photo_url(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $payload = $this->frtPayload();
+        $payload['frtDailyChecks'][89]['photos'][0]['url'] = 'https://example.test/frt-photo.jpg';
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-FRT-BAD-PHOTO',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['payload.frtDailyChecks.89.photos.0.url']);
+    }
+
     public function test_inspection_report_rejects_frt_reports_with_incomplete_seeded_roster(): void
     {
         $user = User::factory()->create(['status' => 'active']);
@@ -891,8 +1283,8 @@ class InspectionPayloadGuardrailsTest extends TestCase
             'status' => 'Submitted',
             'payload' => $payload,
         ]);
-        $missingInspector->assertStatus(422);
-        $missingInspector->assertJsonValidationErrors(['payload.frtInspectedBy']);
+        $missingInspector->assertCreated();
+        $missingInspector->assertJsonPath('data.frtInspectedBy', $user->name);
 
         $payload = $this->frtPayload();
         $payload['frtShift'] = '';
@@ -903,8 +1295,22 @@ class InspectionPayloadGuardrailsTest extends TestCase
             'status' => 'Submitted',
             'payload' => $payload,
         ]);
-        $missingShift->assertStatus(422);
-        $missingShift->assertJsonValidationErrors(['payload.frtShift']);
+        $missingShift->assertCreated();
+
+        $payload = $this->frtPayload();
+        unset($payload['frtTruckReference'], $payload['frtTruckPlateNo'], $payload['frtTruckId']);
+        $payload['mainLocation'] = '';
+        $payload['selectedLocation'] = '';
+        $payload['location'] = '';
+
+        $missingTruck = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-FRT-META-3',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ]);
+        $missingTruck->assertStatus(422);
+        $missingTruck->assertJsonValidationErrors(['payload.frtTruckPlateNo']);
     }
 
     public function test_inspection_report_rejects_invalid_scba_check_payload(): void
@@ -968,7 +1374,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         ]);
 
         $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.scbaFaceMaskChecks.0.remarks']);
+        $response->assertJsonValidationErrors(['payload.scbaFaceMaskChecks.0.leakTestRemarks']);
     }
 
     public function test_inspection_report_rejects_invalid_high_angle_check_payload(): void
@@ -1030,7 +1436,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         ]);
 
         $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.highAngleChecks.0.remarks']);
+        $response->assertJsonValidationErrors(['payload.highAngleChecks.0.conditionRemarks']);
     }
 
     public function test_inspection_report_rejects_high_angle_reports_without_session_meta(): void
@@ -1066,8 +1472,11 @@ class InspectionPayloadGuardrailsTest extends TestCase
         ]);
 
         $missingInspector->assertStatus(422);
-        $missingInspector->assertJsonValidationErrors([
+        $missingInspector->assertJsonMissingValidationErrors([
             'payload.highAngleInspectedBy',
+        ]);
+        $missingInspector->assertJsonValidationErrors([
+            'payload.highAngleInspectionDate',
         ]);
 
         $missingDate = $this->postJson('/api/reports', [
@@ -1408,6 +1817,14 @@ class InspectionPayloadGuardrailsTest extends TestCase
                 'status' => $status,
                 'readingValue' => $readingValue,
                 'remarks' => $remarks,
+                'photos' => $row['id'] === 'daily:fire-truck:90'
+                    ? [[
+                        'id' => 'frt-daily-photo-1',
+                        'fileName' => 'frt-daily-photo.png',
+                        'description' => 'Fuel gauge issue evidence.',
+                        'url' => $this->makeImageDataUrl(128),
+                    ]]
+                    : [],
             ];
         }, FrtDailyReference::dailyRows());
 
@@ -1422,6 +1839,14 @@ class InspectionPayloadGuardrailsTest extends TestCase
                 'equipment' => $row['equipment'],
                 'condition' => $isIssue ? 'Not Good' : 'Good',
                 'remarks' => $isIssue ? 'Siren mute switch sticking.' : '',
+                'photos' => $isIssue
+                    ? [[
+                        'id' => 'frt-one-off-photo-1',
+                        'fileName' => 'frt-one-off-photo.png',
+                        'description' => 'Siren switch issue evidence.',
+                        'url' => $this->makeImageDataUrl(128),
+                    ]]
+                    : [],
             ];
         }, FrtDailyReference::oneOffRows());
 
@@ -1481,6 +1906,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
                     'status' => $row['status'],
                     'reading_value' => $row['readingValue'],
                     'remarks' => $row['remarks'],
+                    'photos' => $row['photos'],
                 ],
                 $dailyChecks
             ),
@@ -1493,20 +1919,21 @@ class InspectionPayloadGuardrailsTest extends TestCase
                     'equipment' => $row['equipment'],
                     'condition' => $row['condition'],
                     'remarks' => $row['remarks'],
+                    'photos' => $row['photos'],
                 ],
                 $oneOffChecks
             ),
         ];
     }
 
-    private function grantInspectionPermission(User $user): void
+    private function grantInspectionPermission(User $user, string $roleName = 'Inspection Guardrail Tester'): void
     {
         $permission = Permission::query()->firstOrCreate([
             'name' => 'reports.inspection.view',
             'guard_name' => 'web',
         ]);
         $role = Role::query()->firstOrCreate([
-            'name' => 'Inspection Guardrail Tester',
+            'name' => $roleName,
             'guard_name' => 'web',
         ]);
         if (! $role->hasPermissionTo($permission)) {

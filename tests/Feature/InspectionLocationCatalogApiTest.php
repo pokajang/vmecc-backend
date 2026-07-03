@@ -136,7 +136,7 @@ class InspectionLocationCatalogApiTest extends TestCase
         ])->assertStatus(422)->assertJsonValidationErrors(['name']);
     }
 
-    public function test_seeded_location_cannot_be_archived_by_regular_inspection_user(): void
+    public function test_regular_inspection_user_can_archive_seeded_location_globally(): void
     {
         $this->seed(InspectionLocationCatalogSeeder::class);
         $user = User::factory()->create(['status' => 'active']);
@@ -149,8 +149,127 @@ class InspectionLocationCatalogApiTest extends TestCase
             ->firstOrFail();
 
         $this->deleteJson("/api/inspection/locations/{$seed->id}")
-            ->assertStatus(403)
-            ->assertJsonPath('code', 'INSPECTION_LOCATION_SEED_PROTECTED');
+            ->assertNoContent();
+
+        $this->assertFalse($seed->fresh()->is_active);
+    }
+
+    public function test_regular_inspection_user_can_rename_seeded_main_location_globally(): void
+    {
+        $this->seed(InspectionLocationCatalogSeeder::class);
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
+        $this->actingAs($user);
+
+        $seed = InspectionLocation::query()
+            ->where('source', 'seed')
+            ->whereNull('parent_id')
+            ->where('name', 'Manjung Hub')
+            ->firstOrFail();
+
+        $this->patchJson("/api/inspection/locations/{$seed->id}", [
+            'name' => 'Manjung Hub FE',
+            'description' => 'Shared rename.',
+        ])->assertOk()->assertJsonPath('data.title', 'Manjung Hub FE');
+
+        $fire = $this->getJson('/api/inspection/location-options?inspectionType=Fire%20Extinguisher%20Inspection');
+        $fire->assertOk();
+        $renamed = collect($fire->json('data'))->firstWhere('title', 'Manjung Hub FE');
+        $this->assertNotNull($renamed);
+        $this->assertContains('Reception', collect($renamed['subLocations'] ?? [])->pluck('title')->all());
+        $this->assertNull(collect($fire->json('data'))->firstWhere('title', 'Manjung Hub'));
+
+        $general = $this->getJson('/api/inspection/location-options?inspectionType=General%20Inspection');
+        $general->assertOk();
+        $this->assertNotNull(collect($general->json('data'))->firstWhere('title', 'Manjung Hub FE'));
+        $this->assertNull(collect($general->json('data'))->firstWhere('title', 'Manjung Hub'));
+    }
+
+    public function test_regular_inspection_user_can_remove_seeded_main_location_globally(): void
+    {
+        $this->seed(InspectionLocationCatalogSeeder::class);
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
+        $this->actingAs($user);
+
+        $seed = InspectionLocation::query()
+            ->where('source', 'seed')
+            ->whereNull('parent_id')
+            ->where('name', 'Manjung Hub')
+            ->firstOrFail();
+
+        $this->deleteJson("/api/inspection/locations/{$seed->id}")->assertNoContent();
+
+        $this->assertFalse($seed->fresh()->is_active);
+        $this->assertSame(
+            0,
+            InspectionLocation::query()
+                ->where('parent_id', $seed->id)
+                ->where('is_active', true)
+                ->count()
+        );
+
+        $fire = $this->getJson('/api/inspection/location-options?inspectionType=Fire%20Extinguisher%20Inspection');
+        $fire->assertOk();
+        $this->assertNull(collect($fire->json('data'))->firstWhere('title', 'Manjung Hub'));
+
+        $general = $this->getJson('/api/inspection/location-options?inspectionType=General%20Inspection');
+        $general->assertOk();
+        $this->assertNull(collect($general->json('data'))->firstWhere('title', 'Manjung Hub'));
+    }
+
+    public function test_regular_inspection_user_can_rename_seeded_sub_location_globally(): void
+    {
+        $this->seed(InspectionLocationCatalogSeeder::class);
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
+        $this->actingAs($user);
+
+        $seed = InspectionLocation::query()
+            ->where('source', 'seed')
+            ->whereNotNull('parent_id')
+            ->where('name', 'Reception')
+            ->firstOrFail();
+
+        $this->patchJson("/api/inspection/locations/{$seed->id}", [
+            'name' => 'Reception Desk',
+        ])->assertOk()->assertJsonPath('data.title', 'Reception Desk');
+
+        $fire = $this->getJson('/api/inspection/location-options?inspectionType=Fire%20Extinguisher%20Inspection');
+        $fire->assertOk();
+        $manjungHub = collect($fire->json('data'))->firstWhere('title', 'Manjung Hub');
+        $this->assertContains(
+            'Reception Desk',
+            collect($manjungHub['subLocations'] ?? [])->pluck('title')->all()
+        );
+        $this->assertNotContains(
+            'Reception',
+            collect($manjungHub['subLocations'] ?? [])->pluck('title')->all()
+        );
+    }
+
+    public function test_regular_inspection_user_can_remove_seeded_sub_location_globally(): void
+    {
+        $this->seed(InspectionLocationCatalogSeeder::class);
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
+        $this->actingAs($user);
+
+        $seed = InspectionLocation::query()
+            ->where('source', 'seed')
+            ->whereNotNull('parent_id')
+            ->where('name', 'Reception')
+            ->firstOrFail();
+
+        $this->deleteJson("/api/inspection/locations/{$seed->id}")->assertNoContent();
+
+        $fire = $this->getJson('/api/inspection/location-options?inspectionType=Fire%20Extinguisher%20Inspection');
+        $fire->assertOk();
+        $manjungHub = collect($fire->json('data'))->firstWhere('title', 'Manjung Hub');
+        $this->assertNotContains(
+            'Reception',
+            collect($manjungHub['subLocations'] ?? [])->pluck('title')->all()
+        );
     }
 
     private function grantPermission(User $user, string $permissionName): void

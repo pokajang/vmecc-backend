@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\ReportDraft;
+use App\Services\AssignmentAuthorizationService;
+use App\Services\RoleCatalog;
 use App\Support\Inspection\FrtDailyReference;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -52,6 +54,7 @@ class ReportDraftController extends Controller
         'noLeakage' => ['remarks' => 'noLeakageRemarks', 'photos' => 'noLeakagePhotos'],
         'functionTest' => ['remarks' => 'functionTestRemarks', 'photos' => 'functionTestPhotos'],
     ];
+
     private const INSPECTION_SCBA_SECTION_FIELDS = [
         'backPlate' => [
             'backPlateHarnessCondition' => 'status',
@@ -81,6 +84,10 @@ class ReportDraftController extends Controller
             'neckStrap' => 'status',
         ],
     ];
+
+    public function __construct(private readonly AssignmentAuthorizationService $authorizationService)
+    {
+    }
 
     public function index(Request $request): JsonResponse
     {
@@ -140,7 +147,11 @@ class ReportDraftController extends Controller
         $row = ReportDraft::query()
             ->where('user_id', $user->id)
             ->where('draft_id', trim((string) $draftId))
-            ->firstOrFail();
+            ->first();
+
+        if (!$row) {
+            return response()->json(['message' => 'Draft not found.'], 404);
+        }
 
         return response()->json(['data' => $this->formatRow($row)]);
     }
@@ -162,6 +173,10 @@ class ReportDraftController extends Controller
             return response()->json(['message' => 'report_type is required.'], 422);
         }
         if ($reportType === self::INSPECTION_TYPE) {
+            $data['payload'] = $this->applyInspectionSessionInspector(
+                (array) $data['payload'],
+                $request
+            );
             $this->validateInspectionPayload((array) $data['payload']);
             $data['payload'] = $this->normalizeInspectionPayload((array) $data['payload']);
         }
@@ -213,8 +228,17 @@ class ReportDraftController extends Controller
         $row = ReportDraft::query()
             ->where('user_id', $user->id)
             ->where('draft_id', trim((string) $draftId))
-            ->firstOrFail();
+            ->first();
+
+        if (!$row) {
+            return response()->json(['message' => 'Draft not found.'], 404);
+        }
+
         if ($this->normalizeReportType((string) ($row->report_type ?? '')) === self::INSPECTION_TYPE) {
+            $data['payload'] = $this->applyInspectionSessionInspector(
+                (array) $data['payload'],
+                $request
+            );
             $this->validateInspectionPayload((array) $data['payload']);
             $data['payload'] = $this->normalizeInspectionPayload((array) $data['payload']);
         }
@@ -329,10 +353,8 @@ class ReportDraftController extends Controller
 
         if (
             $this->isFrtDailyInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
-            || array_key_exists('frtDailyChecks', $payload)
-            || array_key_exists('frt_daily_checks', $payload)
-            || array_key_exists('frtOneOffChecks', $payload)
-            || array_key_exists('frt_one_off_checks', $payload)
+            || $this->hasInspectionRows($payload, 'frtDailyChecks', 'frt_daily_checks')
+            || $this->hasInspectionRows($payload, 'frtOneOffChecks', 'frt_one_off_checks')
         ) {
             $dailyRows = $this->normalizeInspectionFrtDailyChecks(
                 $payload['frtDailyChecks'] ?? $payload['frt_daily_checks'] ?? []
@@ -344,14 +366,14 @@ class ReportDraftController extends Controller
             $this->validateInspectionFrtOneOffRows($oneOffRows, 'payload.frtOneOffChecks');
         }
 
-        if (array_key_exists('highAngleChecks', $payload) || array_key_exists('high_angle_checks', $payload)) {
+        if ($this->hasInspectionRows($payload, 'highAngleChecks', 'high_angle_checks')) {
             $rows = $this->normalizeInspectionHighAngleChecks(
                 $payload['highAngleChecks'] ?? $payload['high_angle_checks']
             );
             $this->validateInspectionHighAngleRemarks($rows, 'payload.highAngleChecks');
         }
 
-        if (array_key_exists('scbaBackPlateChecks', $payload) || array_key_exists('scba_back_plate_checks', $payload)) {
+        if ($this->hasInspectionRows($payload, 'scbaBackPlateChecks', 'scba_back_plate_checks')) {
             $rows = $this->normalizeInspectionScbaChecks(
                 $payload['scbaBackPlateChecks'] ?? $payload['scba_back_plate_checks'],
                 'backPlate',
@@ -360,7 +382,7 @@ class ReportDraftController extends Controller
             $this->validateInspectionScbaRemarks($rows, 'payload.scbaBackPlateChecks', 'backPlate');
         }
 
-        if (array_key_exists('scbaCylinderChecks', $payload) || array_key_exists('scba_cylinder_checks', $payload)) {
+        if ($this->hasInspectionRows($payload, 'scbaCylinderChecks', 'scba_cylinder_checks')) {
             $rows = $this->normalizeInspectionScbaChecks(
                 $payload['scbaCylinderChecks'] ?? $payload['scba_cylinder_checks'],
                 'cylinder',
@@ -369,7 +391,7 @@ class ReportDraftController extends Controller
             $this->validateInspectionScbaRemarks($rows, 'payload.scbaCylinderChecks', 'cylinder');
         }
 
-        if (array_key_exists('scbaFaceMaskChecks', $payload) || array_key_exists('scba_face_mask_checks', $payload)) {
+        if ($this->hasInspectionRows($payload, 'scbaFaceMaskChecks', 'scba_face_mask_checks')) {
             $rows = $this->normalizeInspectionScbaChecks(
                 $payload['scbaFaceMaskChecks'] ?? $payload['scba_face_mask_checks'],
                 'faceMask',
@@ -378,13 +400,20 @@ class ReportDraftController extends Controller
             $this->validateInspectionScbaRemarks($rows, 'payload.scbaFaceMaskChecks', 'faceMask');
         }
 
-        if (array_key_exists('hseSelections', $payload) || array_key_exists('hse_selections', $payload)) {
+        if (array_key_exists('scbaCustomSections', $payload) || array_key_exists('scba_custom_sections', $payload)) {
+            $this->normalizeInspectionScbaCustomSections(
+                $payload['scbaCustomSections'] ?? $payload['scba_custom_sections'],
+                'payload.scbaCustomSections'
+            );
+        }
+
+        if ($this->hasInspectionRows($payload, 'hseSelections', 'hse_selections')) {
             $this->normalizeInspectionHseSelections($payload['hseSelections'] ?? $payload['hse_selections']);
         }
 
         if (array_key_exists('hseSeverity', $payload) || array_key_exists('hse_severity', $payload)) {
             $this->normalizeInspectionHseSeverity(
-                $payload['hseSeverity'] ?? $payload['hse_severity'],
+                $payload['hseSeverity'] ?? $payload['hse_severity'] ?? '',
                 'payload.hseSeverity'
             );
         }
@@ -485,6 +514,15 @@ class ReportDraftController extends Controller
                         'photo' => $photo,
                     ];
                 }
+                $defectPhotos = $check['defectPhotos'] ?? $check['defect_photos'] ?? [];
+                if (is_array($defectPhotos)) {
+                    foreach ($defectPhotos as $photoIndex => $photo) {
+                        $rows[] = [
+                            'path' => "payload.erAuxChecks.{$checkIndex}.defectPhotos.{$photoIndex}",
+                            'photo' => $photo,
+                        ];
+                    }
+                }
             }
         }
 
@@ -500,6 +538,15 @@ class ReportDraftController extends Controller
                         'path' => "payload.highAngleChecks.{$checkIndex}.photos.{$photoIndex}",
                         'photo' => $photo,
                     ];
+                }
+                $conditionPhotos = $check['conditionPhotos'] ?? $check['condition_photos'] ?? [];
+                if (is_array($conditionPhotos)) {
+                    foreach ($conditionPhotos as $photoIndex => $photo) {
+                        $rows[] = [
+                            'path' => "payload.highAngleChecks.{$checkIndex}.conditionPhotos.{$photoIndex}",
+                            'photo' => $photo,
+                        ];
+                    }
                 }
             }
         }
@@ -566,7 +613,224 @@ class ReportDraftController extends Controller
             }
         }
 
+        foreach ([
+            'scbaBackPlateChecks' => $payload['scbaBackPlateChecks'] ?? $payload['scba_back_plate_checks'] ?? [],
+            'scbaCylinderChecks' => $payload['scbaCylinderChecks'] ?? $payload['scba_cylinder_checks'] ?? [],
+            'scbaFaceMaskChecks' => $payload['scbaFaceMaskChecks'] ?? $payload['scba_face_mask_checks'] ?? [],
+        ] as $checksKey => $checks) {
+            if (! is_array($checks)) {
+                continue;
+            }
+            foreach ($checks as $checkIndex => $check) {
+                if (! is_array($check)) {
+                    continue;
+                }
+                foreach (self::INSPECTION_SCBA_SECTION_FIELDS[$this->scbaSectionKeyFromPayloadKey($checksKey)] ?? [] as $field => $kind) {
+                    if ($kind !== 'status') {
+                        continue;
+                    }
+                    $photosKey = "{$field}Photos";
+                    $snakePhotosKey = Str::snake($photosKey);
+                    $issuePhotos = $check[$photosKey] ?? $check[$snakePhotosKey] ?? [];
+                    if (! is_array($issuePhotos)) {
+                        continue;
+                    }
+                    foreach ($issuePhotos as $photoIndex => $photo) {
+                        $rows[] = [
+                            'path' => "payload.{$checksKey}.{$checkIndex}.{$photosKey}.{$photoIndex}",
+                            'photo' => $photo,
+                        ];
+                    }
+                }
+            }
+        }
+
+        $customSections = $payload['scbaCustomSections'] ?? $payload['scba_custom_sections'] ?? [];
+        if (is_array($customSections)) {
+            foreach ($customSections as $sectionIndex => $section) {
+                if (! is_array($section)) {
+                    continue;
+                }
+                if (($section['removed'] ?? false) === true) {
+                    continue;
+                }
+                $fields = is_array($section['fields'] ?? null) ? $section['fields'] : [];
+                $sectionRows = is_array($section['rows'] ?? null) ? $section['rows'] : [];
+                foreach ($sectionRows as $checkIndex => $check) {
+                    if (! is_array($check)) {
+                        continue;
+                    }
+                    if (($check['removed'] ?? false) === true) {
+                        continue;
+                    }
+                    foreach ($fields as $field) {
+                        if (! is_array($field)) {
+                            continue;
+                        }
+                        $fieldKey = trim((string) ($field['key'] ?? ''));
+                        if ($fieldKey === '') {
+                            continue;
+                        }
+                        $photosKey = "{$fieldKey}Photos";
+                        $snakePhotosKey = Str::snake($photosKey);
+                        $issuePhotos = $check[$photosKey] ?? $check[$snakePhotosKey] ?? [];
+                        if (! is_array($issuePhotos)) {
+                            continue;
+                        }
+                        foreach ($issuePhotos as $photoIndex => $photo) {
+                            $rows[] = [
+                                'path' => "payload.scbaCustomSections.{$sectionIndex}.rows.{$checkIndex}.{$photosKey}.{$photoIndex}",
+                                'photo' => $photo,
+                            ];
+                        }
+                    }
+                    $additionalPhotos = $check['photos'] ?? [];
+                    if (is_array($additionalPhotos)) {
+                        foreach ($additionalPhotos as $photoIndex => $photo) {
+                            $rows[] = [
+                                'path' => "payload.scbaCustomSections.{$sectionIndex}.rows.{$checkIndex}.photos.{$photoIndex}",
+                                'photo' => $photo,
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
         return $rows;
+    }
+
+    private function scbaSectionKeyFromPayloadKey(string $payloadKey): string
+    {
+        return match ($payloadKey) {
+            'scbaBackPlateChecks', 'scba_back_plate_checks' => 'backPlate',
+            'scbaCylinderChecks', 'scba_cylinder_checks' => 'cylinder',
+            'scbaFaceMaskChecks', 'scba_face_mask_checks' => 'faceMask',
+            default => '',
+        };
+    }
+
+    private function inspectionSessionActor(Request $request): string
+    {
+        $user = $request->user();
+        foreach (['name', 'full_name', 'fullName', 'display_name', 'displayName', 'email'] as $field) {
+            $value = trim((string) ($user?->{$field} ?? ''));
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function inspectionSessionActorSnapshot(Request $request): array
+    {
+        $user = $request->user();
+        $role = $user ? $this->authorizationService->getPrimaryRoleName($user) : null;
+
+        return [
+            'userId' => $user?->id ?? null,
+            'name' => $this->inspectionSessionActor($request),
+            'email' => trim((string) ($user?->email ?? '')),
+            'role' => trim((string) ($role ?? '')),
+            'roleCode' => trim((string) (RoleCatalog::abbreviationForRole($role) ?? '')),
+        ];
+    }
+
+    private function isHseInspectionType(string $inspectionType): bool
+    {
+        return Str::of($inspectionType)->squish()->lower()->toString() === 'health safety environment inspection';
+    }
+
+    private function inspectionSessionInspectorField(array $payload): ?string
+    {
+        $type = Str::of((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
+            ->squish()
+            ->lower()
+            ->toString();
+
+        if (
+            str_contains($type, 'er aux')
+            || $this->hasInspectionRows($payload, 'erAuxChecks', 'er_aux_checks')
+        ) {
+            return 'erAuxInspectedBy';
+        }
+
+        if (
+            str_contains($type, 'fire extinguisher')
+            || $this->hasInspectionRows(
+                $payload,
+                'fireExtinguisherChecks',
+                'fire_extinguisher_checks'
+            )
+        ) {
+            return 'fireExtinguisherInspectedBy';
+        }
+
+        if (
+            $this->isFrtDailyInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
+            || $this->hasInspectionRows($payload, 'frtDailyChecks', 'frt_daily_checks')
+            || $this->hasInspectionRows($payload, 'frtOneOffChecks', 'frt_one_off_checks')
+        ) {
+            return 'frtInspectedBy';
+        }
+
+        if (
+            str_contains($type, 'high angle')
+            || $this->hasInspectionRows($payload, 'highAngleChecks', 'high_angle_checks')
+        ) {
+            return 'highAngleInspectedBy';
+        }
+
+        if (
+            str_contains($type, 'scba')
+            || $this->hasInspectionRows($payload, 'scbaBackPlateChecks', 'scba_back_plate_checks')
+            || $this->hasInspectionRows($payload, 'scbaCylinderChecks', 'scba_cylinder_checks')
+            || $this->hasInspectionRows($payload, 'scbaFaceMaskChecks', 'scba_face_mask_checks')
+            || $this->hasInspectionRows($payload, 'scbaCustomSections', 'scba_custom_sections')
+        ) {
+            return 'scbaInspectedBy';
+        }
+
+        if (
+            $this->isHseInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
+            || $this->hasInspectionRows($payload, 'hseSelections', 'hse_selections')
+        ) {
+            return 'hseInspectedBy';
+        }
+
+        return null;
+    }
+
+    private function hasInspectionRows(array $payload, string $camelKey, string $snakeKey): bool
+    {
+        $rows = $payload[$camelKey] ?? $payload[$snakeKey] ?? [];
+
+        return is_array($rows) && count($rows) > 0;
+    }
+
+    private function applyInspectionSessionInspector(array $payload, Request $request): array
+    {
+        $field = $this->inspectionSessionInspectorField($payload);
+        $actor = $this->inspectionSessionActorSnapshot($request);
+        if ($actor['name'] === '') {
+            $fieldPath = $field !== null ? "payload.{$field}" : 'payload.inspectionActor';
+            throw ValidationException::withMessages([
+                $fieldPath => ['Unable to identify current user. Please sign in again.'],
+            ]);
+        }
+
+        if ($field !== null) {
+            $payload[$field] = $actor['name'];
+            unset($payload[Str::snake($field)]);
+        }
+
+        $payload['inspectionActor'] = $actor;
+        $payload['submittedByRole'] = $actor['role'];
+        $payload['submittedByRoleCode'] = $actor['roleCode'];
+        unset($payload['inspection_actor'], $payload['submitted_by_role'], $payload['submitted_by_role_code']);
+
+        return $payload;
     }
 
     private function normalizeInspectionPayload(array $payload): array
@@ -639,25 +903,41 @@ class ReportDraftController extends Controller
         }
 
         $isFrtPayload = $this->isFrtDailyInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
-            || array_key_exists('frtInspectedBy', $payload)
-            || array_key_exists('frt_inspected_by', $payload)
-            || array_key_exists('frtInspectionDate', $payload)
-            || array_key_exists('frt_inspection_date', $payload)
-            || array_key_exists('frtShift', $payload)
-            || array_key_exists('frt_shift', $payload)
-            || array_key_exists('frtTruckReference', $payload)
-            || array_key_exists('frt_truck_reference', $payload)
-            || array_key_exists('frtDailyChecks', $payload)
-            || array_key_exists('frt_daily_checks', $payload)
-            || array_key_exists('frtOneOffChecks', $payload)
-            || array_key_exists('frt_one_off_checks', $payload);
+            || $this->hasInspectionRows($payload, 'frtDailyChecks', 'frt_daily_checks')
+            || $this->hasInspectionRows($payload, 'frtOneOffChecks', 'frt_one_off_checks')
+            || trim((string) ($payload['frtTruckId'] ?? $payload['frt_truck_id'] ?? '')) !== ''
+            || trim((string) ($payload['frtTruckPlateNo'] ?? $payload['frt_truck_plate_no'] ?? '')) !== '';
 
         if ($isFrtPayload) {
-            $payload['location'] = FrtDailyReference::MAIN_LOCATION;
-            $payload['selectedLocation'] = FrtDailyReference::MAIN_LOCATION;
-            $payload['mainLocation'] = FrtDailyReference::MAIN_LOCATION;
+            $hasExplicitTruckReference = array_key_exists('frtTruckReference', $payload) || array_key_exists('frt_truck_reference', $payload);
+            $legacyLocation = trim((string) ($payload['mainLocation'] ?? $payload['main_location'] ?? $payload['selectedLocation'] ?? $payload['location'] ?? ''));
+            $truckReference = $this->normalizeInspectionFrtTruckReference(
+                $payload['frtTruckReference'] ?? $payload['frt_truck_reference'] ?? []
+            );
+            $truckPlate = trim((string) (
+                $payload['frtTruckPlateNo'] ??
+                $payload['frt_truck_plate_no'] ??
+                ($hasExplicitTruckReference ? ($truckReference['plateNo'] ?? '') : '') ??
+                $payload['mainLocation'] ??
+                $payload['main_location'] ??
+                ''
+            ));
+            if (Str::of($truckPlate)->squish()->lower()->toString() === Str::of(FrtDailyReference::MAIN_LOCATION)->squish()->lower()->toString()) {
+                $truckPlate = trim((string) ($truckReference['plateNo'] ?? ''));
+            }
+            if ($truckPlate === '' && Str::of($legacyLocation)->squish()->lower()->toString() === Str::of(FrtDailyReference::MAIN_LOCATION)->squish()->lower()->toString()) {
+                $truckPlate = trim((string) ($truckReference['plateNo'] ?? FrtDailyReference::TRUCK_REFERENCE['plateNo']));
+            }
+
+            $payload['frtTruckReference'] = array_merge($truckReference, ['plateNo' => $truckPlate]);
+            $payload['frtTruckPlateNo'] = $truckPlate;
+            $payload['frtTruckId'] = trim((string) ($payload['frtTruckId'] ?? $payload['frt_truck_id'] ?? ''));
+            $payload['location'] = $truckPlate;
+            $payload['selectedLocation'] = $truckPlate;
+            $payload['mainLocation'] = $truckPlate;
             $payload['subLocation'] = '';
-            $payload['locationPath'] = [FrtDailyReference::MAIN_LOCATION];
+            $payload['locationPath'] = [$truckPlate];
+            unset($payload['frt_truck_id'], $payload['frt_truck_plate_no']);
         }
 
         if (array_key_exists('frtInspectedBy', $payload) || array_key_exists('frt_inspected_by', $payload)) {
@@ -743,6 +1023,14 @@ class ReportDraftController extends Controller
             unset($payload['scba_face_mask_checks']);
         }
 
+        if (array_key_exists('scbaCustomSections', $payload) || array_key_exists('scba_custom_sections', $payload)) {
+            $payload['scbaCustomSections'] = $this->normalizeInspectionScbaCustomSections(
+                $payload['scbaCustomSections'] ?? $payload['scba_custom_sections'],
+                'payload.scbaCustomSections'
+            );
+            unset($payload['scba_custom_sections']);
+        }
+
         $payload = $this->normalizeInspectionHsePayload($payload);
 
         return $payload;
@@ -781,7 +1069,7 @@ class ReportDraftController extends Controller
 
         if (array_key_exists('hseSeverity', $payload) || array_key_exists('hse_severity', $payload)) {
             $payload['hseSeverity'] = $this->normalizeInspectionHseSeverity(
-                $payload['hseSeverity'] ?? $payload['hse_severity'],
+                $payload['hseSeverity'] ?? $payload['hse_severity'] ?? '',
                 'payload.hseSeverity'
             );
             unset($payload['hse_severity']);
@@ -938,6 +1226,9 @@ class ReportDraftController extends Controller
                     "payload.erAuxChecks.{$index}.condition"
                 ),
                 'remarks' => trim((string) ($item['remarks'] ?? $item['remark'] ?? '')),
+                'defectRemarks' => trim((string) ($item['defectRemarks'] ?? $item['defect_remarks'] ?? '')),
+                'additionalNotes' => trim((string) ($item['additionalNotes'] ?? $item['additional_notes'] ?? '')),
+                'defectPhotos' => $this->normalizeInspectionPhotos($item['defectPhotos'] ?? $item['defect_photos'] ?? []),
                 'photos' => $this->normalizeInspectionPhotos($item['photos'] ?? []),
             ]);
 
@@ -949,7 +1240,10 @@ class ReportDraftController extends Controller
                 $normalized['equipment_source'],
                 $normalized['equipment_description'],
                 $normalized['default_quantity'],
-                $normalized['is_custom_equipment']
+                $normalized['is_custom_equipment'],
+                $normalized['defect_remarks'],
+                $normalized['additional_notes'],
+                $normalized['defect_photos']
             );
 
             $rows[] = $normalized;
@@ -1087,8 +1381,24 @@ class ReportDraftController extends Controller
                     "payload.highAngleChecks.{$index}.condition"
                 ),
                 'remarks' => trim((string) ($item['remarks'] ?? $item['remark'] ?? '')),
+                'conditionRemarks' => trim((string) (
+                    $item['conditionRemarks'] ??
+                    $item['condition_remarks'] ??
+                    $item['remarks'] ??
+                    $item['remark'] ??
+                    ''
+                )),
+                'conditionPhotos' => $this->normalizeInspectionPhotos(
+                    $item['conditionPhotos'] ?? $item['condition_photos'] ?? []
+                ),
             ]);
-            unset($normalized['main_location'], $normalized['row_number'], $normalized['sub_location']);
+            unset(
+                $normalized['main_location'],
+                $normalized['row_number'],
+                $normalized['sub_location'],
+                $normalized['condition_remarks'],
+                $normalized['condition_photos']
+            );
 
             $rows[] = $normalized;
         }
@@ -1252,6 +1562,7 @@ class ReportDraftController extends Controller
                 'size' => trim((string) ($item['size'] ?? '')),
                 'cylinderType' => trim((string) ($item['cylinderType'] ?? $item['cylinder_type'] ?? $item['type'] ?? '')),
                 'remarks' => trim((string) ($item['remarks'] ?? $item['remark'] ?? '')),
+                'photos' => $this->normalizeInspectionPhotos($item['photos'] ?? []),
             ]);
             unset($normalized['serial_no'], $normalized['serialNumber'], $normalized['cylinder_type'], $normalized['type']);
 
@@ -1264,6 +1575,19 @@ class ReportDraftController extends Controller
                 if ($snakeField !== $field) {
                     unset($normalized[$snakeField]);
                 }
+                if ($kind === 'status') {
+                    $remarksKey = "{$field}Remarks";
+                    $photosKey = "{$field}Photos";
+                    $normalized[$remarksKey] = trim((string) (
+                        $item[$remarksKey] ??
+                        $item[Str::snake($remarksKey)] ??
+                        ''
+                    ));
+                    $normalized[$photosKey] = $this->normalizeInspectionPhotos(
+                        $item[$photosKey] ?? $item[Str::snake($photosKey)] ?? []
+                    );
+                    unset($normalized[Str::snake($remarksKey)], $normalized[Str::snake($photosKey)]);
+                }
             }
 
             $rows[] = $normalized;
@@ -1275,24 +1599,225 @@ class ReportDraftController extends Controller
     private function validateInspectionScbaRemarks(array $rows, string $fieldPath, string $sectionKey): void
     {
         $fieldMap = self::INSPECTION_SCBA_SECTION_FIELDS[$sectionKey] ?? [];
+        $this->validateInspectionScbaRowsAgainstFieldMap($rows, $fieldPath, $fieldMap);
+    }
+
+    private function validateInspectionScbaRowsAgainstFieldMap(array $rows, string $fieldPath, array $fieldMap): void
+    {
         foreach ($rows as $index => $row) {
-            $hasNotGoodStatus = false;
+            if (($row['removed'] ?? false) === true) {
+                continue;
+            }
             foreach ($fieldMap as $field => $kind) {
                 if ($kind !== 'status') {
                     continue;
                 }
                 if (strcasecmp(trim((string) ($row[$field] ?? '')), 'Not Good') === 0) {
-                    $hasNotGoodStatus = true;
-                    break;
+                    $remarksKey = "{$field}Remarks";
+                    $photosKey = "{$field}Photos";
+                    $remarks = trim((string) ($row[$remarksKey] ?? $row['remarks'] ?? ''));
+                    if ($remarks === '') {
+                        throw ValidationException::withMessages([
+                            "{$fieldPath}.{$index}.{$remarksKey}" => ['SCBA remarks are required when this status is Not Good.'],
+                        ]);
+                    }
+                    if (count($this->normalizeInspectionPhotos($row[$photosKey] ?? [])) === 0) {
+                        throw ValidationException::withMessages([
+                            "{$fieldPath}.{$index}.{$photosKey}" => ['SCBA issue photo is required when this status is Not Good.'],
+                        ]);
+                    }
                 }
             }
+        }
+    }
 
-            if ($hasNotGoodStatus && trim((string) ($row['remarks'] ?? '')) === '') {
+    private function normalizeInspectionScbaCustomSections(mixed $sections, string $fieldPath): array
+    {
+        if (! is_array($sections)) {
+            throw ValidationException::withMessages([
+                $fieldPath => ['SCBA custom sections must be an array.'],
+            ]);
+        }
+
+        $rows = [];
+        $usedSectionKeys = ['backPlate' => true, 'cylinder' => true, 'faceMask' => true];
+        foreach ($sections as $index => $section) {
+            if (! is_array($section)) {
                 throw ValidationException::withMessages([
-                    "{$fieldPath}.{$index}.remarks" => ['SCBA remarks are required when any status is Not Good.'],
+                    "{$fieldPath}.{$index}" => ['Invalid SCBA custom section.'],
                 ]);
             }
+
+            $title = trim((string) ($section['title'] ?? $section['name'] ?? ''));
+            if ($title === '') {
+                throw ValidationException::withMessages([
+                    "{$fieldPath}.{$index}.title" => ['SCBA custom section title is required.'],
+                ]);
+            }
+
+            $fields = $this->normalizeInspectionScbaCustomFields(
+                $section['fields'] ?? $section['checks'] ?? [],
+                "{$fieldPath}.{$index}.fields"
+            );
+            if (count($fields) === 0) {
+                throw ValidationException::withMessages([
+                    "{$fieldPath}.{$index}.fields" => ['At least one SCBA custom check is required.'],
+                ]);
+            }
+
+            $providedKey = trim((string) ($section['key'] ?? ''));
+            $baseKey = $this->inspectionPayloadSlug((string) ($providedKey ?: ($section['id'] ?? $title))) ?: 'custom-scba-section';
+            $key = $providedKey !== '' ? $providedKey : 'customScba-'.$baseKey;
+            $suffix = 2;
+            while (isset($usedSectionKeys[$key])) {
+                $key = ($providedKey !== '' ? $providedKey : 'customScba-'.$baseKey).'-'.$suffix;
+                $suffix++;
+            }
+            $usedSectionKeys[$key] = true;
+
+            $fieldMap = [];
+            foreach ($fields as $field) {
+                $fieldMap[$field['key']] = 'status';
+            }
+
+            $sectionRows = $this->normalizeInspectionScbaCustomRows(
+                $section['rows'] ?? [],
+                $key,
+                $fieldMap,
+                "{$fieldPath}.{$index}.rows"
+            );
+            if (($section['removed'] ?? false) !== true) {
+                $this->validateInspectionScbaRowsAgainstFieldMap($sectionRows, "{$fieldPath}.{$index}.rows", $fieldMap);
+            }
+
+            $rows[] = [
+                'id' => trim((string) ($section['id'] ?? '')) ?: $key,
+                'catalogSectionId' => $section['catalogSectionId'] ?? $section['catalog_section_id'] ?? null,
+                'key' => $key,
+                'title' => $title,
+                'shortLabel' => trim((string) ($section['shortLabel'] ?? $section['short_label'] ?? $title)),
+                'isCustomSection' => true,
+                'source' => trim((string) ($section['source'] ?? 'custom')) ?: 'custom',
+                'canEdit' => $section['canEdit'] ?? $section['can_edit'] ?? true,
+                'canDelete' => $section['canDelete'] ?? $section['can_delete'] ?? true,
+                'removed' => ($section['removed'] ?? false) === true,
+                'removedAt' => trim((string) ($section['removedAt'] ?? $section['removed_at'] ?? '')),
+                'removedBy' => trim((string) ($section['removedBy'] ?? $section['removed_by'] ?? '')),
+                'removedReason' => trim((string) ($section['removedReason'] ?? $section['removed_reason'] ?? '')),
+                'fields' => $fields,
+                'rows' => $sectionRows,
+            ];
         }
+
+        return $rows;
+    }
+
+    private function normalizeInspectionScbaCustomFields(mixed $fields, string $fieldPath): array
+    {
+        if (! is_array($fields)) {
+            throw ValidationException::withMessages([
+                $fieldPath => ['SCBA custom section fields must be an array.'],
+            ]);
+        }
+
+        $rows = [];
+        $usedKeys = [];
+        foreach ($fields as $index => $field) {
+            $label = is_array($field)
+                ? trim((string) ($field['label'] ?? $field['name'] ?? ''))
+                : trim((string) $field);
+            if ($label === '') {
+                throw ValidationException::withMessages([
+                    "{$fieldPath}.{$index}.label" => ['SCBA custom check label is required.'],
+                ]);
+            }
+            $keySource = is_array($field) ? ($field['key'] ?? $label) : $label;
+            $providedKey = trim((string) (is_array($field) ? ($field['key'] ?? '') : ''));
+            $key = $providedKey !== '' && preg_match('/^[a-z][A-Za-z0-9]*$/', $providedKey)
+                ? $providedKey
+                : Str::camel($this->inspectionPayloadSlug((string) $keySource) ?: 'check');
+            $suffix = 2;
+            while (isset($usedKeys[$key])) {
+                $key = Str::camel(($this->inspectionPayloadSlug((string) $keySource) ?: 'check').'-'.$suffix);
+                $suffix++;
+            }
+            $usedKeys[$key] = true;
+            $rows[] = [
+                'key' => $key,
+                'label' => $label,
+                'kind' => 'status',
+            ];
+        }
+
+        return $rows;
+    }
+
+    private function normalizeInspectionScbaCustomRows(mixed $checks, string $sectionKey, array $fieldMap, string $fieldPath): array
+    {
+        if (! is_array($checks)) {
+            throw ValidationException::withMessages([
+                $fieldPath => ['SCBA custom section rows must be an array.'],
+            ]);
+        }
+
+        $rows = [];
+        foreach ($checks as $index => $item) {
+            if (! is_array($item)) {
+                throw ValidationException::withMessages([
+                    "{$fieldPath}.{$index}" => ['Invalid SCBA custom section row.'],
+                ]);
+            }
+            $location = trim((string) ($item['location'] ?? $item['mainLocation'] ?? $item['main_location'] ?? ''));
+            $brand = trim((string) ($item['brand'] ?? ''));
+            $serialNo = trim((string) ($item['serialNo'] ?? $item['serial_no'] ?? $item['serialNumber'] ?? ''));
+            if ($brand === '' && $serialNo === '') {
+                throw ValidationException::withMessages([
+                    "{$fieldPath}.{$index}.serialNo" => ['SCBA custom item brand or serial number is required.'],
+                ]);
+            }
+
+            $normalized = array_merge($item, [
+                'id' => trim((string) ($item['id'] ?? '')) ?: $this->inspectionPayloadSlug($sectionKey.' '.$location.' '.$brand.' '.$serialNo),
+                'catalogItemId' => $item['catalogItemId'] ?? $item['catalog_item_id'] ?? null,
+                'catalogSectionId' => $item['catalogSectionId'] ?? $item['catalog_section_id'] ?? null,
+                'sectionKey' => $sectionKey,
+                'location' => $location,
+                'brand' => $brand,
+                'serialNo' => $serialNo,
+                'size' => trim((string) ($item['size'] ?? '')),
+                'cylinderType' => trim((string) ($item['cylinderType'] ?? $item['cylinder_type'] ?? $item['type'] ?? '')),
+                'equipmentDescription' => trim((string) ($item['equipmentDescription'] ?? $item['equipment_description'] ?? $item['description'] ?? '')),
+                'equipmentSource' => 'custom',
+                'isCustomEquipment' => true,
+                'removed' => ($item['removed'] ?? false) === true,
+                'removedAt' => trim((string) ($item['removedAt'] ?? $item['removed_at'] ?? '')),
+                'removedBy' => trim((string) ($item['removedBy'] ?? $item['removed_by'] ?? '')),
+                'removedReason' => trim((string) ($item['removedReason'] ?? $item['removed_reason'] ?? '')),
+                'remarks' => trim((string) ($item['remarks'] ?? $item['remark'] ?? '')),
+                'photos' => $this->normalizeInspectionPhotos($item['photos'] ?? []),
+            ]);
+            unset($normalized['serial_no'], $normalized['serialNumber'], $normalized['cylinder_type'], $normalized['type']);
+
+            foreach ($fieldMap as $field => $kind) {
+                $snakeField = Str::snake($field);
+                $normalized[$field] = $this->normalizeInspectionScbaStatus(
+                    $item[$field] ?? $item[$snakeField] ?? '',
+                    "{$fieldPath}.{$index}.{$field}"
+                );
+                unset($normalized[$snakeField]);
+                $remarksKey = "{$field}Remarks";
+                $photosKey = "{$field}Photos";
+                $normalized[$remarksKey] = trim((string) ($item[$remarksKey] ?? $item[Str::snake($remarksKey)] ?? ''));
+                $normalized[$photosKey] = $this->normalizeInspectionPhotos(
+                    $item[$photosKey] ?? $item[Str::snake($photosKey)] ?? []
+                );
+                unset($normalized[Str::snake($remarksKey)], $normalized[Str::snake($photosKey)]);
+            }
+
+            $rows[] = $normalized;
+        }
+
+        return $rows;
     }
 
     private function validateInspectionHighAngleRemarks(array $rows, string $fieldPath): void
@@ -1300,10 +1825,18 @@ class ReportDraftController extends Controller
         foreach ($rows as $index => $row) {
             if (
                 strcasecmp(trim((string) ($row['condition'] ?? '')), 'Not Good') === 0
-                && trim((string) ($row['remarks'] ?? '')) === ''
+                && trim((string) ($row['conditionRemarks'] ?? $row['remarks'] ?? '')) === ''
             ) {
                 throw ValidationException::withMessages([
-                    "{$fieldPath}.{$index}.remarks" => ['High Angle remarks are required when condition is Not Good.'],
+                    "{$fieldPath}.{$index}.conditionRemarks" => ['High Angle remarks are required when condition is Not Good.'],
+                ]);
+            }
+            if (
+                strcasecmp(trim((string) ($row['condition'] ?? '')), 'Not Good') === 0
+                && count($this->normalizeInspectionPhotos($row['conditionPhotos'] ?? [])) === 0
+            ) {
+                throw ValidationException::withMessages([
+                    "{$fieldPath}.{$index}.conditionPhotos" => ['High Angle issue photo is required when condition is Not Good.'],
                 ]);
             }
         }
@@ -1543,7 +2076,10 @@ class ReportDraftController extends Controller
 
     private function isFrtDailyInspectionType(string $inspectionType): bool
     {
-        return Str::of($inspectionType)->squish()->lower()->toString() === 'frt daily inspection';
+        return in_array(Str::of($inspectionType)->squish()->lower()->toString(), [
+            Str::of(FrtDailyReference::INSPECTION_TYPE)->squish()->lower()->toString(),
+            Str::of(FrtDailyReference::LEGACY_INSPECTION_TYPE)->squish()->lower()->toString(),
+        ], true);
     }
 
     private function orderNormalizedFrtDailyRows(array $rows): array
