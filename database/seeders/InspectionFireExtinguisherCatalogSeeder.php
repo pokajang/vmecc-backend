@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\InspectionFireExtinguisher;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Schema;
 
 class InspectionFireExtinguisherCatalogSeeder extends Seeder
 {
@@ -31,31 +32,38 @@ class InspectionFireExtinguisherCatalogSeeder extends Seeder
             }
 
             $seededSourceRows[] = $sourceRowNumber;
-            $rawValidity = $this->text($row['certificationValidityRaw'] ?? '');
+            $attributes = [
+                'zone' => $this->text($row['zone'] ?? '') ?: null,
+                'main_location_name' => $this->text($row['mainLocation'] ?? ''),
+                'sub_location_name' => $this->text($row['subLocation'] ?? '') ?: null,
+                'id_loc_no' => $this->text($row['idLocNo'] ?? '') ?: null,
+                'barcode_no' => $this->text($row['barcodeNo'] ?? '') ?: null,
+                'fe_type' => $this->normalizeFeType($row['feType'] ?? '') ?: null,
+                'certification_validity' => $this->date($row['certificationValidity'] ?? ''),
+                'source' => 'seed',
+                'is_active' => true,
+                'sort_order' => (int) ($row['sortOrder'] ?? ($index + 1)),
+            ];
+            if (Schema::hasColumn('inspection_fire_extinguishers', 'active_identity_key')) {
+                $attributes['active_identity_key'] = null;
+            }
+
             InspectionFireExtinguisher::query()->updateOrCreate(
                 ['source_row_number' => $sourceRowNumber],
-                [
-                    'zone' => $this->text($row['zone'] ?? '') ?: null,
-                    'main_location_name' => $this->text($row['mainLocation'] ?? ''),
-                    'sub_location_name' => $this->text($row['subLocation'] ?? '') ?: null,
-                    'id_loc_no' => $this->text($row['idLocNo'] ?? '') ?: null,
-                    'barcode_no' => $this->text($row['barcodeNo'] ?? '') ?: null,
-                    'fe_type' => $this->normalizeFeType($row['feType'] ?? '') ?: null,
-                    'certification_validity' => $this->date($row['certificationValidity'] ?? ''),
-                    'certification_validity_raw' => $rawValidity !== '' ? $rawValidity : null,
-                    'days_left_to_expire' => $this->text($row['daysLeftToExpire'] ?? '') ?: null,
-                    'source' => 'seed',
-                    'is_active' => true,
-                    'sort_order' => (int) ($row['sortOrder'] ?? ($index + 1)),
-                ],
+                $attributes,
             );
         }
 
         if ($seededSourceRows !== []) {
-            InspectionFireExtinguisher::query()
+            $staleSeedQuery = InspectionFireExtinguisher::query()
                 ->where('source', 'seed')
-                ->whereNotIn('source_row_number', $seededSourceRows)
-                ->update(['is_active' => false]);
+                ->whereNotIn('source_row_number', $seededSourceRows);
+
+            $staleSeedQuery->update(
+                Schema::hasColumn('inspection_fire_extinguishers', 'active_identity_key')
+                    ? ['is_active' => false, 'active_identity_key' => null]
+                    : ['is_active' => false],
+            );
         }
     }
 
@@ -66,7 +74,7 @@ class InspectionFireExtinguisherCatalogSeeder extends Seeder
 
     private function normalizeFeType(mixed $value): string
     {
-        return str_replace(['CO²', 'CO�'], 'CO2', $this->text($value));
+        return str_replace(['CO²', 'CO�', 'COÂ²', 'COï¿½'], 'CO2', $this->text($value));
     }
 
     private function date(mixed $value): ?string

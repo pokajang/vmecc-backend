@@ -521,7 +521,7 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
     private function hydraulicPayload(
         string $mainLocation,
         string $defectRemark = 'Slow response.',
-        bool $includeDefectPhoto = false,
+        bool $includeDefectPhoto = true,
     ): array {
         $suffix = strcasecmp($mainLocation, 'Store') === 0 ? '2' : '1';
         $equipmentNames = [

@@ -76,6 +76,7 @@ class InspectionReportPdfTest extends TestCase
             ->once()
             ->withArgs(function (string $view, array $data) use (&$capturedRecord): bool {
                 $capturedRecord = $data['record'] ?? null;
+
                 return $view === 'pdf.inspection_report';
             })
             ->andReturn($document);
@@ -183,6 +184,12 @@ class InspectionReportPdfTest extends TestCase
                     'selected' => true,
                     'selectedAt' => '2026-04-29T09:16:00+08:00',
                 ],
+                [
+                    'id' => 'hse-inspection:unsafe-act',
+                    'label' => 'Leaked HSE checklist item',
+                    'inspectionType' => 'Health Safety Environment Inspection',
+                    'selected' => true,
+                ],
             ],
             'hydraulicChecks' => [
                 [
@@ -231,12 +238,6 @@ class InspectionReportPdfTest extends TestCase
             'Housekeeping inspection found minor labelling gaps.',
             'Label on aisle rack requires replacement.',
             'Area clean',
-            'Hydraulic Equipment Checks',
-            'Hydraulic Pump Motor 1',
-            'FRT primary rescue pump.',
-            'N/A Reason: Hydraulic Pump Motor 1 - No Leakage',
-            'Leak test skipped because tool was isolated.',
-            'Slow response.',
             'Inspector User',
             'Tactical Response Team (TRT)',
             'Supervisor User',
@@ -245,6 +246,440 @@ class InspectionReportPdfTest extends TestCase
 
         foreach ($expectedText as $text) {
             $this->assertStringContainsString($text, $html);
+        }
+
+        foreach ([
+            'Leaked HSE checklist item',
+            'Hydraulic Equipment Checks',
+            'Hydraulic Pump Motor 1',
+            'FRT primary rescue pump.',
+            'N/A Reason: Hydraulic Pump Motor 1 - No Leakage',
+            'Leak test skipped because tool was isolated.',
+            'Slow response.',
+        ] as $text) {
+            $this->assertStringNotContainsString($text, $html);
+        }
+    }
+
+    public function test_pdf_template_does_not_render_sections_from_other_inspection_forms(): void
+    {
+        $records = [
+            [
+                'record' => [
+                    'displayId' => 'INS-LEAK-GENERAL',
+                    'status' => 'Submitted',
+                    'incidentType' => 'General Inspection',
+                    'location' => 'General Area',
+                    'description' => 'General inspection should stay generic.',
+                    'checklist' => [
+                        ['label' => 'General area checked', 'inspectionType' => 'General Inspection'],
+                        ['label' => 'HSE checklist should not leak', 'inspectionType' => 'Health Safety Environment Inspection'],
+                    ],
+                    'hseSelections' => ['unsafeAct'],
+                    'hseUnsafeActDetails' => 'HSE SHOULD NOT LEAK INTO GENERAL',
+                    'erAuxChecks' => [
+                        ['location' => 'Store', 'equipment' => 'ER AUX SHOULD NOT LEAK TO GENERAL'],
+                    ],
+                ],
+                'expected' => ['General inspection should stay generic.', 'General area checked'],
+                'forbidden' => [
+                    'HSE Observation',
+                    'HSE checklist should not leak',
+                    'HSE SHOULD NOT LEAK INTO GENERAL',
+                    'ER Aux Equipment Checks',
+                    'ER AUX SHOULD NOT LEAK TO GENERAL',
+                ],
+            ],
+            [
+                'record' => [
+                    'displayId' => 'INS-LEAK-ERAUX',
+                    'status' => 'Submitted',
+                    'incidentType' => 'ER Aux Equipment Inspection',
+                    'location' => 'Store',
+                    'description' => 'ER Aux leak guard.',
+                    'erAuxChecks' => [
+                        ['location' => 'Store', 'equipment' => 'ER Aux Unique Pump', 'condition' => 'OK'],
+                    ],
+                    'hseSelections' => ['unsafeAct'],
+                    'hseUnsafeActDetails' => 'HSE SHOULD NOT LEAK INTO ER AUX',
+                    'hseSeverity' => 'Critical',
+                ],
+                'expected' => ['ER Aux Equipment Checks', 'ER Aux Unique Pump'],
+                'forbidden' => ['HSE Observation', 'HSE SHOULD NOT LEAK INTO ER AUX'],
+            ],
+            [
+                'record' => [
+                    'displayId' => 'INS-LEAK-HSE',
+                    'status' => 'Submitted',
+                    'incidentType' => 'Health Safety Environment Inspection',
+                    'location' => 'Dock',
+                    'description' => 'HSE leak guard.',
+                    'hseSelections' => ['unsafeCondition'],
+                    'hseUnsafeConditionDetails' => 'HSE Unique Finding',
+                    'hseSeverity' => 'High',
+                    'erAuxChecks' => [
+                        ['location' => 'Store', 'equipment' => 'ER AUX SHOULD NOT LEAK', 'condition' => 'Missing'],
+                    ],
+                ],
+                'expected' => ['HSE Observation', 'HSE Unique Finding'],
+                'forbidden' => ['ER Aux Equipment Checks', 'ER AUX SHOULD NOT LEAK'],
+            ],
+            [
+                'record' => [
+                    'displayId' => 'INS-LEAK-FE',
+                    'status' => 'Submitted',
+                    'incidentType' => 'Fire Extinguisher Inspection',
+                    'location' => 'Yard',
+                    'description' => 'FE leak guard.',
+                    'fireExtinguisherChecks' => [
+                        [
+                            'idLocNo' => 'FE-UNIQUE-01',
+                            'barcodeNo' => 'BAR-FE-UNIQUE-01',
+                            'physicalCondition' => 'Good',
+                        ],
+                    ],
+                    'hydraulicChecks' => [
+                        ['location' => 'FRT', 'equipment' => 'HYD SHOULD NOT LEAK', 'physicalCondition' => 'Defect'],
+                    ],
+                ],
+                'expected' => ['Fire Extinguisher Checks', 'FE-UNIQUE-01'],
+                'forbidden' => ['Hydraulic Equipment Checks', 'HYD SHOULD NOT LEAK'],
+            ],
+            [
+                'record' => [
+                    'displayId' => 'INS-LEAK-HYD',
+                    'status' => 'Submitted',
+                    'incidentType' => 'Hydraulic Rescue Tools Inspection',
+                    'location' => 'FRT',
+                    'description' => 'Hydraulic leak guard.',
+                    'hydraulicChecks' => [
+                        ['location' => 'FRT', 'equipment' => 'Hydraulic Unique Cutter', 'physicalCondition' => 'OK'],
+                    ],
+                    'fireExtinguisherChecks' => [
+                        ['idLocNo' => 'FE SHOULD NOT LEAK', 'barcodeNo' => 'BAR-LEAK'],
+                    ],
+                ],
+                'expected' => ['Hydraulic Equipment Checks', 'Hydraulic Unique Cutter'],
+                'forbidden' => ['Fire Extinguisher Checks', 'FE SHOULD NOT LEAK'],
+            ],
+            [
+                'record' => [
+                    'displayId' => 'INS-LEAK-FRT',
+                    'status' => 'Submitted',
+                    'incidentType' => 'Fire Truck Daily Readiness',
+                    'location' => 'FIRE TRUCK',
+                    'description' => 'FRT leak guard.',
+                    'frtTruckReference' => ['plateNo' => 'FRT-UNIQUE-01'],
+                    'frtDailyChecks' => [
+                        ['rowNumber' => '1', 'location' => 'LOCKER', 'equipment' => 'FRT Unique Hose', 'status' => 'Checked'],
+                    ],
+                    'highAngleChecks' => [
+                        ['rowNumber' => '1', 'equipment' => 'HIGH ANGLE SHOULD NOT LEAK', 'condition' => 'Good'],
+                    ],
+                ],
+                'expected' => ['Fire Truck Daily Readiness', 'FRT Unique Hose'],
+                'forbidden' => ['High Angle Rescue Equipment Checks', 'HIGH ANGLE SHOULD NOT LEAK'],
+            ],
+            [
+                'record' => [
+                    'displayId' => 'INS-LEAK-HA',
+                    'status' => 'Submitted',
+                    'incidentType' => 'High Angle Rescue Equipment Inspection',
+                    'location' => 'Response Kit',
+                    'description' => 'High Angle leak guard.',
+                    'highAngleChecks' => [
+                        ['rowNumber' => '1', 'equipment' => 'High Angle Unique Rope', 'condition' => 'Good'],
+                    ],
+                    'scbaBackPlateChecks' => [
+                        ['brand' => 'SCBA SHOULD NOT LEAK', 'serialNo' => 'SCBA-LEAK'],
+                    ],
+                ],
+                'expected' => ['High Angle Rescue Equipment Checks', 'High Angle Unique Rope'],
+                'forbidden' => ['SCBA Checks', 'SCBA SHOULD NOT LEAK'],
+            ],
+            [
+                'record' => [
+                    'displayId' => 'INS-LEAK-SCBA',
+                    'status' => 'Submitted',
+                    'incidentType' => 'SCBA Inspection',
+                    'location' => 'FRT',
+                    'description' => 'SCBA leak guard.',
+                    'scbaBackPlateChecks' => [
+                        ['brand' => 'SCBA Unique Brand', 'serialNo' => 'SCBA-UNIQUE-01'],
+                    ],
+                    'frtDailyChecks' => [
+                        ['rowNumber' => '1', 'location' => 'LOCKER', 'equipment' => 'FRT SHOULD NOT LEAK'],
+                    ],
+                ],
+                'expected' => ['SCBA Checks', 'SCBA Unique Brand'],
+                'forbidden' => ['Fire Truck Daily Readiness', 'FRT SHOULD NOT LEAK'],
+            ],
+        ];
+
+        foreach ($records as $case) {
+            $html = view('pdf.inspection_report', [
+                'record' => $case['record'],
+            ])->render();
+
+            foreach ($case['expected'] as $text) {
+                $this->assertStringContainsString($text, $html, $case['record']['displayId']);
+            }
+            foreach ($case['forbidden'] as $text) {
+                $this->assertStringNotContainsString($text, $html, $case['record']['displayId']);
+            }
+        }
+    }
+
+    public function test_pdf_template_renders_general_and_hse_repeatable_finding_cards(): void
+    {
+        $pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
+
+        $generalHtml = view('pdf.inspection_report', [
+            'record' => [
+                'displayId' => 'INS-GEN-ISSUES-001',
+                'status' => 'Submitted',
+                'incidentType' => 'General Inspection',
+                'location' => 'Zone 1 > Workshop',
+                'description' => 'General inspection completed.',
+                'inspectionIssues' => [
+                    [
+                        'description' => 'Blocked emergency exit.',
+                        'actionRequired' => 'Remove stored items immediately.',
+                        'photos' => [
+                            [
+                                'url' => $pixel,
+                                'description' => 'Blocked exit finding evidence.',
+                            ],
+                        ],
+                    ],
+                    [
+                        'description' => '',
+                        'actionRequired' => '',
+                        'photos' => [],
+                    ],
+                ],
+            ],
+        ])->render();
+
+        foreach ([
+            'Findings (1)',
+            'Finding 1',
+            'Finding Photos',
+            'Blocked emergency exit.',
+            'Remove stored items immediately.',
+            'Blocked exit finding evidence.',
+        ] as $text) {
+            $this->assertStringContainsString($text, $generalHtml);
+        }
+        $this->assertStringNotContainsString('Issues (1)', $generalHtml);
+        $this->assertStringNotContainsString('Issue Photos', $generalHtml);
+
+        $hseHtml = view('pdf.inspection_report', [
+            'record' => [
+                'displayId' => 'INS-HSE-ISSUES-001',
+                'status' => 'Submitted',
+                'incidentType' => 'Health Safety Environment Inspection',
+                'location' => 'Zone 1 > Dock',
+                'description' => 'HSE inspection completed.',
+                'hseSelections' => ['unsafeCondition'],
+                'hseUnsafeConditionDetails' => 'Guardrail gap observed.',
+                'issues' => [
+                    [
+                        'details' => 'Oil spill near walkway.',
+                        'action_required' => 'Barricade and clean area.',
+                        'issue_photos' => [
+                            [
+                                'url' => $pixel,
+                                'description' => 'Oil spill finding evidence.',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ])->render();
+
+        foreach ([
+            'HSE Observation',
+            'Findings (1)',
+            'Finding 1',
+            'Oil spill near walkway.',
+            'Barricade and clean area.',
+            'Oil spill finding evidence.',
+        ] as $text) {
+            $this->assertStringContainsString($text, $hseHtml);
+        }
+        $this->assertStringNotContainsString('Issues (1)', $hseHtml);
+        $this->assertStringNotContainsString('Issue Photos', $hseHtml);
+
+        $highAngleHtml = view('pdf.inspection_report', [
+            'record' => [
+                'displayId' => 'INS-HA-ISSUES-GUARD',
+                'status' => 'Submitted',
+                'incidentType' => 'High Angle Rescue Equipment Inspection',
+                'location' => 'Response Kit',
+                'description' => 'High Angle inspection completed.',
+                'issues' => [
+                    ['description' => 'This legacy field must not render as General/HSE issue.'],
+                ],
+            ],
+        ])->render();
+
+        $this->assertStringNotContainsString('Findings (1)', $highAngleHtml);
+        $this->assertStringNotContainsString('Issues (1)', $highAngleHtml);
+        $this->assertStringNotContainsString(
+            'This legacy field must not render as General/HSE issue.',
+            $highAngleHtml,
+        );
+    }
+
+    public function test_pdf_template_renders_fire_extinguisher_section_without_other_form_data(): void
+    {
+        $record = [
+            'displayId' => 'INS-FE-29062026',
+            'status' => 'Submitted',
+            'incidentType' => 'Fire Extinguisher Inspection',
+            'location' => 'Smoke Yard > Rack A',
+            'description' => 'Fire extinguisher inspection completed for Rack A.',
+            'fireExtinguisherInspectedBy' => 'Inspector Fire',
+            'fireExtinguisherInspectionDate' => '2026-06-29',
+            'fireExtinguisherChecks' => [
+                [
+                    'mainLocation' => 'Smoke Yard',
+                    'subLocation' => 'Rack A',
+                    'idLocNo' => 'FE-A-001',
+                    'barcodeNo' => 'BAR-FE-A-001',
+                    'feType' => 'CO2 5KG',
+                    'certificationValidity' => '2026-12-31',
+                    'physicalCondition' => 'Not Good',
+                    'physicalConditionRemarks' => 'Cylinder body dented.',
+                    'physicalConditionPhotos' => [
+                        [
+                            'url' => 'data:image/png;base64,QUFB',
+                            'description' => 'Dented cylinder photo.',
+                        ],
+                    ],
+                    'signageCondition' => 'Good',
+                    'boxKeyAvailability' => 'N/A',
+                    'boxGlassAvailability' => 'Good',
+                    'operationalCondition' => 'Good',
+                    'remarks' => 'Replace during next service.',
+                ],
+                [
+                    'mainLocation' => 'Smoke Yard',
+                    'subLocation' => 'Rack B',
+                    'idLocNo' => 'FE-A-RAW-ONLY',
+                    'barcodeNo' => 'BAR-FE-A-RAW-ONLY',
+                    'feType' => 'DCP 9KG',
+                    'certificationValidityRaw' => 'Raw date pending parse',
+                    'physicalCondition' => 'Good',
+                    'signageCondition' => 'Good',
+                    'boxKeyAvailability' => 'Yes',
+                    'boxGlassAvailability' => 'Yes',
+                    'operationalCondition' => 'Good',
+                ],
+            ],
+            'hseSelections' => ['environmental'],
+            'hseEnvironmentalDetails' => 'HSE SHOULD NOT LEAK INTO FE',
+            'erAuxChecks' => [
+                ['equipment' => 'ER AUX SHOULD NOT LEAK INTO FE'],
+            ],
+        ];
+
+        $html = view('pdf.inspection_report', [
+            'record' => $record,
+        ])->render();
+
+        foreach ([
+            'Fire Extinguisher Checks',
+            'Inspector Fire',
+            '2026-06-29',
+            'FE-A-001',
+            'BAR-FE-A-001',
+            'CO2 5KG',
+            '2026-12-31',
+            'FE-A-RAW-ONLY',
+            'Raw date pending parse',
+            'Defect Evidence: FE-A-001 - FE Physical Condition',
+            'Cylinder body dented.',
+            'Dented cylinder photo.',
+            'Replace during next service.',
+        ] as $text) {
+            $this->assertStringContainsString($text, $html);
+        }
+
+        foreach ([
+            'HSE Observation',
+            'HSE SHOULD NOT LEAK INTO FE',
+            'ER Aux Equipment Checks',
+            'ER AUX SHOULD NOT LEAK INTO FE',
+        ] as $text) {
+            $this->assertStringNotContainsString($text, $html);
+        }
+    }
+
+    public function test_pdf_template_renders_hydraulic_section_without_other_form_data(): void
+    {
+        $record = [
+            'displayId' => 'INS-HYD-29062026',
+            'status' => 'Submitted',
+            'incidentType' => 'Hydraulic Rescue Tools Inspection',
+            'location' => 'FRT',
+            'description' => 'Hydraulic rescue tools checked at FRT.',
+            'hydraulicChecks' => [
+                [
+                    'location' => 'FRT',
+                    'equipment' => 'Hydraulic Pump Motor 1',
+                    'equipmentDescription' => 'FRT primary rescue pump.',
+                    'equipmentSource' => 'custom',
+                    'physicalCondition' => 'OK',
+                    'mechanicalCondition' => 'Defect',
+                    'mechanicalConditionRemarks' => 'Handle sticks under load.',
+                    'mechanicalConditionPhotos' => [
+                        [
+                            'url' => 'data:image/png;base64,QUFB',
+                            'description' => 'Sticky handle photo.',
+                        ],
+                    ],
+                    'noLeakage' => 'N/A',
+                    'noLeakageRemarks' => 'Leak test skipped because tool was isolated.',
+                    'functionTest' => 'OK',
+                    'remarks' => 'Monitor next shift.',
+                ],
+            ],
+            'fireExtinguisherChecks' => [
+                ['idLocNo' => 'FE SHOULD NOT LEAK INTO HYD', 'barcodeNo' => 'BAR-HYD-LEAK'],
+            ],
+            'scbaBackPlateChecks' => [
+                ['brand' => 'SCBA SHOULD NOT LEAK INTO HYD', 'serialNo' => 'SCBA-HYD-LEAK'],
+            ],
+        ];
+
+        $html = view('pdf.inspection_report', [
+            'record' => $record,
+        ])->render();
+
+        foreach ([
+            'Hydraulic Equipment Checks',
+            'Hydraulic Pump Motor 1',
+            'FRT primary rescue pump.',
+            'Custom',
+            'Defect Evidence: Hydraulic Pump Motor 1 - Mechanical Condition',
+            'Handle sticks under load.',
+            'Sticky handle photo.',
+            'N/A Reason: Hydraulic Pump Motor 1 - No Leakage',
+            'Leak test skipped because tool was isolated.',
+            'Monitor next shift.',
+        ] as $text) {
+            $this->assertStringContainsString($text, $html);
+        }
+
+        foreach ([
+            'Fire Extinguisher Checks',
+            'FE SHOULD NOT LEAK INTO HYD',
+            'SCBA Checks',
+            'SCBA SHOULD NOT LEAK INTO HYD',
+        ] as $text) {
+            $this->assertStringNotContainsString($text, $html);
         }
     }
 
@@ -255,9 +690,23 @@ class InspectionReportPdfTest extends TestCase
             'status' => 'Submitted',
             'incidentType' => 'ER Aux Equipment Inspection',
             'location' => 'Store',
-            'description' => 'ER Aux equipment checked at Store by Inspector One on 2026-06-28.',
+            'description' => "ER Aux equipment checked at Store by Inspector One on 2026-06-28.\nIssue item(s): 1.\n- Chainsaw (qty 0) - Missing: Sent for replacement.",
             'erAuxInspectedBy' => 'Inspector One',
             'erAuxInspectionDate' => '2026-06-28',
+            'checklist' => [
+                [
+                    'id' => 'er-aux:fire-jacket:ok',
+                    'label' => 'Fire Jacket - Qty 15: OK',
+                    'inspectionType' => 'ER Aux Equipment Inspection',
+                    'selected' => true,
+                ],
+                [
+                    'id' => 'er-aux:chainsaw:missing',
+                    'label' => 'Chainsaw - Qty 0: Missing',
+                    'inspectionType' => 'ER Aux Equipment Inspection',
+                    'selected' => true,
+                ],
+            ],
             'erAuxChecks' => [
                 [
                     'location' => 'Store',
@@ -291,6 +740,19 @@ class InspectionReportPdfTest extends TestCase
         ] as $text) {
             $this->assertStringContainsString($text, $html);
         }
+
+        foreach ([
+            'Inspection Description',
+            'Issue item(s): 1.',
+            '- Chainsaw (qty 0) - Missing: Sent for replacement.',
+            '<div class="card-head">Checklist</div>',
+            'Fire Jacket - Qty 15: OK',
+            'Chainsaw - Qty 0: Missing',
+        ] as $text) {
+            $this->assertStringNotContainsString($text, $html);
+        }
+        $this->assertStringContainsString('Additional Evidence: Chainsaw', $html);
+        $this->assertStringContainsString('compact-info-grid', $html);
     }
 
     public function test_pdf_template_renders_scba_section(): void
@@ -441,6 +903,15 @@ class InspectionReportPdfTest extends TestCase
                     'quantity' => '1',
                     'condition' => 'Good',
                     'remarks' => '',
+                    'additionalNotes' => 'Stored in upper pouch.',
+                    'additionalPhotos' => [
+                        [
+                            'id' => 'high-angle-additional-pdf-photo',
+                            'fileName' => 'high-angle-additional-pdf-photo.png',
+                            'description' => 'Organizer bag storage photo.',
+                            'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+                        ],
+                    ],
                 ],
                 [
                     'rowNumber' => '3',
@@ -466,6 +937,10 @@ class InspectionReportPdfTest extends TestCase
             'General Kit Items',
             'Main Compartment',
             'Heavy Duty Organizer Bag',
+            'Additional Info: Heavy Duty Organizer Bag',
+            'General equipment remarks',
+            'Stored in upper pouch.',
+            'Organizer bag storage photo.',
             'Locking Carabiner - CT - Steel - S',
             '10',
             'Not Good',
@@ -473,6 +948,9 @@ class InspectionReportPdfTest extends TestCase
         ] as $text) {
             $this->assertStringContainsString($text, $html);
         }
+
+        $this->assertStringContainsString('compact-info-grid', $html);
+        $this->assertStringContainsString('Issue Evidence: Locking Carabiner - CT - Steel - S', $html);
     }
 
     public function test_pdf_template_renders_frt_daily_section(): void
@@ -504,6 +982,15 @@ class InspectionReportPdfTest extends TestCase
                     'rowKind' => 'status',
                     'status' => 'Checked',
                     'remarks' => '',
+                    'additionalNotes' => 'Washed after drill.',
+                    'additionalPhotos' => [
+                        [
+                            'id' => 'frt-daily-additional-pdf-photo',
+                            'fileName' => 'frt-daily-additional-pdf-photo.png',
+                            'description' => 'Hose locker additional photo.',
+                            'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+                        ],
+                    ],
                 ],
                 [
                     'rowNumber' => '90',
@@ -532,6 +1019,7 @@ class InspectionReportPdfTest extends TestCase
                     'rowKind' => 'reading',
                     'readingValue' => '123456',
                     'remarks' => '',
+                    'additionalNotes' => 'Reading confirmed with driver.',
                 ],
                 [
                     'rowNumber' => '92',
@@ -552,6 +1040,15 @@ class InspectionReportPdfTest extends TestCase
                     'equipment' => 'ELECTRONIC SIREN',
                     'condition' => 'Not Good',
                     'remarks' => 'Mute switch sticking.',
+                    'additionalNotes' => 'Retest scheduled after repair.',
+                    'additionalPhotos' => [
+                        [
+                            'id' => 'frt-one-off-additional-pdf-photo',
+                            'fileName' => 'frt-one-off-additional-pdf-photo.png',
+                            'description' => 'Siren panel additional photo.',
+                            'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+                        ],
+                    ],
                     'photos' => [
                         [
                             'id' => 'frt-one-off-pdf-photo',
@@ -582,8 +1079,16 @@ class InspectionReportPdfTest extends TestCase
             'FUEL LEVEL (%)',
             '85',
             'Not Good',
+            'Additional Info - Row 1',
+            'Washed after drill.',
+            'Hose locker additional photo.',
+            'Additional Info - Row 91',
+            'Reading confirmed with driver.',
             'Panel dent needs repair.',
             'Mute switch sticking.',
+            'Additional Info - Row 16',
+            'Retest scheduled after repair.',
+            'Siren panel additional photo.',
             'Issue Evidence - Row 90',
             'Panel dent evidence.',
             'Issue Evidence - Row 16',
@@ -593,6 +1098,7 @@ class InspectionReportPdfTest extends TestCase
         ] as $text) {
             $this->assertStringContainsString($text, $html);
         }
+        $this->assertStringContainsString('compact-info-grid', $html);
 
         $this->assertTrue(
             strpos($html, 'Daily Readiness Roster') < strpos($html, 'One-Off Readiness Checklist')

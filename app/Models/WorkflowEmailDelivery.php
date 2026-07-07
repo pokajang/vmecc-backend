@@ -12,7 +12,11 @@ class WorkflowEmailDelivery extends Model
 
     protected $fillable = [
         'notification_id',
+        'user_id',
         'recipient_email',
+        'delivery_kind',
+        'digest_window_start',
+        'digest_window_end',
         'status',
         'attempts',
         'last_error',
@@ -21,6 +25,8 @@ class WorkflowEmailDelivery extends Model
 
     protected $casts = [
         'attempts' => 'integer',
+        'digest_window_start' => 'datetime',
+        'digest_window_end' => 'datetime',
         'sent_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
@@ -29,5 +35,10 @@ class WorkflowEmailDelivery extends Model
     public function notification(): BelongsTo
     {
         return $this->belongsTo(WorkflowNotification::class, 'notification_id');
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
     }
 }

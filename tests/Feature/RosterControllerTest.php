@@ -7,7 +7,7 @@ use App\Models\Team;
 use App\Models\TeamMember;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
-use App\Notifications\RosterPublishedNotification;
+use App\Models\WorkflowNotification;
 use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -259,7 +259,7 @@ class RosterControllerTest extends TestCase
         $this->assertEquals('published', Roster::where('date', '2026-07-01')->where('shift', 'day')->value('status'));
     }
 
-    public function test_publish_sends_notification_to_active_team_members(): void
+    public function test_publish_emits_workflow_notification_to_active_team_members(): void
     {
         Notification::fake();
         config(['mail.workflow_notifications.enabled' => true, 'mail.workflow_notifications.modules.roster' => true]);
@@ -274,10 +274,18 @@ class RosterControllerTest extends TestCase
             'scope_label' => 'July 2026',
         ])->assertOk();
 
-        Notification::assertSentTo($member, RosterPublishedNotification::class);
+        $notification = WorkflowNotification::query()
+            ->where('module', 'roster')
+            ->where('event_type', 'published')
+            ->where('record_id', $team->id)
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($notification);
+        $this->assertContains((int) $member->id, $notification->recipient_user_ids ?? []);
     }
 
-    public function test_publish_does_not_notify_ended_members(): void
+    public function test_publish_skips_workflow_notification_when_only_ended_members_exist(): void
     {
         Notification::fake();
         config(['mail.workflow_notifications.enabled' => true, 'mail.workflow_notifications.modules.roster' => true]);
@@ -297,10 +305,17 @@ class RosterControllerTest extends TestCase
             'scope_label' => 'July 2026',
         ])->assertOk();
 
-        Notification::assertNotSentTo($member, RosterPublishedNotification::class);
+        $notification = WorkflowNotification::query()
+            ->where('module', 'roster')
+            ->where('event_type', 'published')
+            ->where('record_id', $team->id)
+            ->latest('id')
+            ->first();
+
+        $this->assertNull($notification);
     }
 
-    public function test_publish_does_not_send_notifications_when_mail_disabled(): void
+    public function test_publish_still_creates_in_app_notification_when_mail_is_disabled(): void
     {
         Notification::fake();
         config(['mail.workflow_notifications.enabled' => false]);
@@ -316,6 +331,12 @@ class RosterControllerTest extends TestCase
         ])->assertOk();
 
         Notification::assertNothingSent();
+
+        $this->assertDatabaseHas('workflow_notifications', [
+            'module' => 'roster',
+            'event_type' => 'published',
+            'record_id' => $team->id,
+        ]);
     }
 
     public function test_publish_rejects_same_team_on_both_shifts(): void

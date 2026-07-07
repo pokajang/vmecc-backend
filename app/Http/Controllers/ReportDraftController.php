@@ -6,35 +6,51 @@ use App\Models\ReportDraft;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\RoleCatalog;
 use App\Support\Inspection\FrtDailyReference;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class ReportDraftController extends Controller
 {
     private const ERCO_TYPE = 'erco';
+
     private const ERCO_DRAFT_CAP = 50;
+
     private const INSPECTION_TYPE = 'inspection';
+
     private const INSPECTION_MAX_PHOTO_COUNT = 10;
+
     private const INSPECTION_MAX_PHOTO_BYTES = 1572864; // 1.5 MB
+
     private const INSPECTION_MAX_TOTAL_PHOTO_BYTES = 12582912; // 12 MB
+
     private const INSPECTION_ALLOWED_IMAGE_MIMES = ['jpeg', 'jpg', 'png', 'webp'];
+
     private const INSPECTION_ER_AUX_CONDITION_VALUES = ['OK', 'Defect', 'Missing', 'N/A'];
+
     private const INSPECTION_FRT_DAILY_STATUS_VALUES = ['Checked', 'Issue'];
+
     private const INSPECTION_FRT_ONE_OFF_STATUS_VALUES = ['Good', 'Not Good'];
+
     private const INSPECTION_HIGH_ANGLE_STATUS_VALUES = ['Good', 'Not Good'];
+
     private const INSPECTION_HYDRAULIC_STATUS_VALUES = ['OK', 'Defect', 'N/A'];
+
     private const INSPECTION_SCBA_STATUS_VALUES = ['Good', 'Not Good'];
+
     private const INSPECTION_HSE_SELECTION_VALUES = ['areaSatisfactory', 'unsafeAct', 'unsafeCondition', 'environmental'];
+
     private const INSPECTION_HSE_SEVERITY_VALUES = ['Low', 'Medium', 'High', 'Critical'];
+
     private const INSPECTION_FIRE_EXTINGUISHER_STATUS_VALUES = [
         'physicalCondition' => ['Good', 'Not Good', 'N/A'],
         'signageCondition' => ['Good', 'Not Good', 'N/A'],
         'boxKeyAvailability' => ['Yes', 'No', 'N/A'],
         'boxGlassAvailability' => ['Yes', 'No', 'N/A'],
-        'operationalCondition' => ['Operational', 'Not Operational', 'N/A'],
+        'operationalCondition' => ['Good', 'Not Good', 'N/A', 'Operational', 'Not Operational'],
     ];
+
     private const INSPECTION_FIRE_EXTINGUISHER_CHECK_EVIDENCE_FIELDS = [
         'physicalCondition' => ['remarks' => 'physicalConditionRemarks', 'photos' => 'physicalConditionPhotos'],
         'signageCondition' => ['remarks' => 'signageConditionRemarks', 'photos' => 'signageConditionPhotos'],
@@ -42,12 +58,14 @@ class ReportDraftController extends Controller
         'boxGlassAvailability' => ['remarks' => 'boxGlassAvailabilityRemarks', 'photos' => 'boxGlassAvailabilityPhotos'],
         'operationalCondition' => ['remarks' => 'operationalConditionRemarks', 'photos' => 'operationalConditionPhotos'],
     ];
+
     private const INSPECTION_HYDRAULIC_CHECK_FIELDS = [
         'physicalCondition',
         'mechanicalCondition',
         'noLeakage',
         'functionTest',
     ];
+
     private const INSPECTION_HYDRAULIC_CHECK_EVIDENCE_FIELDS = [
         'physicalCondition' => ['remarks' => 'physicalConditionRemarks', 'photos' => 'physicalConditionPhotos'],
         'mechanicalCondition' => ['remarks' => 'mechanicalConditionRemarks', 'photos' => 'mechanicalConditionPhotos'],
@@ -85,9 +103,7 @@ class ReportDraftController extends Controller
         ],
     ];
 
-    public function __construct(private readonly AssignmentAuthorizationService $authorizationService)
-    {
-    }
+    public function __construct(private readonly AssignmentAuthorizationService $authorizationService) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -134,7 +150,7 @@ class ReportDraftController extends Controller
             ->orderByDesc('id')
             ->first();
 
-        if (!$row) {
+        if (! $row) {
             return response()->json(['data' => null]);
         }
 
@@ -149,7 +165,7 @@ class ReportDraftController extends Controller
             ->where('draft_id', trim((string) $draftId))
             ->first();
 
-        if (!$row) {
+        if (! $row) {
             return response()->json(['message' => 'Draft not found.'], 404);
         }
 
@@ -198,8 +214,9 @@ class ReportDraftController extends Controller
                 ->first();
         }
 
-        if (!$row) {
+        if (! $row) {
             $row = $this->createDraft($user->id, $data, $reportType);
+
             return response()->json(['data' => $this->formatRow($row)], 201);
         }
 
@@ -230,7 +247,7 @@ class ReportDraftController extends Controller
             ->where('draft_id', trim((string) $draftId))
             ->first();
 
-        if (!$row) {
+        if (! $row) {
             return response()->json(['message' => 'Draft not found.'], 404);
         }
 
@@ -290,12 +307,14 @@ class ReportDraftController extends Controller
     private function normalizeNullableString(mixed $value): ?string
     {
         $text = trim((string) ($value ?? ''));
+
         return $text === '' ? null : $text;
     }
 
     private function normalizeOriginMode(mixed $value): string
     {
         $text = strtolower(trim((string) ($value ?? '')));
+
         return $text === 'edit' ? 'edit' : 'new';
     }
 
@@ -315,7 +334,7 @@ class ReportDraftController extends Controller
 
         return ReportDraft::query()->create([
             'user_id' => $userId,
-            'draft_id' => 'drf_' . Str::lower(Str::random(20)),
+            'draft_id' => 'drf_'.Str::lower(Str::random(20)),
             'report_type' => $reportType,
             'title' => $this->normalizeNullableString($data['title'] ?? null),
             'origin_mode' => $this->normalizeOriginMode($data['origin_mode'] ?? null),
@@ -371,6 +390,12 @@ class ReportDraftController extends Controller
                 $payload['highAngleChecks'] ?? $payload['high_angle_checks']
             );
             $this->validateInspectionHighAngleRemarks($rows, 'payload.highAngleChecks');
+        }
+
+        if ($this->hasInspectionRows($payload, 'fireExtinguisherChecks', 'fire_extinguisher_checks')) {
+            $this->normalizeInspectionFireExtinguisherChecks(
+                $payload['fireExtinguisherChecks'] ?? $payload['fire_extinguisher_checks']
+            );
         }
 
         if ($this->hasInspectionRows($payload, 'scbaBackPlateChecks', 'scba_back_plate_checks')) {
@@ -436,7 +461,7 @@ class ReportDraftController extends Controller
         foreach ($photoRows as $row) {
             $photo = $row['photo'];
             $fieldPath = $row['path'];
-            if (!is_array($photo)) {
+            if (! is_array($photo)) {
                 throw ValidationException::withMessages([
                     $fieldPath => ['Invalid photo payload.'],
                 ]);
@@ -449,7 +474,7 @@ class ReportDraftController extends Controller
                 ]);
             }
 
-            if (!preg_match('/^data:image\/([a-z0-9.+-]+);base64,([a-z0-9+\/=\r\n]+)$/i', $url, $match)) {
+            if (! preg_match('/^data:image\/([a-z0-9.+-]+);base64,([a-z0-9+\/=\r\n]+)$/i', $url, $match)) {
                 throw ValidationException::withMessages([
                     "{$fieldPath}.url" => [
                         'Photo must be an inline base64 data URL image.',
@@ -458,7 +483,7 @@ class ReportDraftController extends Controller
             }
 
             $imageMime = strtolower(trim((string) ($match[1] ?? '')));
-            if (!in_array($imageMime, self::INSPECTION_ALLOWED_IMAGE_MIMES, true)) {
+            if (! in_array($imageMime, self::INSPECTION_ALLOWED_IMAGE_MIMES, true)) {
                 throw ValidationException::withMessages([
                     "{$fieldPath}.url" => [
                         'Only jpeg, png, and webp images are allowed.',
@@ -501,10 +526,29 @@ class ReportDraftController extends Controller
             ];
         }
 
+        $inspectionIssues = $payload['inspectionIssues'] ?? $payload['inspection_issues'] ?? [];
+        if (is_array($inspectionIssues)) {
+            foreach ($inspectionIssues as $issueIndex => $issue) {
+                if (! is_array($issue)) {
+                    continue;
+                }
+                $photos = $issue['photos'] ?? $issue['issue_photos'] ?? [];
+                if (! is_array($photos)) {
+                    continue;
+                }
+                foreach ($photos as $photoIndex => $photo) {
+                    $rows[] = [
+                        'path' => "payload.inspectionIssues.{$issueIndex}.photos.{$photoIndex}",
+                        'photo' => $photo,
+                    ];
+                }
+            }
+        }
+
         $erAuxChecks = $payload['erAuxChecks'] ?? $payload['er_aux_checks'] ?? [];
         if (is_array($erAuxChecks)) {
             foreach ($erAuxChecks as $checkIndex => $check) {
-                if (!is_array($check)) {
+                if (! is_array($check)) {
                     continue;
                 }
                 $photos = is_array($check['photos'] ?? null) ? $check['photos'] : [];
@@ -548,6 +592,45 @@ class ReportDraftController extends Controller
                         ];
                     }
                 }
+                $additionalPhotos = $check['additionalPhotos'] ?? $check['additional_photos'] ?? [];
+                if (is_array($additionalPhotos)) {
+                    foreach ($additionalPhotos as $photoIndex => $photo) {
+                        $rows[] = [
+                            'path' => "payload.highAngleChecks.{$checkIndex}.additionalPhotos.{$photoIndex}",
+                            'photo' => $photo,
+                        ];
+                    }
+                }
+            }
+        }
+
+        foreach ([
+            'frtDailyChecks' => $payload['frtDailyChecks'] ?? $payload['frt_daily_checks'] ?? [],
+            'frtOneOffChecks' => $payload['frtOneOffChecks'] ?? $payload['frt_one_off_checks'] ?? [],
+        ] as $checksKey => $checks) {
+            if (! is_array($checks)) {
+                continue;
+            }
+            foreach ($checks as $checkIndex => $check) {
+                if (! is_array($check)) {
+                    continue;
+                }
+                $photos = is_array($check['photos'] ?? null) ? $check['photos'] : [];
+                foreach ($photos as $photoIndex => $photo) {
+                    $rows[] = [
+                        'path' => "payload.{$checksKey}.{$checkIndex}.photos.{$photoIndex}",
+                        'photo' => $photo,
+                    ];
+                }
+                $additionalPhotos = $check['additionalPhotos'] ?? $check['additional_photos'] ?? [];
+                if (is_array($additionalPhotos)) {
+                    foreach ($additionalPhotos as $photoIndex => $photo) {
+                        $rows[] = [
+                            'path' => "payload.{$checksKey}.{$checkIndex}.additionalPhotos.{$photoIndex}",
+                            'photo' => $photo,
+                        ];
+                    }
+                }
             }
         }
 
@@ -585,7 +668,7 @@ class ReportDraftController extends Controller
         $hydraulicChecks = $payload['hydraulicChecks'] ?? $payload['hydraulic_checks'] ?? [];
         if (is_array($hydraulicChecks)) {
             foreach ($hydraulicChecks as $checkIndex => $check) {
-                if (!is_array($check)) {
+                if (! is_array($check)) {
                     continue;
                 }
                 $photos = is_array($check['photos'] ?? null) ? $check['photos'] : [];
@@ -600,7 +683,7 @@ class ReportDraftController extends Controller
                     $photosKey = $meta['photos'];
                     $snakePhotosKey = Str::snake($photosKey);
                     $defectPhotos = $check[$photosKey] ?? $check[$snakePhotosKey] ?? [];
-                    if (!is_array($defectPhotos)) {
+                    if (! is_array($defectPhotos)) {
                         continue;
                     }
                     foreach ($defectPhotos as $photoIndex => $photo) {
@@ -742,6 +825,11 @@ class ReportDraftController extends Controller
         return Str::of($inspectionType)->squish()->lower()->toString() === 'health safety environment inspection';
     }
 
+    private function isGeneralInspectionType(string $inspectionType): bool
+    {
+        return Str::of($inspectionType)->squish()->lower()->toString() === 'general inspection';
+    }
+
     private function inspectionSessionInspectorField(array $payload): ?string
     {
         $type = Str::of((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
@@ -835,13 +923,30 @@ class ReportDraftController extends Controller
 
     private function normalizeInspectionPayload(array $payload): array
     {
-        if (!array_key_exists('checklist', $payload)) {
+        if (! array_key_exists('checklist', $payload)) {
             $payload['checklist'] = [];
         }
 
         $payload['checklist'] = $this->normalizeInspectionChecklist($payload['checklist']);
-        if (!empty($payload['checklist']) && trim((string) ($payload['checklistVersion'] ?? '')) === '') {
+        if (! empty($payload['checklist']) && trim((string) ($payload['checklistVersion'] ?? '')) === '') {
             $payload['checklistVersion'] = 'inspection-checklist-v1';
+        }
+
+        $inspectionType = (string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? '');
+        if (
+            array_key_exists('inspectionIssues', $payload)
+            || array_key_exists('inspection_issues', $payload)
+            || (
+                ($this->isGeneralInspectionType($inspectionType) || $this->isHseInspectionType($inspectionType))
+                && array_key_exists('issues', $payload)
+            )
+        ) {
+            $payload['inspectionIssues'] = $this->normalizeInspectionIssues(
+                $payload['inspectionIssues'] ?? $payload['inspection_issues'] ?? $payload['issues'] ?? [],
+                'payload.inspectionIssues'
+            );
+            $payload['issues'] = $payload['inspectionIssues'];
+            unset($payload['inspection_issues']);
         }
 
         if (array_key_exists('erAuxChecks', $payload) || array_key_exists('er_aux_checks', $payload)) {
@@ -1080,7 +1185,7 @@ class ReportDraftController extends Controller
 
     private function normalizeInspectionChecklist(mixed $checklist): array
     {
-        if (!is_array($checklist)) {
+        if (! is_array($checklist)) {
             throw ValidationException::withMessages([
                 'payload.checklist' => ['Checklist must be an array.'],
             ]);
@@ -1088,7 +1193,7 @@ class ReportDraftController extends Controller
 
         $rows = [];
         foreach ($checklist as $index => $item) {
-            if (!is_array($item)) {
+            if (! is_array($item)) {
                 throw ValidationException::withMessages([
                     "payload.checklist.{$index}" => ['Invalid checklist item.'],
                 ]);
@@ -1114,9 +1219,56 @@ class ReportDraftController extends Controller
         return $rows;
     }
 
+    private function normalizeInspectionIssues(mixed $issues, string $fieldPath): array
+    {
+        if (! is_array($issues)) {
+            throw ValidationException::withMessages([
+                $fieldPath => ['Inspection findings must be an array.'],
+            ]);
+        }
+
+        $rows = [];
+        foreach ($issues as $index => $item) {
+            if (! is_array($item)) {
+                throw ValidationException::withMessages([
+                    "{$fieldPath}.{$index}" => ['Invalid inspection finding item.'],
+                ]);
+            }
+
+            $description = trim((string) ($item['description'] ?? $item['details'] ?? ''));
+            $actionRequired = trim((string) ($item['actionRequired'] ?? $item['action_required'] ?? ''));
+            $photos = $this->normalizeInspectionPhotos($item['photos'] ?? $item['issue_photos'] ?? []);
+            if ($description === '' && $actionRequired === '' && count($photos) === 0) {
+                continue;
+            }
+
+            $normalized = array_merge($item, [
+                'id' => trim((string) ($item['id'] ?? $item['issueId'] ?? $item['issue_id'] ?? '')) ?: 'issue-'.($index + 1),
+                'description' => $description,
+                'actionRequired' => $actionRequired,
+                'photos' => $photos,
+                'createdAt' => trim((string) ($item['createdAt'] ?? $item['created_at'] ?? '')),
+                'updatedAt' => trim((string) ($item['updatedAt'] ?? $item['updated_at'] ?? '')),
+            ]);
+            unset(
+                $normalized['details'],
+                $normalized['action_required'],
+                $normalized['issueId'],
+                $normalized['issue_id'],
+                $normalized['issue_photos'],
+                $normalized['created_at'],
+                $normalized['updated_at']
+            );
+
+            $rows[] = $normalized;
+        }
+
+        return $rows;
+    }
+
     private function normalizeInspectionHydraulicChecks(mixed $checks): array
     {
-        if (!is_array($checks)) {
+        if (! is_array($checks)) {
             throw ValidationException::withMessages([
                 'payload.hydraulicChecks' => ['Hydraulic checks must be an array.'],
             ]);
@@ -1124,7 +1276,7 @@ class ReportDraftController extends Controller
 
         $rows = [];
         foreach ($checks as $index => $item) {
-            if (!is_array($item)) {
+            if (! is_array($item)) {
                 throw ValidationException::withMessages([
                     "payload.hydraulicChecks.{$index}" => ['Invalid hydraulic check item.'],
                 ]);
@@ -1188,7 +1340,7 @@ class ReportDraftController extends Controller
 
     private function normalizeInspectionErAuxChecks(mixed $checks): array
     {
-        if (!is_array($checks)) {
+        if (! is_array($checks)) {
             throw ValidationException::withMessages([
                 'payload.erAuxChecks' => ['ER Aux checks must be an array.'],
             ]);
@@ -1196,7 +1348,7 @@ class ReportDraftController extends Controller
 
         $rows = [];
         foreach ($checks as $index => $item) {
-            if (!is_array($item)) {
+            if (! is_array($item)) {
                 throw ValidationException::withMessages([
                     "payload.erAuxChecks.{$index}" => ['Invalid ER Aux check item.'],
                 ]);
@@ -1294,8 +1446,6 @@ class ReportDraftController extends Controller
                 'barcodeNo' => $barcodeNo,
                 'feType' => str_replace(["CO\u{00B2}", "CO\u{FFFD}"], 'CO2', trim((string) ($item['feType'] ?? $item['fe_type'] ?? ''))),
                 'certificationValidity' => trim((string) ($item['certificationValidity'] ?? $item['certification_validity'] ?? '')),
-                'certificationValidityRaw' => trim((string) ($item['certificationValidityRaw'] ?? $item['certification_validity_raw'] ?? '')),
-                'daysLeftToExpire' => trim((string) ($item['daysLeftToExpire'] ?? $item['days_left_to_expire'] ?? '')),
                 'remarks' => trim((string) ($item['remarks'] ?? $item['remark'] ?? '')),
                 'photos' => $this->normalizeInspectionPhotos($item['photos'] ?? []),
             ]);
@@ -1309,7 +1459,9 @@ class ReportDraftController extends Controller
                 $normalized['barcode_no'],
                 $normalized['fe_type'],
                 $normalized['certification_validity'],
+                $normalized['certificationValidityRaw'],
                 $normalized['certification_validity_raw'],
+                $normalized['daysLeftToExpire'],
                 $normalized['days_left_to_expire'],
                 $normalized['remark']
             );
@@ -1391,13 +1543,19 @@ class ReportDraftController extends Controller
                 'conditionPhotos' => $this->normalizeInspectionPhotos(
                     $item['conditionPhotos'] ?? $item['condition_photos'] ?? []
                 ),
+                'additionalNotes' => trim((string) ($item['additionalNotes'] ?? $item['additional_notes'] ?? '')),
+                'additionalPhotos' => $this->normalizeInspectionPhotos(
+                    $item['additionalPhotos'] ?? $item['additional_photos'] ?? []
+                ),
             ]);
             unset(
                 $normalized['main_location'],
                 $normalized['row_number'],
                 $normalized['sub_location'],
                 $normalized['condition_remarks'],
-                $normalized['condition_photos']
+                $normalized['condition_photos'],
+                $normalized['additional_notes'],
+                $normalized['additional_photos']
             );
 
             $rows[] = $normalized;
@@ -1466,8 +1624,20 @@ class ReportDraftController extends Controller
                 ),
                 'readingValue' => trim((string) ($item['readingValue'] ?? $item['reading_value'] ?? '')),
                 'remarks' => trim((string) ($item['remarks'] ?? $item['remark'] ?? '')),
+                'photos' => $this->normalizeInspectionPhotos($item['photos'] ?? []),
+                'additionalNotes' => trim((string) ($item['additionalNotes'] ?? $item['additional_notes'] ?? '')),
+                'additionalPhotos' => $this->normalizeInspectionPhotos(
+                    $item['additionalPhotos'] ?? $item['additional_photos'] ?? []
+                ),
             ]);
-            unset($normalized['row_number'], $normalized['main_location'], $normalized['row_kind'], $normalized['reading_value']);
+            unset(
+                $normalized['row_number'],
+                $normalized['main_location'],
+                $normalized['row_kind'],
+                $normalized['reading_value'],
+                $normalized['additional_notes'],
+                $normalized['additional_photos']
+            );
 
             $rows[] = $normalized;
         }
@@ -1514,8 +1684,18 @@ class ReportDraftController extends Controller
                     "payload.frtOneOffChecks.{$index}.condition"
                 ),
                 'remarks' => trim((string) ($item['remarks'] ?? $item['remark'] ?? '')),
+                'photos' => $this->normalizeInspectionPhotos($item['photos'] ?? []),
+                'additionalNotes' => trim((string) ($item['additionalNotes'] ?? $item['additional_notes'] ?? '')),
+                'additionalPhotos' => $this->normalizeInspectionPhotos(
+                    $item['additionalPhotos'] ?? $item['additional_photos'] ?? []
+                ),
             ]);
-            unset($normalized['row_number'], $normalized['main_location']);
+            unset(
+                $normalized['row_number'],
+                $normalized['main_location'],
+                $normalized['additional_notes'],
+                $normalized['additional_photos']
+            );
 
             $rows[] = $normalized;
         }
@@ -1852,6 +2032,7 @@ class ReportDraftController extends Controller
                         "{$fieldPath}.{$index}.readingValue" => ['FRT reading value is required for reading rows.'],
                     ]);
                 }
+
                 continue;
             }
 
@@ -1869,6 +2050,44 @@ class ReportDraftController extends Controller
                 ]);
             }
         }
+    }
+
+    private function validateInspectionFireExtinguisherRows(array $rows, string $fieldPath): void
+    {
+        foreach ($rows as $index => $row) {
+            foreach (self::INSPECTION_FIRE_EXTINGUISHER_STATUS_VALUES as $field => $_allowed) {
+                if (trim((string) ($row[$field] ?? '')) === '') {
+                    throw ValidationException::withMessages([
+                        "{$fieldPath}.{$index}.{$field}" => ['Fire extinguisher check status is required before submission.'],
+                    ]);
+                }
+
+                if (! $this->isInspectionFireExtinguisherDefectStatus((string) ($row[$field] ?? ''))) {
+                    continue;
+                }
+
+                $meta = self::INSPECTION_FIRE_EXTINGUISHER_CHECK_EVIDENCE_FIELDS[$field];
+                $remarksKey = $meta['remarks'];
+                $photosKey = $meta['photos'];
+
+                if (trim((string) ($row[$remarksKey] ?? '')) === '') {
+                    throw ValidationException::withMessages([
+                        "{$fieldPath}.{$index}.{$remarksKey}" => ['Fire extinguisher remarks are required for defect or failed statuses.'],
+                    ]);
+                }
+
+                if (count($this->normalizeInspectionPhotos($row[$photosKey] ?? [])) === 0) {
+                    throw ValidationException::withMessages([
+                        "{$fieldPath}.{$index}.{$photosKey}" => ['Fire extinguisher defect photo is required for defect or failed statuses.'],
+                    ]);
+                }
+            }
+        }
+    }
+
+    private function isInspectionFireExtinguisherDefectStatus(string $status): bool
+    {
+        return in_array(strtolower(trim($status)), ['not good', 'no', 'not operational'], true);
     }
 
     private function validateInspectionFrtOneOffRows(array $rows, string $fieldPath): void
@@ -2148,13 +2367,13 @@ class ReportDraftController extends Controller
 
     private function normalizeInspectionPhotos(mixed $photos): array
     {
-        if (!is_array($photos)) {
+        if (! is_array($photos)) {
             return [];
         }
 
         $rows = [];
         foreach ($photos as $photo) {
-            if (!is_array($photo)) {
+            if (! is_array($photo)) {
                 continue;
             }
             $url = trim((string) ($photo['url'] ?? ''));

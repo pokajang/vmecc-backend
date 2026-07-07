@@ -16,6 +16,7 @@ class StreamAiHelperMessageRequest extends AiHelperRequest
             'page_context' => ['nullable', 'array'],
             'new_thread' => ['nullable', 'boolean'],
             'response_language' => ['nullable', 'string', Rule::in(['auto', 'en', 'bm'])],
+            'conversation_purpose' => ['nullable', 'string', Rule::in(['chat', 'embedded_helper'])],
         ];
     }
 }

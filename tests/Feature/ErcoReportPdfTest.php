@@ -188,6 +188,7 @@ class ErcoReportPdfTest extends TestCase
         foreach ($expectedText as $text) {
             $this->assertStringContainsString($text, $html);
         }
+        $this->assertStringContainsString('compact-info-grid', $html);
     }
 
     private function buildComprehensiveRecord(): array

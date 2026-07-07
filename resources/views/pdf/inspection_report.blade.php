@@ -202,6 +202,56 @@
             white-space: pre-wrap;
             word-break: break-word;
         }
+        .issue-block {
+            border: 1px solid #e5e7eb;
+            padding: 6px 7px;
+            margin-bottom: 7px;
+            page-break-inside: avoid;
+        }
+        .issue-title {
+            font-weight: 700;
+            font-size: 9.5px;
+            color: #111827;
+            margin-bottom: 4px;
+        }
+        .compact-info-grid {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 4px;
+            table-layout: fixed;
+            margin-top: 4px;
+        }
+        .compact-info-grid td {
+            width: 50%;
+            border: 1px solid #e5e7eb;
+            padding: 4px 6px;
+            vertical-align: top;
+            page-break-inside: avoid;
+        }
+        .compact-info-grid td.compact-info-empty {
+            border: none;
+            padding: 0;
+        }
+        .compact-info-title {
+            font-size: 8.4px;
+            font-weight: 700;
+            color: #374151;
+            margin-bottom: 2px;
+            line-height: 1.25;
+        }
+        .compact-info-label {
+            font-size: 8px;
+            color: #6b7280;
+            margin-bottom: 1px;
+            line-height: 1.25;
+        }
+        .compact-info-value {
+            font-size: 9.5px;
+            color: #111827;
+            line-height: 1.35;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
         .footer {
             position: fixed;
             bottom: 0;
@@ -222,14 +272,45 @@
 @php
     $displayId = (string) ($record['displayId'] ?? '-');
     $status = (string) ($record['status'] ?? 'Submitted');
-    $inspectionType = trim((string) ($record['incidentType'] ?? ''));
+    $inspectionType = trim((string) ($record['incidentType'] ?? $record['inspectionType'] ?? $record['inspection_type'] ?? ''));
     $location = trim((string) ($record['location'] ?? $record['selectedLocation'] ?? ''));
     $description = (string) ($record['description'] ?? '');
+    $normalizeInspectionType = function ($value): string {
+        $normalized = strtolower((string) $value);
+        $normalized = preg_replace('/[^a-z0-9]+/', ' ', $normalized);
+        return trim((string) preg_replace('/\s+/', ' ', (string) $normalized));
+    };
+    $inspectionTypeKey = $normalizeInspectionType($inspectionType);
+    $isErAuxInspection = str_contains($inspectionTypeKey, 'er aux')
+        || str_contains($inspectionTypeKey, 'emergency response auxiliary');
+    $isFireExtinguisherInspection = str_contains($inspectionTypeKey, 'fire extinguisher');
+    $isHydraulicInspection = str_contains($inspectionTypeKey, 'hydraulic rescue tools')
+        || str_contains($inspectionTypeKey, 'hydraulic');
+    $isFrtInspection = str_contains($inspectionTypeKey, 'frt daily')
+        || str_contains($inspectionTypeKey, 'fire truck daily')
+        || str_contains($inspectionTypeKey, 'fire truck readiness');
+    $isHighAngleInspection = str_contains($inspectionTypeKey, 'high angle');
+    $isScbaInspection = (bool) preg_match('/(^|\s)scba(\s|$)/', $inspectionTypeKey);
+    $isHseInspection = str_contains($inspectionTypeKey, 'health safety environment')
+        || (bool) preg_match('/(^|\s)hse(\s|$)/', $inspectionTypeKey);
+    $isGeneralInspection = $inspectionTypeKey === 'general inspection'
+        || str_contains($inspectionTypeKey, 'general inspection');
+    $itemMatchesCurrentInspection = function ($item) use ($inspectionTypeKey, $normalizeInspectionType): bool {
+        if ($inspectionTypeKey === '' || !is_array($item)) {
+            return true;
+        }
+        $itemType = trim((string) ($item['inspectionType'] ?? $item['incidentType'] ?? $item['type'] ?? ''));
+        if ($itemType === '') {
+            return true;
+        }
+        return $normalizeInspectionType($itemType) === $inspectionTypeKey;
+    };
     $checklist = array_values(array_filter(is_array($record['checklist'] ?? null) ? $record['checklist'] : [], function ($item) {
         return is_array($item)
             && ($item['selected'] ?? true) !== false
             && trim((string) ($item['label'] ?? '')) !== '';
     }));
+    $checklist = array_values(array_filter($checklist, $itemMatchesCurrentInspection));
     $erAuxChecks = array_values(array_filter(is_array($record['erAuxChecks'] ?? null) ? $record['erAuxChecks'] : (is_array($record['er_aux_checks'] ?? null) ? $record['er_aux_checks'] : []), function ($item) {
         return is_array($item) && trim((string) ($item['equipment'] ?? '')) !== '';
     }));
@@ -306,7 +387,7 @@
         ['label' => 'Target Date', 'camel' => 'hseTargetDate', 'snake' => 'hse_target_date'],
         ['label' => 'General HSE Remarks', 'camel' => 'hseRemarks', 'snake' => 'hse_remarks'],
     ];
-    $hasHseObservation = count($hseSelections) > 0 || $hseInspectedBy !== '' || $hseInspectionDate !== '';
+    $hasHseObservation = $isHseInspection && (count($hseSelections) > 0 || $hseInspectedBy !== '' || $hseInspectionDate !== '');
     $submittedBy = trim((string) ($record['submittedBy'] ?? ''));
     $submittedAtRaw = trim((string) ($record['submittedAt'] ?? ''));
     $inspectionActor = is_array($record['inspectionActor'] ?? null) ? $record['inspectionActor'] : [];
@@ -549,6 +630,51 @@
             return (bool) preg_match('/^data:image\/[a-z0-9.+-]+;base64,/i', $url);
         }));
     };
+    $compactText = function ($value): string {
+        return preg_replace('/\s+/u', ' ', trim((string) $value));
+    };
+    $isCompactText = function ($value) use ($compactText): bool {
+        $raw = trim((string) $value);
+        if ($raw === '' || preg_match('/[\r\n]/', $raw)) {
+            return false;
+        }
+
+        return mb_strlen($compactText($raw), 'UTF-8') <= 120;
+    };
+    $compactBlock = function (string $title, string $label, string $value) use ($compactText): array {
+        return [
+            'title' => $compactText($title),
+            'label' => $compactText($label),
+            'value' => $compactText($value),
+        ];
+    };
+    $renderCompactBlocks = function (array $blocks): string {
+        $blocks = array_values(array_filter($blocks, fn ($block) => trim((string) ($block['value'] ?? '')) !== ''));
+        if (count($blocks) === 0) {
+            return '';
+        }
+
+        $html = '<table class="compact-info-grid">';
+        foreach (array_chunk($blocks, 2) as $row) {
+            $html .= '<tr>';
+            foreach ($row as $block) {
+                $html .= '<td>';
+                $html .= '<div class="compact-info-title">'.e((string) ($block['title'] ?? '')).'</div>';
+                if (trim((string) ($block['label'] ?? '')) !== '') {
+                    $html .= '<div class="compact-info-label">'.e((string) $block['label']).'</div>';
+                }
+                $html .= '<div class="compact-info-value">'.e((string) ($block['value'] ?? '')).'</div>';
+                $html .= '</td>';
+            }
+            if (count($row) === 1) {
+                $html .= '<td class="compact-info-empty"></td>';
+            }
+            $html .= '</tr>';
+        }
+        $html .= '</table>';
+
+        return $html;
+    };
     $formatPhotoDescription = function ($photo) {
         $description = trim((string) ($photo['description'] ?? ''));
         if ($description === '') {
@@ -565,6 +691,30 @@
         }
         return $description;
     };
+    $rawInspectionIssues = is_array($record['inspectionIssues'] ?? null)
+        ? $record['inspectionIssues']
+        : (is_array($record['inspection_issues'] ?? null)
+            ? $record['inspection_issues']
+            : (($isGeneralInspection || $isHseInspection) && is_array($record['issues'] ?? null)
+                ? $record['issues']
+                : []));
+    $inspectionIssues = [];
+    foreach ($rawInspectionIssues as $issue) {
+        if (! is_array($issue)) {
+            continue;
+        }
+        $issueDescription = trim((string) ($issue['description'] ?? $issue['details'] ?? ''));
+        $issueAction = trim((string) ($issue['actionRequired'] ?? $issue['action_required'] ?? ''));
+        $issuePhotos = $filterInlinePhotos($issue['photos'] ?? $issue['issue_photos'] ?? []);
+        if ($issueDescription === '' && $issueAction === '' && count($issuePhotos) === 0) {
+            continue;
+        }
+        $inspectionIssues[] = [
+            'description' => $issueDescription,
+            'actionRequired' => $issueAction,
+            'photos' => $issuePhotos,
+        ];
+    }
     $photoColumns = count($photos) > 1 ? 2 : 1;
 
     $submittedEntry = collect($timeline)->first(function ($entry) {
@@ -605,6 +755,17 @@
     if ($submittedBy === '' && is_array($submittedEntry)) {
         $submittedBy = trim((string) ($submittedEntry['by'] ?? ''));
     }
+
+    $hasDetailedInspectionSection =
+        ($isErAuxInspection && count($erAuxChecks) > 0)
+        || ($isFireExtinguisherInspection && count($fireExtinguisherChecks) > 0)
+        || ($isHydraulicInspection && count($hydraulicChecks) > 0)
+        || ($isFrtInspection && $hasFrtChecks)
+        || ($isHighAngleInspection && count($highAngleChecks) > 0)
+        || ($isScbaInspection && $hasScbaChecks)
+        || $hasHseObservation;
+    $shouldRenderDescriptionCard = ! $hasDetailedInspectionSection;
+    $shouldRenderChecklistCard = count($checklist) > 0 && ! $hasDetailedInspectionSection;
 
     $generatedAt = now()->format('d M Y, H:i');
 @endphp
@@ -652,6 +813,7 @@
     </div>
 </div>
 
+@if ($shouldRenderDescriptionCard)
 <div class="card">
     <div class="card-head">Inspection Description</div>
     <div class="card-body">
@@ -659,8 +821,9 @@
         <div class="text-block-value">{{ trim($description) !== '' ? $description : 'No description provided.' }}</div>
     </div>
 </div>
+@endif
 
-@if (count($checklist) > 0)
+@if ($shouldRenderChecklistCard)
 <div class="card">
     <div class="card-head">Checklist</div>
     <div class="card-body">
@@ -733,7 +896,7 @@
 </div>
 @endif
 
-@if (count($fireExtinguisherChecks) > 0)
+@if ($isFireExtinguisherInspection && count($fireExtinguisherChecks) > 0)
 <div class="card">
     <div class="card-head">Fire Extinguisher Checks</div>
     <div class="card-body">
@@ -787,6 +950,7 @@
                 @endforeach
             </tbody>
         </table>
+        @php $compactBlocks = []; @endphp
         @foreach ($fireExtinguisherChecks as $check)
             @php
                 $feName = trim((string) ($check['idLocNo'] ?? $check['id_loc_no'] ?? $check['barcodeNo'] ?? $check['barcode_no'] ?? '')) ?: 'Fire extinguisher';
@@ -804,10 +968,17 @@
                     $remarksValue = trim((string) ($check[$field['remarks']] ?? $check[$field['remarks_snake']] ?? ''));
                     $defectPhotos = $filterInlinePhotos($check[$field['photos']] ?? $check[$field['photos_snake']] ?? []);
                     $defectPhotoColumns = count($defectPhotos) > 1 ? 2 : 1;
+                    $defectTitle = 'Defect Evidence: '.$feName.' - '.$field['label'];
+                    $compactDefectOnly = in_array($statusValue, ['not good', 'no', 'not operational'], true)
+                        && count($defectPhotos) === 0
+                        && $isCompactText($remarksValue);
+                    if ($compactDefectOnly) {
+                        $compactBlocks[] = $compactBlock($defectTitle, 'Defect remarks', $remarksValue);
+                    }
                 @endphp
-                @if (in_array($statusValue, ['not good', 'no', 'not operational'], true) && ($remarksValue !== '' || count($defectPhotos) > 0))
+                @if (in_array($statusValue, ['not good', 'no', 'not operational'], true) && ! $compactDefectOnly && ($remarksValue !== '' || count($defectPhotos) > 0))
                     <div class="text-block-label" style="margin-top: 10px;">
-                        Defect Evidence: {{ $feName }} - {{ $field['label'] }}
+                        {{ $defectTitle }}
                     </div>
                     @if ($remarksValue !== '')
                         <div class="text-block-value">{{ $remarksValue }}</div>
@@ -841,11 +1012,12 @@
                 @endif
             @endforeach
         @endforeach
+        {!! $renderCompactBlocks($compactBlocks) !!}
     </div>
 </div>
 @endif
 
-@if (count($hydraulicChecks) > 0)
+@if ($isHydraulicInspection && count($hydraulicChecks) > 0)
 <div class="card">
     <div class="card-head">Hydraulic Equipment Checks</div>
     <div class="card-body">
@@ -886,6 +1058,7 @@
                 @endforeach
             </tbody>
         </table>
+        @php $compactBlocks = []; @endphp
         @foreach ($hydraulicChecks as $check)
             @php
                 $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: 'Hydraulic equipment';
@@ -898,10 +1071,20 @@
                     $defectRemarks = trim((string) ($check[$field['remarks']] ?? $check[$field['remarks_snake']] ?? ''));
                     $defectPhotos = $filterInlinePhotos($check[$field['photos']] ?? $check[$field['photos_snake']] ?? []);
                     $defectPhotoColumns = count($defectPhotos) > 1 ? 2 : 1;
+                    $defectTitle = 'Defect Evidence: '.$equipmentName.' - '.$field['label'];
+                    $naTitle = 'N/A Reason: '.$equipmentName.' - '.$field['label'];
+                    $compactDefectOnly = strcasecmp($statusValue, 'Defect') === 0 && count($defectPhotos) === 0 && $isCompactText($defectRemarks);
+                    $compactNaOnly = strcasecmp($statusValue, 'N/A') === 0 && $isCompactText($defectRemarks);
+                    if ($compactDefectOnly) {
+                        $compactBlocks[] = $compactBlock($defectTitle, 'Defect remarks', $defectRemarks);
+                    }
+                    if ($compactNaOnly) {
+                        $compactBlocks[] = $compactBlock($naTitle, 'Reason', $defectRemarks);
+                    }
                 @endphp
-                @if (strcasecmp($statusValue, 'Defect') === 0 && ($defectRemarks !== '' || count($defectPhotos) > 0))
+                @if (strcasecmp($statusValue, 'Defect') === 0 && ! $compactDefectOnly && ($defectRemarks !== '' || count($defectPhotos) > 0))
                     <div class="text-block-label" style="margin-top: 10px;">
-                        Defect Evidence: {{ $equipmentName }} - {{ $field['label'] }}
+                        {{ $defectTitle }}
                     </div>
                     @if ($defectRemarks !== '')
                         <div class="text-block-value">{{ $defectRemarks }}</div>
@@ -947,9 +1130,9 @@
                         </table>
                     @endif
                 @endif
-                @if (strcasecmp($statusValue, 'N/A') === 0 && $defectRemarks !== '')
+                @if (strcasecmp($statusValue, 'N/A') === 0 && ! $compactNaOnly && $defectRemarks !== '')
                     <div class="text-block-label" style="margin-top: 10px;">
-                        N/A Reason: {{ $equipmentName }} - {{ $field['label'] }}
+                        {{ $naTitle }}
                     </div>
                     <div class="text-block-value">{{ $defectRemarks }}</div>
                 @endif
@@ -998,11 +1181,12 @@
                 </table>
             @endif
         @endforeach
+        {!! $renderCompactBlocks($compactBlocks) !!}
     </div>
 </div>
 @endif
 
-@if ($hasFrtChecks)
+@if ($isFrtInspection && $hasFrtChecks)
 <div class="card">
     <div class="card-head">Fire Truck Daily Readiness</div>
     <div class="card-body">
@@ -1070,7 +1254,7 @@
                         @foreach ($group['rows'] as $check)
                             @php
                                 $rowKind = trim((string) ($check['rowKind'] ?? $check['row_kind'] ?? 'status')) ?: 'status';
-                                $status = trim((string) ($check['status'] ?? ''));
+                                $rowStatus = trim((string) ($check['status'] ?? ''));
                                 $readingValue = trim((string) ($check['readingValue'] ?? $check['reading_value'] ?? ''));
                             @endphp
                             <tr>
@@ -1078,18 +1262,27 @@
                                 <td>{{ trim((string) ($check['equipment'] ?? '')) ?: '--' }}</td>
                                 <td>{{ trim((string) ($check['quantity'] ?? '')) ?: '--' }}</td>
                                 <td>{{ ucfirst($rowKind) }}</td>
-                                <td>{{ $rowKind === 'reading' ? '--' : ($status !== '' ? $status : '--') }}</td>
+                                <td>{{ $rowKind === 'reading' ? '--' : ($rowStatus !== '' ? $rowStatus : '--') }}</td>
                                 <td>{{ $rowKind === 'reading' ? ($readingValue !== '' ? $readingValue : '--') : '--' }}</td>
                                 <td>{{ trim((string) ($check['remarks'] ?? '')) ?: '--' }}</td>
                             </tr>
                         @endforeach
                     </tbody>
                 </table>
+                @php $compactBlocks = []; @endphp
                 @foreach ($group['rows'] as $check)
                     @php
-                        $status = trim((string) ($check['status'] ?? ''));
-                        $issuePhotos = strcasecmp($status, 'Issue') === 0 ? $filterInlinePhotos($check['photos'] ?? []) : [];
+                        $rowStatus = trim((string) ($check['status'] ?? ''));
+                        $issuePhotos = strcasecmp($rowStatus, 'Issue') === 0 ? $filterInlinePhotos($check['photos'] ?? []) : [];
                         $issuePhotoColumns = count($issuePhotos) > 1 ? 2 : 1;
+                        $additionalNotes = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? ''));
+                        $additionalPhotos = $filterInlinePhotos($check['additionalPhotos'] ?? $check['additional_photos'] ?? []);
+                        $additionalPhotoColumns = count($additionalPhotos) > 1 ? 2 : 1;
+                        $additionalTitle = 'Additional Info - Row '.(trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--').': '.(trim((string) ($check['equipment'] ?? '')) ?: '--');
+                        $compactAdditionalOnly = count($additionalPhotos) === 0 && $isCompactText($additionalNotes);
+                        if ($compactAdditionalOnly) {
+                            $compactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalNotes);
+                        }
                     @endphp
                     @if (count($issuePhotos) > 0)
                         <div class="text-block-label" style="margin-top: 6px; font-weight: 700; color: #374151;">
@@ -1119,7 +1312,43 @@
                             @endforeach
                         </table>
                     @endif
+                    @if (! $compactAdditionalOnly && ($additionalNotes !== '' || count($additionalPhotos) > 0))
+                        <div class="text-block-label" style="margin-top: 6px; font-weight: 700; color: #374151;">
+                            {{ $additionalTitle }}
+                        </div>
+                        @if ($additionalNotes !== '')
+                            <div class="text-block-label">General equipment remarks</div>
+                            <div class="text-block-value">{{ $additionalNotes }}</div>
+                        @endif
+                        @if (count($additionalPhotos) > 0)
+                            <table class="photo-grid">
+                                @foreach (array_chunk($additionalPhotos, $additionalPhotoColumns) as $photoRow)
+                                    <tr>
+                                        @foreach ($photoRow as $photo)
+                                            @php $description = $formatPhotoDescription($photo); @endphp
+                                            <td style="width: {{ $additionalPhotoColumns === 1 ? '100%' : '50%' }};">
+                                                <div class="photo-card">
+                                                    <div class="photo-figure">
+                                                        <div class="photo-image-wrap">
+                                                            <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="FRT additional photo">
+                                                        </div>
+                                                        <div class="photo-caption">
+                                                            <div class="photo-description">{{ $description }}</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        @endforeach
+                                        @if ($additionalPhotoColumns === 2 && count($photoRow) === 1)
+                                            <td></td>
+                                        @endif
+                                    </tr>
+                                @endforeach
+                            </table>
+                        @endif
+                    @endif
                 @endforeach
+                {!! $renderCompactBlocks($compactBlocks) !!}
             @endforeach
             @if ($frtDailyRemarks !== '')
                 <div class="text-block-label" style="margin-top: 10px;">Daily Remarks</div>
@@ -1155,11 +1384,20 @@
                         @endforeach
                     </tbody>
                 </table>
+                @php $compactBlocks = []; @endphp
                 @foreach ($group['rows'] as $check)
                     @php
                         $condition = trim((string) ($check['condition'] ?? ''));
                         $issuePhotos = strcasecmp($condition, 'Not Good') === 0 ? $filterInlinePhotos($check['photos'] ?? []) : [];
                         $issuePhotoColumns = count($issuePhotos) > 1 ? 2 : 1;
+                        $additionalNotes = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? ''));
+                        $additionalPhotos = $filterInlinePhotos($check['additionalPhotos'] ?? $check['additional_photos'] ?? []);
+                        $additionalPhotoColumns = count($additionalPhotos) > 1 ? 2 : 1;
+                        $additionalTitle = 'Additional Info - Row '.(trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--').': '.(trim((string) ($check['equipment'] ?? '')) ?: '--');
+                        $compactAdditionalOnly = count($additionalPhotos) === 0 && $isCompactText($additionalNotes);
+                        if ($compactAdditionalOnly) {
+                            $compactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalNotes);
+                        }
                     @endphp
                     @if (count($issuePhotos) > 0)
                         <div class="text-block-label" style="margin-top: 6px; font-weight: 700; color: #374151;">
@@ -1189,7 +1427,43 @@
                             @endforeach
                         </table>
                     @endif
+                    @if (! $compactAdditionalOnly && ($additionalNotes !== '' || count($additionalPhotos) > 0))
+                        <div class="text-block-label" style="margin-top: 6px; font-weight: 700; color: #374151;">
+                            {{ $additionalTitle }}
+                        </div>
+                        @if ($additionalNotes !== '')
+                            <div class="text-block-label">General equipment remarks</div>
+                            <div class="text-block-value">{{ $additionalNotes }}</div>
+                        @endif
+                        @if (count($additionalPhotos) > 0)
+                            <table class="photo-grid">
+                                @foreach (array_chunk($additionalPhotos, $additionalPhotoColumns) as $photoRow)
+                                    <tr>
+                                        @foreach ($photoRow as $photo)
+                                            @php $description = $formatPhotoDescription($photo); @endphp
+                                            <td style="width: {{ $additionalPhotoColumns === 1 ? '100%' : '50%' }};">
+                                                <div class="photo-card">
+                                                    <div class="photo-figure">
+                                                        <div class="photo-image-wrap">
+                                                            <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="FRT one-off additional photo">
+                                                        </div>
+                                                        <div class="photo-caption">
+                                                            <div class="photo-description">{{ $description }}</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        @endforeach
+                                        @if ($additionalPhotoColumns === 2 && count($photoRow) === 1)
+                                            <td></td>
+                                        @endif
+                                    </tr>
+                                @endforeach
+                            </table>
+                        @endif
+                    @endif
                 @endforeach
+                {!! $renderCompactBlocks($compactBlocks) !!}
             @endforeach
             @if ($frtOneOffRemarks !== '')
                 <div class="text-block-label" style="margin-top: 10px;">One-off Remarks</div>
@@ -1200,7 +1474,7 @@
 </div>
 @endif
 
-@if ($hasScbaChecks)
+@if ($isScbaInspection && $hasScbaChecks)
 <div class="card">
     <div class="card-head">SCBA Checks</div>
     <div class="card-body">
@@ -1243,13 +1517,18 @@
                         @endforeach
                     </tbody>
                 </table>
+                @php $compactBlocks = []; @endphp
                 @foreach ($section['rows'] as $check)
                     @php
                         $brand = trim((string) ($check['brand'] ?? ''));
                         $serialNo = trim((string) ($check['serialNo'] ?? $check['serial_no'] ?? ''));
                         $equipmentName = trim($brand.' '.$serialNo) ?: 'SCBA item';
+                        $generalRemarks = trim((string) ($check['remarks'] ?? $check['remark'] ?? ''));
                         $additionalPhotos = $filterInlinePhotos($check['photos'] ?? []);
                         $additionalPhotoColumns = count($additionalPhotos) > 1 ? 2 : 1;
+                        if (count($additionalPhotos) === 0 && $isCompactText($generalRemarks)) {
+                            $compactBlocks[] = $compactBlock('Equipment Evidence: '.$equipmentName, 'General equipment remarks', $generalRemarks);
+                        }
                     @endphp
                     @foreach ($section['status_fields'] as $field)
                         @php
@@ -1257,10 +1536,15 @@
                             $issueRemarks = trim((string) ($check[$field['remarks']] ?? $check[$field['remarks_snake']] ?? ''));
                             $issuePhotos = $filterInlinePhotos($check[$field['photos']] ?? $check[$field['photos_snake']] ?? []);
                             $issuePhotoColumns = count($issuePhotos) > 1 ? 2 : 1;
+                            $issueTitle = 'Issue Evidence: '.$equipmentName.' - '.$field['label'];
+                            $compactIssueOnly = strcasecmp($statusValue, 'Not Good') === 0 && count($issuePhotos) === 0 && $isCompactText($issueRemarks);
+                            if ($compactIssueOnly) {
+                                $compactBlocks[] = $compactBlock($issueTitle, 'Issue remarks', $issueRemarks);
+                            }
                         @endphp
-                        @if (strcasecmp($statusValue, 'Not Good') === 0 && ($issueRemarks !== '' || count($issuePhotos) > 0))
+                        @if (strcasecmp($statusValue, 'Not Good') === 0 && ! $compactIssueOnly && ($issueRemarks !== '' || count($issuePhotos) > 0))
                             <div class="text-block-label" style="margin-top: 10px;">
-                                Issue Evidence: {{ $equipmentName }} - {{ $field['label'] }}
+                                {{ $issueTitle }}
                             </div>
                             @if ($issueRemarks !== '')
                                 <div class="text-block-value">{{ $issueRemarks }}</div>
@@ -1351,13 +1635,14 @@
                         </table>
                     @endif
                 @endforeach
+                {!! $renderCompactBlocks($compactBlocks) !!}
             @endif
         @endforeach
     </div>
 </div>
 @endif
 
-@if (count($highAngleChecks) > 0)
+@if ($isHighAngleInspection && count($highAngleChecks) > 0)
 <div class="card">
     <div class="card-head">High Angle Rescue Equipment Checks</div>
     <div class="card-body">
@@ -1404,6 +1689,7 @@
                     @endforeach
                 </tbody>
             </table>
+            @php $compactBlocks = []; @endphp
             @foreach ($group['rows'] as $check)
                 @php
                     $condition = trim((string) ($check['condition'] ?? ''));
@@ -1414,10 +1700,24 @@
                     }
                     $issuePhotoColumns = count($issuePhotos) > 1 ? 2 : 1;
                     $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: 'High Angle equipment';
+                    $additionalNotes = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? ''));
+                    $additionalPhotos = $filterInlinePhotos($check['additionalPhotos'] ?? $check['additional_photos'] ?? []);
+                    $additionalPhotoColumns = count($additionalPhotos) > 1 ? 2 : 1;
+                    $hasIssue = strcasecmp($condition, 'Not Good') === 0;
+                    $issueTitle = 'Issue Evidence: '.$equipmentName;
+                    $additionalTitle = 'Additional Info: '.$equipmentName;
+                    $compactIssueOnly = $hasIssue && count($issuePhotos) === 0 && $isCompactText($issueRemarks);
+                    $compactAdditionalOnly = count($additionalPhotos) === 0 && $isCompactText($additionalNotes);
+                    if ($compactIssueOnly) {
+                        $compactBlocks[] = $compactBlock($issueTitle, 'Condition remarks', $issueRemarks);
+                    }
+                    if ($compactAdditionalOnly) {
+                        $compactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalNotes);
+                    }
                 @endphp
-                @if (strcasecmp($condition, 'Not Good') === 0 && ($issueRemarks !== '' || count($issuePhotos) > 0))
+                @if ($hasIssue && ! $compactIssueOnly && ($issueRemarks !== '' || count($issuePhotos) > 0))
                     <div class="text-block-label" style="margin-top: 10px;">
-                        Issue Evidence: {{ $equipmentName }}
+                        {{ $issueTitle }}
                     </div>
                     @if ($issueRemarks !== '')
                         <div class="text-block-value">{{ $issueRemarks }}</div>
@@ -1449,13 +1749,49 @@
                         </table>
                     @endif
                 @endif
+                @if (! $compactAdditionalOnly && ($additionalNotes !== '' || count($additionalPhotos) > 0))
+                    <div class="text-block-label" style="margin-top: 10px;">
+                        {{ $additionalTitle }}
+                    </div>
+                    @if ($additionalNotes !== '')
+                        <div class="text-block-label">General equipment remarks</div>
+                        <div class="text-block-value">{{ $additionalNotes }}</div>
+                    @endif
+                    @if (count($additionalPhotos) > 0)
+                        <table class="photo-grid">
+                            @foreach (array_chunk($additionalPhotos, $additionalPhotoColumns) as $photoRow)
+                                <tr>
+                                    @foreach ($photoRow as $photo)
+                                        @php $description = $formatPhotoDescription($photo); @endphp
+                                        <td style="width: {{ $additionalPhotoColumns === 1 ? '100%' : '50%' }};">
+                                            <div class="photo-card">
+                                                <div class="photo-figure">
+                                                    <div class="photo-image-wrap">
+                                                        <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="High Angle additional photo">
+                                                    </div>
+                                                    <div class="photo-caption">
+                                                        <div class="photo-description">{{ $description }}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    @endforeach
+                                    @if ($additionalPhotoColumns === 2 && count($photoRow) === 1)
+                                        <td></td>
+                                    @endif
+                                </tr>
+                            @endforeach
+                        </table>
+                    @endif
+                @endif
             @endforeach
+            {!! $renderCompactBlocks($compactBlocks) !!}
         @endforeach
     </div>
 </div>
 @endif
 
-@if (count($erAuxChecks) > 0)
+@if ($isErAuxInspection && count($erAuxChecks) > 0)
 <div class="card">
     <div class="card-head">ER Aux Equipment Checks</div>
     <div class="card-body">
@@ -1521,6 +1857,7 @@
                 @endforeach
             </tbody>
         </table>
+        @php $compactBlocks = []; @endphp
         @foreach ($erAuxChecks as $check)
             @php
                 $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: 'ER Aux equipment';
@@ -1530,10 +1867,20 @@
                 $additionalRemarks = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? $check['remarks'] ?? $check['remark'] ?? ''));
                 $additionalPhotos = $filterInlinePhotos($check['photos'] ?? []);
                 $additionalPhotoColumns = count($additionalPhotos) > 1 ? 2 : 1;
+                $defectTitle = 'Defect Evidence: '.$equipmentName;
+                $additionalTitle = 'Additional Evidence: '.$equipmentName;
+                $compactDefectOnly = count($defectPhotos) === 0 && $isCompactText($defectRemarks);
+                $compactAdditionalOnly = count($additionalPhotos) === 0 && $isCompactText($additionalRemarks);
+                if ($compactDefectOnly) {
+                    $compactBlocks[] = $compactBlock($defectTitle, 'Defect remarks', $defectRemarks);
+                }
+                if ($compactAdditionalOnly) {
+                    $compactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalRemarks);
+                }
             @endphp
-            @if ($defectRemarks !== '' || count($defectPhotos) > 0)
+            @if (! $compactDefectOnly && ($defectRemarks !== '' || count($defectPhotos) > 0))
                 <div class="text-block-label" style="margin-top: 10px;">
-                    Defect Evidence: {{ $equipmentName }}
+                    {{ $defectTitle }}
                 </div>
                 @if ($defectRemarks !== '')
                     <div class="text-block-value">{{ $defectRemarks }}</div>
@@ -1565,9 +1912,9 @@
                     </table>
                 @endif
             @endif
-            @if ($additionalRemarks !== '' || count($additionalPhotos) > 0)
+            @if (! $compactAdditionalOnly && ($additionalRemarks !== '' || count($additionalPhotos) > 0))
                 <div class="text-block-label" style="margin-top: 10px;">
-                    Additional Evidence: {{ $equipmentName }}
+                    {{ $additionalTitle }}
                 </div>
                 @if ($additionalRemarks !== '')
                     <div class="text-block-value">{{ $additionalRemarks }}</div>
@@ -1599,6 +1946,73 @@
                     </table>
                 @endif
             @endif
+        @endforeach
+        {!! $renderCompactBlocks($compactBlocks) !!}
+    </div>
+</div>
+@endif
+
+@if (($isGeneralInspection || $isHseInspection) && count($inspectionIssues) > 0)
+<div class="card">
+    <div class="card-head">Findings ({{ count($inspectionIssues) }})</div>
+    <div class="card-body">
+        @foreach ($inspectionIssues as $issueIndex => $issue)
+            @php
+                $issuePhotos = $issue['photos'];
+                $issuePhotoColumns = count($issuePhotos) > 1 ? 2 : 1;
+                $compactFinding = count($issuePhotos) === 0
+                    && $issue['description'] !== ''
+                    && $issue['actionRequired'] !== ''
+                    && $isCompactText($issue['description'])
+                    && $isCompactText($issue['actionRequired']);
+            @endphp
+            <div class="issue-block">
+                <div class="issue-title">Finding {{ $issueIndex + 1 }}</div>
+                @if ($compactFinding)
+                    {!! $renderCompactBlocks([
+                        $compactBlock('Description', '', $issue['description']),
+                        $compactBlock('Action Required', '', $issue['actionRequired']),
+                    ]) !!}
+                @else
+                    @if ($issue['description'] !== '')
+                        <div class="text-block-label">Description</div>
+                        <div class="text-block-value">{{ $issue['description'] }}</div>
+                    @endif
+                    @if ($issue['actionRequired'] !== '')
+                        <div class="divider"></div>
+                        <div class="text-block-label">Action Required</div>
+                        <div class="text-block-value">{{ $issue['actionRequired'] }}</div>
+                    @endif
+                @endif
+                @if (count($issuePhotos) > 0)
+                    <div class="divider"></div>
+                    <div class="text-block-label">Finding Photos</div>
+                    <table class="photo-grid">
+                        @foreach (array_chunk($issuePhotos, $issuePhotoColumns) as $photoRow)
+                            <tr>
+                                @foreach ($photoRow as $photo)
+                                    @php $description = $formatPhotoDescription($photo); @endphp
+                                    <td style="width: {{ $issuePhotoColumns === 1 ? '100%' : '50%' }};">
+                                        <div class="photo-card">
+                                            <div class="photo-figure">
+                                                <div class="photo-image-wrap">
+                                                    <img class="photo-image" src="{{ trim((string) ($photo['url'] ?? '')) }}" alt="Inspection finding photo">
+                                                </div>
+                                                <div class="photo-caption">
+                                                    <div class="photo-description">{{ $description }}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                @endforeach
+                                @if ($issuePhotoColumns === 2 && count($photoRow) === 1)
+                                    <td></td>
+                                @endif
+                            </tr>
+                        @endforeach
+                    </table>
+                @endif
+            </div>
         @endforeach
     </div>
 </div>

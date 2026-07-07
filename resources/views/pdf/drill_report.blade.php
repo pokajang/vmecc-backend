@@ -83,6 +83,34 @@
             color: #111827;
             line-height: 1.4;
         }
+        .compact-info-grid {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 4px;
+            table-layout: fixed;
+            margin-top: 4px;
+        }
+        .compact-info-grid td {
+            width: 50%;
+            border: 1px solid #e5e7eb;
+            padding: 4px 6px;
+            vertical-align: top;
+            page-break-inside: avoid;
+        }
+        .compact-info-title {
+            font-size: 8.4px;
+            font-weight: 700;
+            color: #374151;
+            margin-bottom: 2px;
+            line-height: 1.25;
+        }
+        .compact-info-value {
+            font-size: 9.5px;
+            color: #111827;
+            line-height: 1.35;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
         .divider { height: 1px; background: #e5e7eb; margin: 6px 0; }
         table.chrono, table.signoff {
             width: 100%;
@@ -165,6 +193,17 @@
     $timeDisplay = $reportTime ? substr($reportTime, 0, 5) : '';
     $dateTimeDisplay = trim($dateDisplay . ($timeDisplay ? ', ' . $timeDisplay : ''));
     $generatedAt = now()->format('d M Y, H:i');
+    $compactText = function ($value): string {
+        return preg_replace('/\s+/u', ' ', trim((string) $value));
+    };
+    $isCompactText = function ($value) use ($compactText): bool {
+        $raw = trim((string) $value);
+        if ($raw === '' || preg_match('/[\r\n]/', $raw)) {
+            return false;
+        }
+
+        return mb_strlen($compactText($raw), 'UTF-8') <= 120;
+    };
 
     $renderSigner = function ($entry) {
         if (! $entry) {
@@ -231,6 +270,20 @@
 <div class="card">
     <div class="card-head">Drill Details</div>
     <div class="card-body">
+        @if ($details && $summary && $isCompactText($details) && $isCompactText($summary))
+            <table class="compact-info-grid">
+                <tr>
+                    <td>
+                        <div class="compact-info-title">Drill Scenario</div>
+                        <div class="compact-info-value">{{ $compactText($details) }}</div>
+                    </td>
+                    <td>
+                        <div class="compact-info-title">Outcome Summary</div>
+                        <div class="compact-info-value">{{ $compactText($summary) }}</div>
+                    </td>
+                </tr>
+            </table>
+        @else
         @if ($details)
             <div class="text-block">
                 <div class="text-block-label">Drill Scenario</div>
@@ -243,6 +296,7 @@
                 <div class="text-block-label">Outcome Summary</div>
                 <div class="text-block-value">{{ $summary }}</div>
             </div>
+        @endif
         @endif
     </div>
 </div>

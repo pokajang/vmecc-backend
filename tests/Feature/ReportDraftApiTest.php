@@ -60,4 +60,44 @@ class ReportDraftApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data', null);
     }
+
+    public function test_inspection_fire_extinguisher_draft_allows_incomplete_check_rows(): void
+    {
+        $user = User::factory()->create([
+            'name' => 'Draft Inspector',
+            'status' => 'active',
+        ]);
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports/draft', [
+            'report_type' => 'inspection',
+            'payload' => [
+                'incidentType' => 'Fire Extinguisher Inspection',
+                'location' => 'Zone 2 > Main Sub Station',
+                'mainLocation' => 'Main Sub Station',
+                'fireExtinguisherInspectionDate' => '2026-07-07',
+                'fireExtinguisherChecks' => [
+                    [
+                        'id' => 'fe:msl-005',
+                        'catalogId' => 5,
+                        'mainLocation' => 'Main Sub Station',
+                        'idLocNo' => 'MSL1-005',
+                        'barcodeNo' => 'EE072021Z168999',
+                        'feType' => 'CO2 5KG',
+                        'certificationValidity' => '2025-12-31',
+                        'physicalCondition' => 'Good',
+                        'signageCondition' => '',
+                        'boxKeyAvailability' => '',
+                        'boxGlassAvailability' => '',
+                        'operationalCondition' => '',
+                    ],
+                ],
+            ],
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.report_type', 'inspection');
+        $response->assertJsonPath('data.payload.fireExtinguisherChecks.0.idLocNo', 'MSL1-005');
+        $response->assertJsonPath('data.payload.fireExtinguisherChecks.0.signageCondition', '');
+    }
 }

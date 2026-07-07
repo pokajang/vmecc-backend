@@ -6,7 +6,6 @@ use App\Models\DeletedTeam;
 use App\Models\Team;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
-use App\Notifications\TeamDisbandedNotification;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\TeamMemberSyncService;
@@ -393,20 +392,6 @@ class TeamController extends Controller
         //    so a mail failure cannot roll back the deletion.
         $memberUserIds = $activeMembers->pluck('user_id')->filter()->unique()->values();
         if ($memberUserIds->isNotEmpty()) {
-            $memberUsers = User::whereIn('id', $memberUserIds)->get()->keyBy('id');
-            $teamEmailEnabled = config('mail.workflow_notifications.enabled', false)
-                && (bool) config('mail.workflow_notifications.modules.team', false);
-            if ($teamEmailEnabled) {
-                $activeMembers->each(function ($member) use ($team, $memberUsers) {
-                    if (! $member->user_id) return;
-                    $user = $memberUsers->get($member->user_id);
-                    if ($user) {
-                        $user->notify(new TeamDisbandedNotification($team->name, $member->role ?? ''));
-                    }
-                });
-            }
-
-            // In-app notification fanned out to all affected members at once
             $actor = $request->user()
                 ? ['userId' => $request->user()->id, 'name' => $request->user()->name, 'email' => $request->user()->email ?? '']
                 : ['userId' => null, 'name' => 'System', 'email' => ''];

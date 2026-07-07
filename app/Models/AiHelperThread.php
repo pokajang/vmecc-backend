@@ -11,6 +11,7 @@ class AiHelperThread extends Model
     protected $fillable = [
         'user_id',
         'title',
+        'conversation_purpose',
         'latest_route_context',
     ];
 

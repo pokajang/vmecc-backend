@@ -42,6 +42,7 @@ use App\Http\Controllers\InspectionFireTruckController;
 use App\Http\Controllers\InspectionFireExtinguisherController;
 use App\Http\Controllers\InspectionLocationController;
 use App\Http\Controllers\InspectionScbaCatalogController;
+use App\Http\Controllers\InspectionSessionController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportDraftController;
 use App\Http\Controllers\DashboardController;
@@ -68,8 +69,6 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->prefi
     Route::post('states/{key}', [OnboardingStateController::class, 'store']);
 });
 Route::get('settings/system-maintenance', [SettingsController::class, 'getSystemMaintenance']);
-Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->get('dashboard/me', [DashboardController::class, 'me'])
-    ->middleware('permission.assignment:self.dashboard');
 Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->post('feedback-reports', [FeedbackReportController::class, 'store']);
 Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'permission.assignment:*'])->group(function () {
     Route::get('feedback-reports', [FeedbackReportController::class, 'index']);
@@ -225,9 +224,20 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'module
     Route::patch('inspection/equipment/{equipmentId}', [InspectionEquipmentController::class, 'update']);
     Route::delete('inspection/equipment/{equipmentId}', [InspectionEquipmentController::class, 'destroy']);
     Route::get('inspection/fire-extinguishers', [InspectionFireExtinguisherController::class, 'index']);
+    Route::get('inspection/fire-extinguishers/coverage', [InspectionFireExtinguisherController::class, 'coverage']);
+    Route::get('inspection/fire-extinguishers/coverage/{extinguisherId}', [InspectionFireExtinguisherController::class, 'coverageDetail']);
+    Route::get('inspection/fire-extinguishers/lookup', [InspectionFireExtinguisherController::class, 'lookup']);
     Route::post('inspection/fire-extinguishers', [InspectionFireExtinguisherController::class, 'store']);
     Route::patch('inspection/fire-extinguishers/{extinguisherId}', [InspectionFireExtinguisherController::class, 'update']);
     Route::delete('inspection/fire-extinguishers/{extinguisherId}', [InspectionFireExtinguisherController::class, 'destroy']);
+    Route::get('inspection/sessions/active', [InspectionSessionController::class, 'active']);
+    Route::post('inspection/sessions', [InspectionSessionController::class, 'store']);
+    Route::get('inspection/sessions/{sessionUid}', [InspectionSessionController::class, 'show']);
+    Route::get('inspection/sessions/{sessionUid}/extinguishers', [InspectionSessionController::class, 'locationResults']);
+    Route::post('inspection/sessions/{sessionUid}/extinguishers/{extinguisherId}/claim', [InspectionSessionController::class, 'claim']);
+    Route::post('inspection/sessions/{sessionUid}/extinguishers/{extinguisherId}/complete', [InspectionSessionController::class, 'complete']);
+    Route::post('inspection/sessions/{sessionUid}/extinguishers/{extinguisherId}/reset', [InspectionSessionController::class, 'reset']);
+    Route::post('inspection/sessions/{sessionUid}/submit', [InspectionSessionController::class, 'submit']);
     Route::get('inspection/fire-trucks', [InspectionFireTruckController::class, 'index']);
     Route::post('inspection/fire-trucks', [InspectionFireTruckController::class, 'store']);
     Route::patch('inspection/fire-trucks/{truckId}', [InspectionFireTruckController::class, 'update']);

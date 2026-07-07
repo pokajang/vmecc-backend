@@ -97,6 +97,45 @@ class AiHelperApiTest extends TestCase
         $this->assertMatchesRegularExpression('/"request_id":"[^"]+"/', $content);
     }
 
+    public function test_stream_keeps_embedded_helpers_outside_chat_persistence(): void
+    {
+        config(['ai_helper.enabled' => true, 'ai_helper.api_key' => 'test-key']);
+        $user = User::factory()->create(['status' => 'active']);
+        $this->actingAs($user);
+
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('isAvailable')->andReturnTrue();
+            $mock->shouldReceive('streamResponse')->once()->andReturnUsing(function ($instructions, $input, $onDelta) {
+                $onDelta('Translated helper text.');
+
+                return ['response_id' => 'resp_helper_123'];
+            });
+        });
+
+        $content = $this->postJson('/api/ai-helper/messages/stream', [
+            'message' => 'Translate and polish this General/HSE inspection finding.',
+            'page_context' => ['path' => '/inspection'],
+            'new_thread' => true,
+            'conversation_purpose' => 'embedded_helper',
+            'response_language' => 'en',
+        ])->assertOk()->streamedContent();
+
+        $this->assertStringContainsString('"conversation_purpose":"embedded_helper"', $content);
+        $this->assertStringContainsString('"thread":null', $content);
+        $this->assertStringContainsString('Translated helper text.', $content);
+        $this->assertDatabaseCount('ai_helper_threads', 0);
+        $this->assertDatabaseCount('ai_helper_messages', 0);
+
+        $this->getJson('/api/ai-helper/thread')
+            ->assertOk()
+            ->assertJsonPath('data.thread', null)
+            ->assertJsonPath('data.messages', []);
+
+        $this->getJson('/api/ai-helper/threads')
+            ->assertOk()
+            ->assertJsonPath('data', []);
+    }
+
     public function test_stream_rejects_invalid_response_language(): void
     {
         config(['ai_helper.enabled' => false, 'ai_helper.api_key' => null]);
@@ -160,6 +199,70 @@ class AiHelperApiTest extends TestCase
             ->assertJsonPath('data.thread.id', $firstThread->id)
             ->assertJsonPath('data.messages.0.content', 'first user question')
             ->assertJsonMissing(['content' => 'second user question']);
+    }
+
+    public function test_regular_chat_history_excludes_embedded_helper_threads(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+
+        $regularThread = AiHelperThread::create([
+            'user_id' => $user->id,
+            'title' => 'Regular chat',
+            'conversation_purpose' => 'chat',
+            'latest_route_context' => ['path' => '/dashboard', 'module_key' => 'dashboard'],
+        ]);
+        $regularThread->messages()->create([
+            'role' => AiHelperMessage::ROLE_USER,
+            'content' => 'normal dashboard question',
+            'status' => AiHelperMessage::STATUS_COMPLETED,
+        ]);
+        $regularThread->forceFill(['updated_at' => now()->subMinutes(3)])->save();
+
+        $markedHelperThread = AiHelperThread::create([
+            'user_id' => $user->id,
+            'title' => 'Translate And Polish This General/Hse Inspection Action',
+            'conversation_purpose' => 'embedded_helper',
+            'latest_route_context' => [
+                'path' => '/inspection',
+                'module_key' => 'inspection',
+                'conversation_purpose' => 'embedded_helper',
+            ],
+        ]);
+        $markedHelperThread->messages()->create([
+            'role' => AiHelperMessage::ROLE_USER,
+            'content' => 'Translate and polish this helper text',
+            'status' => AiHelperMessage::STATUS_COMPLETED,
+        ]);
+        $markedHelperThread->forceFill(['updated_at' => now()->subMinutes(2)])->save();
+
+        $legacyHelperThread = AiHelperThread::create([
+            'user_id' => $user->id,
+            'title' => 'Translate And Polish This General/Hse Inspection Finding',
+            'latest_route_context' => ['path' => '/inspection', 'module_key' => 'inspection'],
+        ]);
+        $legacyHelperThread->messages()->create([
+            'role' => AiHelperMessage::ROLE_USER,
+            'content' => 'legacy helper text',
+            'status' => AiHelperMessage::STATUS_COMPLETED,
+        ]);
+        $legacyHelperThread->forceFill(['updated_at' => now()->subMinute()])->save();
+
+        $this->actingAs($user);
+
+        $this->getJson('/api/ai-helper/thread')
+            ->assertOk()
+            ->assertJsonPath('data.thread.id', $regularThread->id)
+            ->assertJsonPath('data.messages.0.content', 'normal dashboard question')
+            ->assertJsonMissing(['content' => 'Translate and polish this helper text'])
+            ->assertJsonMissing(['content' => 'legacy helper text']);
+
+        $response = $this->getJson('/api/ai-helper/threads')->assertOk();
+
+        $this->assertSame([$regularThread->id], collect($response->json('data'))->pluck('id')->all());
+        $this->assertDatabaseHas('ai_helper_threads', [
+            'id' => $markedHelperThread->id,
+            'conversation_purpose' => 'embedded_helper',
+        ]);
     }
 
     public function test_helper_rate_limit_is_applied(): void

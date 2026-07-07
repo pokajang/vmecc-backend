@@ -37,6 +37,9 @@ use Throwable;
 
 class AiHelperController extends Controller
 {
+    private const CONVERSATION_PURPOSE_CHAT = 'chat';
+    private const CONVERSATION_PURPOSE_EMBEDDED_HELPER = 'embedded_helper';
+
     public function __construct(
         private readonly AiHelperKnowledgeService $knowledge,
         private readonly AiHelperOpenAiService $openAi,
@@ -65,8 +68,8 @@ class AiHelperController extends Controller
             $threadId = $request->integer('thread_id') ?: null;
             $threadQuery = AiHelperThread::query()->where('user_id', $request->user()->id);
             $thread = $threadId
-                ? $threadQuery->where('id', $threadId)->first()
-                : $threadQuery->latest('updated_at')->first();
+                ? $this->regularThreadById($threadQuery, $threadId)
+                : $this->latestRegularThreadForUser($request->user()->id);
 
             return response()->json([
                 'data' => [
@@ -93,6 +96,10 @@ class AiHelperController extends Controller
         try {
             $threads = AiHelperThread::query()
                 ->where('user_id', $request->user()->id)
+                ->where(function ($query) {
+                    $query->whereNull('conversation_purpose')
+                        ->orWhere('conversation_purpose', 'chat');
+                })
                 ->with(['messages' => function ($query) {
                     $query->whereIn('role', [AiHelperMessage::ROLE_USER, AiHelperMessage::ROLE_ASSISTANT])
                         ->where('status', '!=', AiHelperMessage::STATUS_FAILED)
@@ -100,8 +107,10 @@ class AiHelperController extends Controller
                         ->limit(1);
                 }])
                 ->latest('updated_at')
-                ->limit(30)
+                ->limit(100)
                 ->get()
+                ->filter(fn (AiHelperThread $thread) => $this->isRegularChatThread($thread))
+                ->take(30)
                 ->map(function (AiHelperThread $thread) {
                     $lastMessage = $thread->messages->first();
                     return [
@@ -1008,17 +1017,57 @@ class AiHelperController extends Controller
 
         try {
             $actor = $request->user();
+            $conversationPurpose = $this->normalizeConversationPurpose($validated['conversation_purpose'] ?? null);
             $pageContext = $this->knowledge->buildContext(
                 $validated['page_context'] ?? [],
                 $actor,
                 (string) $validated['message'],
             );
+            $pageContext['page']['conversation_purpose'] = $conversationPurpose;
+            $pageContext['page']['assistant_surface'] = $conversationPurpose;
+            $instructions = $this->knowledge->instructionsFor(
+                $pageContext,
+                (string) ($validated['response_language'] ?? 'bm')
+            );
+
+            if ($conversationPurpose === self::CONVERSATION_PURPOSE_EMBEDDED_HELPER) {
+                if (! empty($validated['thread_id'])) {
+                    return $this->responder->error(
+                        $request,
+                        'Embedded AI helpers do not use chat threads.',
+                        'AI_HELPER_EMBEDDED_THREAD_FORBIDDEN',
+                        422,
+                    );
+                }
+
+                $history = [[
+                    'role' => AiHelperMessage::ROLE_USER,
+                    'content' => (string) $validated['message'],
+                ]];
+
+                Log::info('Ask AI embedded helper stream prepared', [
+                    'request_id' => $requestId,
+                    'user_id' => $actor->id,
+                    'guidance_count' => count($pageContext['guidance'] ?? []),
+                ]);
+
+                return $this->streamEmbeddedHelperResponse(
+                    $history,
+                    $instructions,
+                    $requestId,
+                    $actor->id,
+                    count($pageContext['guidance'] ?? []),
+                    $pageContext['page'] ?? [],
+                );
+            }
+
             $thread = $this->resolveThread(
                 $actor->id,
                 $validated['thread_id'] ?? null,
                 (bool) ($validated['new_thread'] ?? false),
                 $validated['message'],
                 $pageContext['page'] ?? [],
+                $conversationPurpose,
             );
 
             $userMessage = $thread->messages()->create([
@@ -1040,10 +1089,6 @@ class AiHelperController extends Controller
             ])->save();
 
             $history = $this->conversation->inputForThread($thread, $userMessage->id);
-            $instructions = $this->knowledge->instructionsFor(
-                $pageContext,
-                (string) ($validated['response_language'] ?? 'bm')
-            );
             Log::info('Ask AI stream prepared', [
                 'request_id' => $requestId,
                 'thread_id' => $thread->id,
@@ -1122,12 +1167,86 @@ class AiHelperController extends Controller
         ]);
     }
 
+    private function streamEmbeddedHelperResponse(
+        array $history,
+        string $instructions,
+        string $requestId,
+        int $userId,
+        int $guidanceCount,
+        array $pageContext,
+    ): StreamedResponse {
+        return response()->stream(function () use ($history, $instructions, $requestId, $userId, $guidanceCount, $pageContext) {
+            $this->emit('meta', [
+                'request_id' => $requestId,
+                'contract_version' => 1,
+                'conversation_purpose' => self::CONVERSATION_PURPOSE_EMBEDDED_HELPER,
+                'thread' => null,
+                'message_id' => null,
+            ], $requestId);
+            $this->emit('heartbeat', ['request_id' => $requestId, 'at' => now()->toIso8601String()], $requestId);
+
+            $content = '';
+            try {
+                $startedAt = microtime(true);
+                $result = $this->openAi->streamResponse($instructions, $history, function (string $delta) use (&$content, $requestId) {
+                    if (connection_aborted()) {
+                        throw new RuntimeException('AI helper stream aborted by client.');
+                    }
+                    $content .= $delta;
+                    $this->emit('delta', ['text' => $delta, 'request_id' => $requestId], $requestId);
+                });
+
+                Log::info('Ask AI embedded helper stream completed', [
+                    'request_id' => $requestId,
+                    'user_id' => $userId,
+                    'openai_response_id' => $result['response_id'] ?? null,
+                    'guidance_count' => $guidanceCount,
+                    'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
+                    'content_length' => strlen($content),
+                ]);
+
+                $this->emit('done', [
+                    'request_id' => $requestId,
+                    'conversation_purpose' => self::CONVERSATION_PURPOSE_EMBEDDED_HELPER,
+                    'thread' => null,
+                    'message' => $this->formatTransientAssistantMessage($content, $pageContext),
+                ], $requestId);
+            } catch (Throwable $e) {
+                $aborted = str_contains($e->getMessage(), 'aborted by client') || connection_aborted();
+                Log::warning('Ask AI embedded helper stream failed', [
+                    'request_id' => $requestId,
+                    'user_id' => $userId,
+                    'error' => $e->getMessage(),
+                ]);
+
+                $this->emit($aborted ? 'done' : 'error', [
+                    'request_id' => $requestId,
+                    'conversation_purpose' => self::CONVERSATION_PURPOSE_EMBEDDED_HELPER,
+                    'message' => $aborted ? 'Ask AI response stopped.' : 'Ask AI could not generate a response. Please try again.',
+                    'code' => $aborted ? 'AI_HELPER_STREAM_ABORTED' : 'AI_HELPER_STREAM_FAILED',
+                ], $requestId);
+            }
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache, no-transform',
+            'X-Accel-Buffering' => 'no',
+            'X-Request-Id' => $requestId,
+        ]);
+    }
+
     private function safeFailure(Request $request, Throwable $e, string $action): JsonResponse
     {
         return $this->responder->failure($request, $e, $action);
     }
 
-    private function resolveThread(int $userId, ?int $threadId, bool $newThread, string $message, array $pageContext): AiHelperThread
+    private function resolveThread(
+        int $userId,
+        ?int $threadId,
+        bool $newThread,
+        string $message,
+        array $pageContext,
+        string $conversationPurpose = self::CONVERSATION_PURPOSE_CHAT,
+    ): AiHelperThread
     {
         if ($threadId) {
             $thread = AiHelperThread::query()
@@ -1135,14 +1254,15 @@ class AiHelperController extends Controller
                 ->where('id', $threadId)
                 ->firstOrFail();
 
+            if ($this->threadConversationPurpose($thread) !== $conversationPurpose) {
+                abort(404);
+            }
+
             return $thread;
         }
 
-        if (! $newThread) {
-            $latest = AiHelperThread::query()
-                ->where('user_id', $userId)
-                ->latest('updated_at')
-                ->first();
+        if (! $newThread && $conversationPurpose === self::CONVERSATION_PURPOSE_CHAT) {
+            $latest = $this->latestRegularThreadForUser($userId);
             if ($latest) {
                 return $latest;
             }
@@ -1151,8 +1271,92 @@ class AiHelperController extends Controller
         return AiHelperThread::create([
             'user_id' => $userId,
             'title' => $this->buildThreadTitle($message, $pageContext),
+            'conversation_purpose' => $conversationPurpose,
             'latest_route_context' => $pageContext,
         ]);
+    }
+
+    private function regularThreadById($query, int $threadId): ?AiHelperThread
+    {
+        $thread = $query->where('id', $threadId)->first();
+
+        return $thread && $this->isRegularChatThread($thread) ? $thread : null;
+    }
+
+    private function latestRegularThreadForUser(int $userId): ?AiHelperThread
+    {
+        return AiHelperThread::query()
+            ->where('user_id', $userId)
+            ->where(function ($query) {
+                $query->whereNull('conversation_purpose')
+                    ->orWhere('conversation_purpose', 'chat');
+            })
+            ->latest('updated_at')
+            ->limit(80)
+            ->get()
+            ->first(fn (AiHelperThread $thread) => $this->isRegularChatThread($thread));
+    }
+
+    private function normalizeConversationPurpose(mixed $value): string
+    {
+        return $value === self::CONVERSATION_PURPOSE_EMBEDDED_HELPER
+            ? self::CONVERSATION_PURPOSE_EMBEDDED_HELPER
+            : self::CONVERSATION_PURPOSE_CHAT;
+    }
+
+    private function isRegularChatThread(AiHelperThread $thread): bool
+    {
+        return $this->threadConversationPurpose($thread) === self::CONVERSATION_PURPOSE_CHAT;
+    }
+
+    private function threadConversationPurpose(AiHelperThread $thread): string
+    {
+        $storedPurpose = $this->normalizeConversationPurpose($thread->conversation_purpose ?? null);
+        if ($storedPurpose !== 'chat' || $thread->conversation_purpose !== null) {
+            return $storedPurpose;
+        }
+
+        $context = is_array($thread->latest_route_context) ? $thread->latest_route_context : [];
+        $purpose = Str::lower(trim((string) ($context['conversation_purpose'] ?? $context['assistant_surface'] ?? '')));
+
+        if (in_array($purpose, [self::CONVERSATION_PURPOSE_EMBEDDED_HELPER, 'module_helper', 'inspection_helper', 'erco_helper'], true)) {
+            return self::CONVERSATION_PURPOSE_EMBEDDED_HELPER;
+        }
+
+        return $this->looksLikeLegacyEmbeddedHelperThread($thread, $context)
+            ? self::CONVERSATION_PURPOSE_EMBEDDED_HELPER
+            : self::CONVERSATION_PURPOSE_CHAT;
+    }
+
+    private function looksLikeLegacyEmbeddedHelperThread(AiHelperThread $thread, array $context): bool
+    {
+        $title = Str::lower(trim((string) $thread->title));
+        if ($title === '') {
+            return false;
+        }
+
+        $moduleKey = Str::lower(trim((string) ($context['module_key'] ?? '')));
+        $path = Str::lower(trim((string) ($context['path'] ?? '')));
+        $isInspectionContext = $moduleKey === 'inspection' || str_starts_with($path, '/inspection');
+        $isReportContext = $moduleKey === 'reports' || str_starts_with($path, '/report/erco');
+
+        if ($isInspectionContext && str_starts_with($title, 'translate and polish this general/hse inspection')) {
+            return true;
+        }
+
+        if ($isReportContext) {
+            foreach ([
+                'generate an erco emergency response incident summary',
+                'improve the existing erco emergency response incident summary',
+                'check this erco report for possible missing',
+            ] as $prefix) {
+                if (str_starts_with($title, $prefix)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private function buildThreadTitle(string $message, array $pageContext): string
@@ -1217,6 +1421,7 @@ class AiHelperController extends Controller
         return [
             'id' => $thread->id,
             'title' => $thread->title ?: 'Ask AI chat',
+            'conversation_purpose' => $this->threadConversationPurpose($thread),
             'latest_route_context' => $thread->latest_route_context ?: [],
             'updated_at' => optional($thread->updated_at)->toIso8601String(),
         ];
@@ -1231,6 +1436,18 @@ class AiHelperController extends Controller
             'status' => $message->status,
             'route_context' => $message->route_context ?: [],
             'created_at' => optional($message->created_at)->toIso8601String(),
+        ];
+    }
+
+    private function formatTransientAssistantMessage(string $content, array $pageContext): array
+    {
+        return [
+            'id' => null,
+            'role' => AiHelperMessage::ROLE_ASSISTANT,
+            'content' => $content,
+            'status' => AiHelperMessage::STATUS_COMPLETED,
+            'route_context' => $pageContext,
+            'created_at' => now()->toIso8601String(),
         ];
     }
 

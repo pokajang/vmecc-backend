@@ -34,12 +34,36 @@ class InspectionLocationCatalogApiTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonPath('meta.source', 'database');
-        $response->assertJsonFragment(['title' => 'Manjung Hub']);
-        $manjungHub = collect($response->json('data'))->firstWhere('title', 'Manjung Hub');
+        $response->assertJsonFragment(['title' => '1']);
+        $zone = collect($response->json('data'))->firstWhere('title', '1');
+        $manjungHub = collect($zone['subLocations'] ?? [])->firstWhere('title', 'Manjung Hub');
         $this->assertContains(
             'Reception',
             collect($manjungHub['subLocations'] ?? [])->pluck('title')->all()
         );
+    }
+
+    public function test_general_and_hse_catalogs_reuse_zone_area_location_hierarchy(): void
+    {
+        $this->seed(InspectionLocationCatalogSeeder::class);
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
+        $this->actingAs($user);
+
+        foreach (['General Inspection', 'Health Safety Environment Inspection'] as $inspectionType) {
+            $response = $this->getJson('/api/inspection/location-options?inspectionType='.urlencode($inspectionType));
+
+            $response->assertOk();
+            $zone = collect($response->json('data'))->firstWhere('title', '1');
+            $this->assertNotNull($zone, "{$inspectionType} should include Zone 1.");
+            $manjungHub = collect($zone['subLocations'] ?? [])->firstWhere('title', 'Manjung Hub');
+            $this->assertNotNull($manjungHub, "{$inspectionType} should include Manjung Hub under Zone 1.");
+            $this->assertContains(
+                'Reception',
+                collect($manjungHub['subLocations'] ?? [])->pluck('title')->all(),
+                "{$inspectionType} should include Reception under Manjung Hub."
+            );
+        }
     }
 
     public function test_user_can_create_custom_main_and_sub_location(): void
@@ -87,7 +111,8 @@ class InspectionLocationCatalogApiTest extends TestCase
 
         $general = $this->getJson('/api/inspection/location-options?inspectionType=General%20Inspection');
         $general->assertOk();
-        $generalFireTruck = collect($general->json('data'))->firstWhere('title', 'FIRE TRUCK');
+        $others = collect($general->json('data'))->firstWhere('title', 'Others');
+        $generalFireTruck = collect($others['subLocations'] ?? [])->firstWhere('title', 'Vehicle');
         $this->assertNotNull($generalFireTruck);
         $this->assertNotContains('TRUCK CHECKLIST', collect($generalFireTruck['subLocations'] ?? [])->pluck('title')->all());
     }
@@ -154,16 +179,22 @@ class InspectionLocationCatalogApiTest extends TestCase
         $this->assertFalse($seed->fresh()->is_active);
     }
 
-    public function test_regular_inspection_user_can_rename_seeded_main_location_globally(): void
+    public function test_regular_inspection_user_can_rename_seeded_site_area_across_site_location_types(): void
     {
         $this->seed(InspectionLocationCatalogSeeder::class);
         $user = User::factory()->create(['status' => 'active']);
         $this->grantPermission($user, 'reports.inspection.view');
         $this->actingAs($user);
 
-        $seed = InspectionLocation::query()
+        $zone = InspectionLocation::query()
             ->where('source', 'seed')
             ->whereNull('parent_id')
+            ->where('name', '1')
+            ->firstOrFail();
+
+        $seed = InspectionLocation::query()
+            ->where('source', 'seed')
+            ->where('parent_id', $zone->id)
             ->where('name', 'Manjung Hub')
             ->firstOrFail();
 
@@ -174,27 +205,35 @@ class InspectionLocationCatalogApiTest extends TestCase
 
         $fire = $this->getJson('/api/inspection/location-options?inspectionType=Fire%20Extinguisher%20Inspection');
         $fire->assertOk();
-        $renamed = collect($fire->json('data'))->firstWhere('title', 'Manjung Hub FE');
+        $zone = collect($fire->json('data'))->firstWhere('title', '1');
+        $renamed = collect($zone['subLocations'] ?? [])->firstWhere('title', 'Manjung Hub FE');
         $this->assertNotNull($renamed);
         $this->assertContains('Reception', collect($renamed['subLocations'] ?? [])->pluck('title')->all());
-        $this->assertNull(collect($fire->json('data'))->firstWhere('title', 'Manjung Hub'));
+        $this->assertNull(collect($zone['subLocations'] ?? [])->firstWhere('title', 'Manjung Hub'));
 
         $general = $this->getJson('/api/inspection/location-options?inspectionType=General%20Inspection');
         $general->assertOk();
-        $this->assertNotNull(collect($general->json('data'))->firstWhere('title', 'Manjung Hub FE'));
-        $this->assertNull(collect($general->json('data'))->firstWhere('title', 'Manjung Hub'));
+        $generalZone = collect($general->json('data'))->firstWhere('title', '1');
+        $this->assertNotNull(collect($generalZone['subLocations'] ?? [])->firstWhere('title', 'Manjung Hub FE'));
+        $this->assertNull(collect($generalZone['subLocations'] ?? [])->firstWhere('title', 'Manjung Hub'));
     }
 
-    public function test_regular_inspection_user_can_remove_seeded_main_location_globally(): void
+    public function test_regular_inspection_user_can_remove_seeded_site_area_across_site_location_types(): void
     {
         $this->seed(InspectionLocationCatalogSeeder::class);
         $user = User::factory()->create(['status' => 'active']);
         $this->grantPermission($user, 'reports.inspection.view');
         $this->actingAs($user);
 
-        $seed = InspectionLocation::query()
+        $zone = InspectionLocation::query()
             ->where('source', 'seed')
             ->whereNull('parent_id')
+            ->where('name', '1')
+            ->firstOrFail();
+
+        $seed = InspectionLocation::query()
+            ->where('source', 'seed')
+            ->where('parent_id', $zone->id)
             ->where('name', 'Manjung Hub')
             ->firstOrFail();
 
@@ -211,11 +250,13 @@ class InspectionLocationCatalogApiTest extends TestCase
 
         $fire = $this->getJson('/api/inspection/location-options?inspectionType=Fire%20Extinguisher%20Inspection');
         $fire->assertOk();
-        $this->assertNull(collect($fire->json('data'))->firstWhere('title', 'Manjung Hub'));
+        $zone = collect($fire->json('data'))->firstWhere('title', '1');
+        $this->assertNull(collect($zone['subLocations'] ?? [])->firstWhere('title', 'Manjung Hub'));
 
         $general = $this->getJson('/api/inspection/location-options?inspectionType=General%20Inspection');
         $general->assertOk();
-        $this->assertNull(collect($general->json('data'))->firstWhere('title', 'Manjung Hub'));
+        $generalZone = collect($general->json('data'))->firstWhere('title', '1');
+        $this->assertNull(collect($generalZone['subLocations'] ?? [])->firstWhere('title', 'Manjung Hub'));
     }
 
     public function test_regular_inspection_user_can_rename_seeded_sub_location_globally(): void
@@ -237,7 +278,8 @@ class InspectionLocationCatalogApiTest extends TestCase
 
         $fire = $this->getJson('/api/inspection/location-options?inspectionType=Fire%20Extinguisher%20Inspection');
         $fire->assertOk();
-        $manjungHub = collect($fire->json('data'))->firstWhere('title', 'Manjung Hub');
+        $zone = collect($fire->json('data'))->firstWhere('title', '1');
+        $manjungHub = collect($zone['subLocations'] ?? [])->firstWhere('title', 'Manjung Hub');
         $this->assertContains(
             'Reception Desk',
             collect($manjungHub['subLocations'] ?? [])->pluck('title')->all()
@@ -265,7 +307,8 @@ class InspectionLocationCatalogApiTest extends TestCase
 
         $fire = $this->getJson('/api/inspection/location-options?inspectionType=Fire%20Extinguisher%20Inspection');
         $fire->assertOk();
-        $manjungHub = collect($fire->json('data'))->firstWhere('title', 'Manjung Hub');
+        $zone = collect($fire->json('data'))->firstWhere('title', '1');
+        $manjungHub = collect($zone['subLocations'] ?? [])->firstWhere('title', 'Manjung Hub');
         $this->assertNotContains(
             'Reception',
             collect($manjungHub['subLocations'] ?? [])->pluck('title')->all()

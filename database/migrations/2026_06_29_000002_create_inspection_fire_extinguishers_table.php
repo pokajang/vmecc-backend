@@ -19,8 +19,6 @@ return new class extends Migration
             $table->string('barcode_no', 190)->nullable();
             $table->string('fe_type', 120)->nullable();
             $table->date('certification_validity')->nullable();
-            $table->string('certification_validity_raw', 120)->nullable();
-            $table->string('days_left_to_expire', 60)->nullable();
             $table->string('source', 40)->default('custom');
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->boolean('is_active')->default(true);

@@ -25,34 +25,22 @@ class InspectionLocationController extends Controller
         $this->ensureInspectionPermission($request);
 
         $type = $this->resolveInspectionType($request);
-        $rows = InspectionLocationTypeLink::query()
+        $locations = InspectionLocationTypeLink::query()
             ->where('inspection_type_key', $type['key'])
-            ->with([
-                'location' => function ($query) use ($type) {
-                    $query
-                        ->whereNull('parent_id')
-                        ->where('is_active', true)
-                        ->with([
-                            'activeChildren' => function ($childQuery) use ($type) {
-                                $childQuery->whereHas(
-                                    'typeLinks',
-                                    fn ($linkQuery) => $linkQuery->where('inspection_type_key', $type['key'])
-                                );
-                            },
-                        ]);
-                },
-            ])
+            ->with(['location' => fn ($query) => $query->where('is_active', true)])
             ->orderBy('sort_order')
             ->orderBy('inspection_location_id')
             ->get()
             ->map(fn (InspectionLocationTypeLink $link) => $link->location)
             ->filter()
             ->values();
+        $rowsByParent = $locations->groupBy(fn (InspectionLocation $location) => (string) ($location->parent_id ?? 0));
+        $roots = $rowsByParent->get('0', collect())->values();
 
         $version = InspectionLocation::query()->max('updated_at');
 
         return response()->json([
-            'data' => $rows->map(fn (InspectionLocation $row) => $this->formatLocation($row))->values(),
+            'data' => $roots->map(fn (InspectionLocation $row) => $this->formatLocationTree($row, $rowsByParent))->values(),
             'meta' => [
                 'inspectionTypeKey' => $type['key'],
                 'inspectionTypeLabel' => $type['label'],
@@ -80,11 +68,6 @@ class InspectionLocationController extends Controller
         $type = $this->resolveInspectionType($request, $data);
         $parentId = (int) ($data['parentId'] ?? $data['parent_id'] ?? 0) ?: null;
         $parent = $parentId ? $this->findActiveLocation($parentId) : null;
-        if ($parent && $parent->parent_id !== null) {
-            throw ValidationException::withMessages([
-                'parentId' => ['Sub-locations can only be created under a main location.'],
-            ]);
-        }
         if ($parent && ! $this->isLocationLinkedToType($parent, $type['key'])) {
             throw ValidationException::withMessages([
                 'parentId' => ['Parent location is not available for this inspection type.'],
@@ -173,12 +156,7 @@ class InspectionLocationController extends Controller
         $location = $this->findActiveLocation($locationId);
 
         DB::transaction(function () use ($location) {
-            $location->update(['is_active' => false]);
-            if ($location->parent_id === null) {
-                InspectionLocation::query()
-                    ->where('parent_id', $location->id)
-                    ->update(['is_active' => false]);
-            }
+            $this->archiveLocationTree($location);
         });
 
         return response()->noContent();
@@ -258,6 +236,13 @@ class InspectionLocationController extends Controller
 
     private function formatLocation(InspectionLocation $location): array
     {
+        $children = $location->relationLoaded('activeChildren')
+            ? $location->activeChildren
+                ->map(fn (InspectionLocation $child) => $this->formatLocation($child))
+                ->values()
+                ->all()
+            : [];
+
         return [
             'id' => $location->id,
             'parentId' => $location->parent_id,
@@ -269,13 +254,43 @@ class InspectionLocationController extends Controller
             'custom' => $location->source !== 'seed',
             'canEdit' => true,
             'canDelete' => true,
-            'subLocations' => $location->relationLoaded('activeChildren')
-                ? $location->activeChildren
-                    ->map(fn (InspectionLocation $child) => $this->formatLocation($child))
-                    ->values()
-                    ->all()
-                : [],
+            'children' => $children,
+            'subLocations' => $children,
         ];
+    }
+
+    private function formatLocationTree(InspectionLocation $location, mixed $rowsByParent): array
+    {
+        $children = ($rowsByParent->get((string) $location->id, collect()) ?? collect())
+            ->values()
+            ->map(fn (InspectionLocation $child) => $this->formatLocationTree($child, $rowsByParent))
+            ->values()
+            ->all();
+
+        return [
+            'id' => $location->id,
+            'parentId' => $location->parent_id,
+            'value' => $location->name,
+            'title' => $location->name,
+            'description' => (string) ($location->description ?? ''),
+            'iconKey' => (string) ($location->icon_key ?? ''),
+            'source' => $location->source,
+            'custom' => $location->source !== 'seed',
+            'canEdit' => true,
+            'canDelete' => true,
+            'children' => $children,
+            'subLocations' => $children,
+        ];
+    }
+
+    private function archiveLocationTree(InspectionLocation $location): void
+    {
+        $location->update(['is_active' => false]);
+        InspectionLocation::query()
+            ->where('parent_id', $location->id)
+            ->where('is_active', true)
+            ->get()
+            ->each(fn (InspectionLocation $child) => $this->archiveLocationTree($child));
     }
 
     private function ensureInspectionPermission(Request $request): void

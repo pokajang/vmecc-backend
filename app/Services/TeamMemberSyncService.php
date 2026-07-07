@@ -6,8 +6,6 @@ use App\Models\Team;
 use App\Models\TeamMember;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
-use App\Notifications\TeamAssignmentNotification;
-use App\Notifications\TeamRosterChangedNotification;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Support\Facades\DB;
 
@@ -22,8 +20,7 @@ class TeamMemberSyncService
      *
      * - Upserts a team_members row for every active assignment that has a team_id.
      * - Sets ended_at on rows no longer covered by an active assignment.
-     * - Fires TeamAssignmentNotification to the user on new inserts.
-     * - Fires TeamRosterChangedNotification to IC/AIC of the team on new inserts.
+     * - Emits standardized workflow notifications to the user and team leaders on new inserts.
      */
     public function syncForUser(
         User $user,
@@ -138,16 +135,7 @@ class TeamMemberSyncService
 
         $actor = ['userId' => null, 'name' => 'System', 'email' => ''];
 
-        $emailEnabled = config('mail.workflow_notifications.enabled', false)
-            && (bool) config('mail.workflow_notifications.modules.team', false);
-
-        // Notify the assigned user (optionally suppressed for initial user onboarding flow)
         if ($notifyAssignedUser) {
-            if ($emailEnabled) {
-                $newMember->notify(new TeamAssignmentNotification($team, $roleName));
-            }
-
-            // In-app notification for the assigned user
             $this->workflowNotifications->emit(
                 module: 'team',
                 eventType: 'member_assigned',
@@ -180,23 +168,7 @@ class TeamMemberSyncService
 
         if ($leaders->isNotEmpty()) {
             $leaderUserIds = $leaders->pluck('user_id')->values()->all();
-            $leaderUsers   = User::whereIn('id', $leaderUserIds)->get()->keyBy('id');
 
-            if ($emailEnabled) {
-                $leaders->each(function (TeamMember $leader) use ($team, $newMember, $roleName, $memberCount, $leaderUsers) {
-                    $leaderUser = $leaderUsers->get($leader->user_id);
-                    if ($leaderUser) {
-                        $leaderUser->notify(new TeamRosterChangedNotification(
-                            $team,
-                            $newMember,
-                            $roleName,
-                            $memberCount,
-                        ));
-                    }
-                });
-            }
-
-            // Single in-app notification fanned out to all leaders at once
             $this->workflowNotifications->emit(
                 module: 'team',
                 eventType: 'roster_changed',

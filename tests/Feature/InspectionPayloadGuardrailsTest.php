@@ -151,6 +151,158 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonValidationErrors(['payload.photos']);
     }
 
+    public function test_inspection_report_counts_nested_high_angle_additional_photos_against_photo_limit(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $additionalPhotos = [];
+        for ($i = 0; $i < 11; $i++) {
+            $additionalPhotos[] = [
+                'id' => "high-angle-additional-photo-{$i}",
+                'description' => "high angle additional photo {$i}",
+                'url' => $this->makeImageDataUrl(32),
+            ];
+        }
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-HA-ADDITIONAL-PHOTOS',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'High Angle Rescue Equipment Inspection',
+                'location' => 'Response Kit #1',
+                'mainLocation' => 'Response Kit #1',
+                'highAngleInspectedBy' => 'Inspector Rope',
+                'highAngleInspectionDate' => '2026-06-28',
+                'photos' => [],
+                'highAngleChecks' => [
+                    [
+                        'id' => 'response-kit-1:1',
+                        'rowNumber' => '1',
+                        'mainLocation' => 'Response Kit #1',
+                        'location' => 'N/A',
+                        'subLocation' => 'N/A',
+                        'equipment' => 'Heavy Duty Organizer Bag',
+                        'quantity' => '1',
+                        'condition' => 'Good',
+                        'additionalPhotos' => $additionalPhotos,
+                    ],
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['payload.photos']);
+    }
+
+    public function test_inspection_report_counts_nested_frt_additional_photos_against_photo_limit(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $payload = $this->frtPayload();
+        foreach ($payload['frtDailyChecks'] as &$row) {
+            if (($row['id'] ?? '') === 'daily:fire-truck:91') {
+                $row['additionalPhotos'] = [];
+                for ($i = 0; $i < 11; $i++) {
+                    $row['additionalPhotos'][] = [
+                        'id' => "frt-additional-photo-{$i}",
+                        'description' => "frt additional photo {$i}",
+                        'url' => $this->makeImageDataUrl(32),
+                    ];
+                }
+                break;
+            }
+        }
+        unset($row);
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-FRT-ADDITIONAL-PHOTOS',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['payload.photos']);
+    }
+
+    public function test_inspection_report_and_draft_normalize_repeatable_finding_cards(): void
+    {
+        $user = User::factory()->create(['status' => 'active', 'name' => 'Finding Inspector']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $create = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GEN-FINDING-GUARD',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'General Inspection',
+                'location' => 'Zone 1 > Workshop',
+                'description' => 'General inspection with separate findings.',
+                'photos' => [],
+                'inspectionIssues' => [
+                    [
+                        'id' => 'issue-a',
+                        'description' => 'Blocked emergency exit.',
+                        'action_required' => 'Remove stored items.',
+                        'issue_photos' => [
+                            [
+                                'id' => 'issue-photo-1',
+                                'description' => 'Blocked exit evidence.',
+                                'url' => $this->makeImageDataUrl(32),
+                            ],
+                        ],
+                    ],
+                    [
+                        'description' => '',
+                        'actionRequired' => '',
+                        'photos' => [],
+                    ],
+                ],
+            ],
+        ]);
+
+        $create->assertCreated();
+        $report = Report::query()->where('report_uid', $create->json('data.id'))->firstOrFail();
+        $this->assertCount(1, $report->payload['inspectionIssues'] ?? []);
+        $this->assertSame('Blocked emergency exit.', $report->payload['inspectionIssues'][0]['description'] ?? null);
+        $this->assertSame('Remove stored items.', $report->payload['inspectionIssues'][0]['actionRequired'] ?? null);
+        $this->assertSame(
+            'Blocked exit evidence.',
+            $report->payload['inspectionIssues'][0]['photos'][0]['description'] ?? null,
+        );
+        $this->assertSame($report->payload['inspectionIssues'], $report->payload['issues'] ?? null);
+
+        $draft = $this->postJson('/api/reports/draft', [
+            'mode' => 'new',
+            'report_type' => 'inspection',
+            'payload' => [
+                'incidentType' => 'Health Safety Environment Inspection',
+                'location' => 'Zone 1 > Dock',
+                'description' => 'HSE inspection with separate findings.',
+                'photos' => [],
+                'issues' => [
+                    [
+                        'details' => 'Oil spill near walkway.',
+                        'action_required' => 'Barricade and clean area.',
+                    ],
+                ],
+            ],
+        ]);
+
+        $draft->assertCreated();
+        $storedDraft = ReportDraft::query()->where('user_id', $user->id)->latest('id')->firstOrFail();
+        $this->assertCount(1, $storedDraft->payload['inspectionIssues'] ?? []);
+        $this->assertSame('Oil spill near walkway.', $storedDraft->payload['inspectionIssues'][0]['description'] ?? null);
+        $this->assertSame('Barricade and clean area.', $storedDraft->payload['inspectionIssues'][0]['actionRequired'] ?? null);
+        $this->assertSame($storedDraft->payload['inspectionIssues'], $storedDraft->payload['issues'] ?? null);
+    }
+
     public function test_inspection_report_accepts_structured_checklist_payload(): void
     {
         $user = User::factory()->create(['status' => 'active']);
@@ -899,6 +1051,14 @@ class InspectionPayloadGuardrailsTest extends TestCase
                         'quantity' => '1',
                         'condition' => 'good',
                         'remarks' => '',
+                        'additionalNotes' => 'Stored in upper pouch.',
+                        'additionalPhotos' => [
+                            [
+                                'id' => 'high-angle-additional-photo',
+                                'description' => 'Organizer bag storage photo.',
+                                'url' => $this->makeImageDataUrl(16),
+                            ],
+                        ],
                     ],
                     [
                         'id' => 'response-kit-1:3',
@@ -927,6 +1087,8 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonPath('data.highAngleInspectedBy', $user->name);
         $response->assertJsonPath('data.highAngleInspectionDate', '2026-06-28');
         $response->assertJsonPath('data.highAngleChecks.0.condition', 'Good');
+        $response->assertJsonPath('data.highAngleChecks.0.additionalNotes', 'Stored in upper pouch.');
+        $response->assertJsonPath('data.highAngleChecks.0.additionalPhotos.0.id', 'high-angle-additional-photo');
         $response->assertJsonPath('data.highAngleChecks.1.subLocation', 'Main Compartment');
         $response->assertJsonPath('data.highAngleChecks.1.quantity', '10');
         $response->assertJsonPath('data.highAngleChecks.1.remarks', 'Gate spring is sticking.');
@@ -936,6 +1098,8 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $this->assertSame($user->name, $report->payload['highAngleInspectedBy'] ?? null);
         $this->assertSame('2026-06-28', $report->payload['highAngleInspectionDate'] ?? null);
         $this->assertSame('Good', $report->payload['highAngleChecks'][0]['condition'] ?? null);
+        $this->assertSame('Stored in upper pouch.', $report->payload['highAngleChecks'][0]['additionalNotes'] ?? null);
+        $this->assertSame('high-angle-additional-photo', $report->payload['highAngleChecks'][0]['additionalPhotos'][0]['id'] ?? null);
         $this->assertSame('Main Compartment', $report->payload['highAngleChecks'][1]['subLocation'] ?? null);
         $this->assertSame('10', $report->payload['highAngleChecks'][1]['quantity'] ?? null);
         $this->assertSame('Gate spring is sticking.', $report->payload['highAngleChecks'][1]['remarks'] ?? null);
@@ -969,6 +1133,14 @@ class InspectionPayloadGuardrailsTest extends TestCase
                         'condition' => 'Not Good',
                         'remarks' => 'Outer sheath frayed.',
                         'condition_remarks' => 'Outer sheath frayed.',
+                        'additional_notes' => 'Stored on top shelf.',
+                        'additional_photos' => [
+                            [
+                                'id' => 'high-angle-draft-additional-photo',
+                                'description' => 'Top shelf storage photo.',
+                                'url' => $this->makeImageDataUrl(16),
+                            ],
+                        ],
                         'condition_photos' => [
                             [
                                 'id' => 'high-angle-draft-photo',
@@ -988,6 +1160,8 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonPath('data.payload.highAngleChecks.0.mainLocation', 'Rescue Rope');
         $response->assertJsonPath('data.payload.highAngleChecks.0.remarks', 'Outer sheath frayed.');
         $response->assertJsonPath('data.payload.highAngleChecks.0.conditionRemarks', 'Outer sheath frayed.');
+        $response->assertJsonPath('data.payload.highAngleChecks.0.additionalNotes', 'Stored on top shelf.');
+        $response->assertJsonPath('data.payload.highAngleChecks.0.additionalPhotos.0.id', 'high-angle-draft-additional-photo');
 
         $draft = ReportDraft::query()
             ->where('user_id', $user->id)
@@ -1000,6 +1174,8 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $this->assertSame('Rescue Rope', $draft->payload['highAngleChecks'][0]['mainLocation'] ?? null);
         $this->assertSame('Outer sheath frayed.', $draft->payload['highAngleChecks'][0]['remarks'] ?? null);
         $this->assertSame('Outer sheath frayed.', $draft->payload['highAngleChecks'][0]['conditionRemarks'] ?? null);
+        $this->assertSame('Stored on top shelf.', $draft->payload['highAngleChecks'][0]['additionalNotes'] ?? null);
+        $this->assertSame('high-angle-draft-additional-photo', $draft->payload['highAngleChecks'][0]['additionalPhotos'][0]['id'] ?? null);
         $this->assertCount(1, $draft->payload['highAngleChecks'][0]['conditionPhotos'] ?? []);
         $this->assertArrayNotHasKey('high_angle_checks', $draft->payload);
     }
@@ -1026,9 +1202,13 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $oneOffRows = collect($response->json('data.frtOneOffChecks') ?? [])->keyBy('id');
         $this->assertSame('Checked', $dailyRows->get('daily:fire-truck:56')['status'] ?? null);
         $this->assertSame('123456', $dailyRows->get('daily:fire-truck:91')['readingValue'] ?? null);
+        $this->assertSame('Reading verified with driver.', $dailyRows->get('daily:fire-truck:91')['additionalNotes'] ?? null);
+        $this->assertSame('frt-reading-additional-photo-1', $dailyRows->get('daily:fire-truck:91')['additionalPhotos'][0]['id'] ?? null);
         $this->assertSame('frt-daily-photo-1', $dailyRows->get('daily:fire-truck:90')['photos'][0]['id'] ?? null);
         $this->assertSame('Not Good', $oneOffRows->get('one-off:fire-truck:16')['condition'] ?? null);
         $this->assertSame('Siren mute switch sticking.', $oneOffRows->get('one-off:fire-truck:16')['remarks'] ?? null);
+        $this->assertSame('Retest scheduled after repair.', $oneOffRows->get('one-off:fire-truck:16')['additionalNotes'] ?? null);
+        $this->assertSame('frt-one-off-additional-photo-1', $oneOffRows->get('one-off:fire-truck:16')['additionalPhotos'][0]['id'] ?? null);
         $this->assertSame('frt-one-off-photo-1', $oneOffRows->get('one-off:fire-truck:16')['photos'][0]['id'] ?? null);
 
         $report = Report::query()->where('display_id', 'INS-FRT-DB')->firstOrFail();
@@ -1040,9 +1220,13 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $reportOneOffRows = collect($report->payload['frtOneOffChecks'] ?? [])->keyBy('id');
         $this->assertSame('Checked', $reportDailyRows->get('daily:fire-truck:56')['status'] ?? null);
         $this->assertSame('123456', $reportDailyRows->get('daily:fire-truck:91')['readingValue'] ?? null);
+        $this->assertSame('Reading verified with driver.', $reportDailyRows->get('daily:fire-truck:91')['additionalNotes'] ?? null);
+        $this->assertSame('frt-reading-additional-photo-1', $reportDailyRows->get('daily:fire-truck:91')['additionalPhotos'][0]['id'] ?? null);
         $this->assertSame('frt-daily-photo-1', $reportDailyRows->get('daily:fire-truck:90')['photos'][0]['id'] ?? null);
         $this->assertSame('Not Good', $reportOneOffRows->get('one-off:fire-truck:16')['condition'] ?? null);
         $this->assertSame('Siren mute switch sticking.', $reportOneOffRows->get('one-off:fire-truck:16')['remarks'] ?? null);
+        $this->assertSame('Retest scheduled after repair.', $reportOneOffRows->get('one-off:fire-truck:16')['additionalNotes'] ?? null);
+        $this->assertSame('frt-one-off-additional-photo-1', $reportOneOffRows->get('one-off:fire-truck:16')['additionalPhotos'][0]['id'] ?? null);
         $this->assertSame('frt-one-off-photo-1', $reportOneOffRows->get('one-off:fire-truck:16')['photos'][0]['id'] ?? null);
     }
 
@@ -1065,8 +1249,12 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $draftResponseDailyRows = collect($response->json('data.payload.frtDailyChecks') ?? [])->keyBy('id');
         $draftResponseOneOffRows = collect($response->json('data.payload.frtOneOffChecks') ?? [])->keyBy('id');
         $this->assertSame('123456', $draftResponseDailyRows->get('daily:fire-truck:91')['readingValue'] ?? null);
+        $this->assertSame('Reading verified with driver.', $draftResponseDailyRows->get('daily:fire-truck:91')['additionalNotes'] ?? null);
+        $this->assertSame('frt-reading-additional-photo-1', $draftResponseDailyRows->get('daily:fire-truck:91')['additionalPhotos'][0]['id'] ?? null);
         $this->assertSame('frt-daily-photo-1', $draftResponseDailyRows->get('daily:fire-truck:90')['photos'][0]['id'] ?? null);
         $this->assertSame('Not Good', $draftResponseOneOffRows->get('one-off:fire-truck:16')['condition'] ?? null);
+        $this->assertSame('Retest scheduled after repair.', $draftResponseOneOffRows->get('one-off:fire-truck:16')['additionalNotes'] ?? null);
+        $this->assertSame('frt-one-off-additional-photo-1', $draftResponseOneOffRows->get('one-off:fire-truck:16')['additionalPhotos'][0]['id'] ?? null);
         $this->assertSame('frt-one-off-photo-1', $draftResponseOneOffRows->get('one-off:fire-truck:16')['photos'][0]['id'] ?? null);
 
         $draft = ReportDraft::query()
@@ -1081,8 +1269,12 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $draftDailyRows = collect($draft->payload['frtDailyChecks'] ?? [])->keyBy('id');
         $draftOneOffRows = collect($draft->payload['frtOneOffChecks'] ?? [])->keyBy('id');
         $this->assertSame('123456', $draftDailyRows->get('daily:fire-truck:91')['readingValue'] ?? null);
+        $this->assertSame('Reading verified with driver.', $draftDailyRows->get('daily:fire-truck:91')['additionalNotes'] ?? null);
+        $this->assertSame('frt-reading-additional-photo-1', $draftDailyRows->get('daily:fire-truck:91')['additionalPhotos'][0]['id'] ?? null);
         $this->assertSame('frt-daily-photo-1', $draftDailyRows->get('daily:fire-truck:90')['photos'][0]['id'] ?? null);
         $this->assertSame('Not Good', $draftOneOffRows->get('one-off:fire-truck:16')['condition'] ?? null);
+        $this->assertSame('Retest scheduled after repair.', $draftOneOffRows->get('one-off:fire-truck:16')['additionalNotes'] ?? null);
+        $this->assertSame('frt-one-off-additional-photo-1', $draftOneOffRows->get('one-off:fire-truck:16')['additionalPhotos'][0]['id'] ?? null);
         $this->assertSame('frt-one-off-photo-1', $draftOneOffRows->get('one-off:fire-truck:16')['photos'][0]['id'] ?? null);
         $this->assertArrayNotHasKey('frt_daily_checks', $draft->payload);
         $this->assertArrayNotHasKey('frt_one_off_checks', $draft->payload);
@@ -1560,6 +1752,38 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonValidationErrors(['payload.hydraulicChecks.0.physicalCondition']);
     }
 
+    public function test_inspection_report_rejects_hydraulic_defect_without_photo_evidence(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-HYD-EVIDENCE',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'Hydraulic Rescue Tools Inspection',
+                'location' => 'FRT',
+                'description' => 'Hydraulic payload guardrail',
+                'hydraulicChecks' => [
+                    [
+                        'location' => 'FRT',
+                        'equipment' => 'Hydraulic Pump Motor 1',
+                        'physicalCondition' => 'OK',
+                        'mechanicalCondition' => 'OK',
+                        'noLeakage' => 'OK',
+                        'functionTest' => 'Defect',
+                        'functionTestRemarks' => 'Slow response during test.',
+                    ],
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['payload.hydraulicChecks.0.functionTestPhotos']);
+    }
+
     public function test_inspection_report_rejects_invalid_er_aux_check_payload(): void
     {
         $user = User::factory()->create(['status' => 'active']);
@@ -1585,6 +1809,35 @@ class InspectionPayloadGuardrailsTest extends TestCase
 
         $response->assertStatus(422);
         $response->assertJsonValidationErrors(['payload.erAuxChecks.0.condition']);
+    }
+
+    public function test_inspection_report_rejects_er_aux_defect_without_photo_evidence(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-ERAUX-EVIDENCE',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'ER Aux Equipment Inspection',
+                'location' => 'Store',
+                'erAuxChecks' => [
+                    [
+                        'location' => 'Store',
+                        'equipment' => 'Chainsaw',
+                        'quantity' => '1',
+                        'condition' => 'Defect',
+                        'defectRemarks' => 'Pull cord jammed.',
+                    ],
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['payload.erAuxChecks.0.defectPhotos']);
     }
 
     public function test_inspection_checklist_summary_counts_and_filters_reports(): void
@@ -1784,6 +2037,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
     private function makeImageDataUrl(int $bytes): string
     {
         $binary = str_repeat('A', max(1, $bytes));
+
         return 'data:image/png;base64,'.base64_encode($binary);
     }
 
@@ -1825,6 +2079,17 @@ class InspectionPayloadGuardrailsTest extends TestCase
                         'url' => $this->makeImageDataUrl(128),
                     ]]
                     : [],
+                'additionalNotes' => $row['id'] === 'daily:fire-truck:91'
+                    ? 'Reading verified with driver.'
+                    : '',
+                'additionalPhotos' => $row['id'] === 'daily:fire-truck:91'
+                    ? [[
+                        'id' => 'frt-reading-additional-photo-1',
+                        'fileName' => 'frt-reading-additional-photo.png',
+                        'description' => 'Reading confirmation photo.',
+                        'url' => $this->makeImageDataUrl(128),
+                    ]]
+                    : [],
             ];
         }, FrtDailyReference::dailyRows());
 
@@ -1839,6 +2104,15 @@ class InspectionPayloadGuardrailsTest extends TestCase
                 'equipment' => $row['equipment'],
                 'condition' => $isIssue ? 'Not Good' : 'Good',
                 'remarks' => $isIssue ? 'Siren mute switch sticking.' : '',
+                'additionalNotes' => $isIssue ? 'Retest scheduled after repair.' : '',
+                'additionalPhotos' => $isIssue
+                    ? [[
+                        'id' => 'frt-one-off-additional-photo-1',
+                        'fileName' => 'frt-one-off-additional-photo.png',
+                        'description' => 'Siren panel additional photo.',
+                        'url' => $this->makeImageDataUrl(128),
+                    ]]
+                    : [],
                 'photos' => $isIssue
                     ? [[
                         'id' => 'frt-one-off-photo-1',
@@ -1907,6 +2181,8 @@ class InspectionPayloadGuardrailsTest extends TestCase
                     'reading_value' => $row['readingValue'],
                     'remarks' => $row['remarks'],
                     'photos' => $row['photos'],
+                    'additional_notes' => $row['additionalNotes'],
+                    'additional_photos' => $row['additionalPhotos'],
                 ],
                 $dailyChecks
             ),
@@ -1920,6 +2196,8 @@ class InspectionPayloadGuardrailsTest extends TestCase
                     'condition' => $row['condition'],
                     'remarks' => $row['remarks'],
                     'photos' => $row['photos'],
+                    'additional_notes' => $row['additionalNotes'],
+                    'additional_photos' => $row['additionalPhotos'],
                 ],
                 $oneOffChecks
             ),

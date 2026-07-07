@@ -127,7 +127,28 @@ return [
 
     'workflow_notifications' => [
         'enabled' => env('WORKFLOW_EMAIL_ENABLED', false),
+        'digest_times' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', env('WORKFLOW_DIGEST_TIMES', '06:00,18:00')),
+        ))),
+        'digest_window_hours' => env('WORKFLOW_DIGEST_WINDOW_HOURS', 12),
+        'coalesce_window_hours' => env('WORKFLOW_NOTIFICATION_COALESCE_WINDOW_HOURS', 24),
+        'channel_policies' => [
+            'action_required_review' => env(
+                'WORKFLOW_POLICY_ACTION_REQUIRED_REVIEW',
+                'in_app_plus_immediate_plus_digest_reminder',
+            ),
+            'action_required_approve' => env(
+                'WORKFLOW_POLICY_ACTION_REQUIRED_APPROVE',
+                'in_app_plus_immediate_plus_digest_reminder',
+            ),
+            'final_outcome' => env('WORKFLOW_POLICY_FINAL_OUTCOME', 'in_app_plus_immediate_email'),
+            'fyi_update' => env('WORKFLOW_POLICY_FYI_UPDATE', 'in_app_plus_digest'),
+            'administrative_info' => env('WORKFLOW_POLICY_ADMINISTRATIVE_INFO', 'in_app_plus_digest'),
+        ],
         'modules' => [
+            'report' => env('WORKFLOW_EMAIL_MODULE_REPORT', false),
+            'inspection' => env('WORKFLOW_EMAIL_MODULE_INSPECTION', false),
             'leave' => env('WORKFLOW_EMAIL_MODULE_LEAVE', false),
             'overtime' => env('WORKFLOW_EMAIL_MODULE_OVERTIME', false),
             'salary' => env('WORKFLOW_EMAIL_MODULE_SALARY', false),

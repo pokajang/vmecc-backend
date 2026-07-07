@@ -5,10 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\CustomShift;
 use App\Models\Roster;
 use App\Models\Team;
-use App\Models\User;
-use App\Notifications\RosterPublishedNotification;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
+use App\Services\WorkflowNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -23,6 +22,7 @@ class RosterController extends Controller
 
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
+        private readonly WorkflowNotificationService $workflowNotifications,
     ) {
     }
 
@@ -239,27 +239,46 @@ class RosterController extends Controller
         });
 
         $teamIds = array_keys($teamShifts);
-        $rosterEmailEnabled = config('mail.workflow_notifications.enabled', false)
-            && (bool) config('mail.workflow_notifications.modules.roster', false);
 
-        if (!empty($teamIds) && $rosterEmailEnabled) {
+        if (! empty($teamIds)) {
             $teams = Team::with(['members' => fn ($q) => $q->whereNull('ended_at')])
                 ->whereIn('id', $teamIds)
                 ->get();
             foreach ($teams as $team) {
-                $shifts      = $teamShifts[$team->id] ?? [];
-                $memberUsers = User::whereIn(
-                    'id',
-                    $team->members->pluck('user_id')->filter()->values()->all()
-                )->get()->keyBy('id');
-
-                foreach ($team->members as $member) {
-                    if (! $member->user_id) continue;
-                    $user = $memberUsers->get($member->user_id);
-                    if ($user && $user->email) {
-                        $user->notify(new RosterPublishedNotification($scopeLabel, $shifts, $team->name));
-                    }
+                $shifts = $teamShifts[$team->id] ?? [];
+                $memberIds = $team->members->pluck('user_id')->filter()->values()->all();
+                if (empty($memberIds)) {
+                    continue;
                 }
+
+                $actor = $request->user()
+                    ? [
+                        'userId' => $request->user()->id,
+                        'name' => $request->user()->name,
+                        'email' => $request->user()->email ?? '',
+                    ]
+                    : ['userId' => null, 'name' => 'System', 'email' => ''];
+
+                $this->workflowNotifications->emit(
+                    module: 'roster',
+                    eventType: 'published',
+                    recordType: 'roster',
+                    recordId: (int) $team->id,
+                    recordDisplayId: $scopeLabel,
+                    ownerUserId: (int) $memberIds[0],
+                    actor: $actor,
+                    targetUserIds: $memberIds,
+                    metadata: [
+                        'scopeLabel' => $scopeLabel,
+                        'teamId' => $team->id,
+                        'teamName' => $team->name,
+                        'shiftCount' => count($shifts),
+                        'shifts' => $shifts,
+                        'detailRouteKey' => 'roster',
+                        'status' => 'Published',
+                        'workflowStage' => 'done',
+                    ],
+                );
             }
         }
 

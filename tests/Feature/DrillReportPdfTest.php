@@ -193,6 +193,7 @@ class DrillReportPdfTest extends TestCase
         ] as $text) {
             $this->assertStringContainsString($text, $html);
         }
+        $this->assertStringContainsString('compact-info-grid', $html);
     }
 
     private function grantDrillPermission(User $user): void

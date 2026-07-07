@@ -256,8 +256,6 @@ class SmokeScenarioSeeder extends Seeder
                 'barcode_no' => 'SMOKE-BARCODE-001',
                 'fe_type' => 'ABC',
                 'certification_validity' => now()->addYear()->toDateString(),
-                'certification_validity_raw' => now()->addYear()->format('d/m/Y'),
-                'days_left_to_expire' => 365,
                 'source' => 'smoke',
                 'created_by' => $actor->id,
                 'is_active' => true,

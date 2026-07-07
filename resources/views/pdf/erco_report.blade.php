@@ -158,6 +158,38 @@
         /* ── Bullet list ── */
         .bullet-list { margin: 0; padding-left: 14px; }
         .bullet-list li { font-size: 9.5px; margin-bottom: 2px; line-height: 1.4; }
+        .compact-info-grid {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 4px;
+            table-layout: fixed;
+            margin-top: 4px;
+        }
+        .compact-info-grid td {
+            width: 33.333%;
+            border: 1px solid #e5e7eb;
+            padding: 4px 6px;
+            vertical-align: top;
+            page-break-inside: avoid;
+        }
+        .compact-info-grid td.compact-info-empty {
+            border: none;
+            padding: 0;
+        }
+        .compact-info-title {
+            font-size: 8.4px;
+            font-weight: 700;
+            color: #374151;
+            margin-bottom: 2px;
+            line-height: 1.25;
+        }
+        .compact-info-value {
+            font-size: 9.5px;
+            color: #111827;
+            line-height: 1.35;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
 
         /* ── Pills ── */
         .pill-wrap { margin-top: 2px; }
@@ -347,6 +379,53 @@
     $resources     = is_array($analysis['resourcesMobilised'] ?? null) ? array_filter($analysis['resourcesMobilised']) : [];
     $improvements  = is_array($analysis['improvementOpportunities'] ?? null) ? array_filter($analysis['improvementOpportunities']) : [];
     $photos        = is_array($analysis['photos'] ?? null) ? array_filter($analysis['photos'], fn($p) => !empty($p['url'])) : [];
+    $compactText = function ($value): string {
+        return preg_replace('/\s+/u', ' ', trim((string) $value));
+    };
+    $isCompactList = function (array $items) use ($compactText): bool {
+        if (count($items) === 0) {
+            return false;
+        }
+        foreach ($items as $item) {
+            $raw = trim((string) $item);
+            if ($raw === '' || preg_match('/[\r\n]/', $raw) || mb_strlen($compactText($raw), 'UTF-8') > 80) {
+                return false;
+            }
+        }
+
+        return true;
+    };
+    $renderCompactAnalysis = function (array $blocks) use ($compactText): string {
+        $blocks = array_values(array_filter($blocks, fn ($block) => trim((string) ($block['value'] ?? '')) !== ''));
+        if (count($blocks) === 0) {
+            return '';
+        }
+
+        $html = '<table class="compact-info-grid">';
+        foreach (array_chunk($blocks, 3) as $row) {
+            $html .= '<tr>';
+            foreach ($row as $block) {
+                $html .= '<td>';
+                $html .= '<div class="compact-info-title">'.e((string) ($block['title'] ?? '')).'</div>';
+                $html .= '<div class="compact-info-value">'.e($compactText((string) ($block['value'] ?? ''))).'</div>';
+                $html .= '</td>';
+            }
+            for ($i = count($row); $i < 3; $i++) {
+                $html .= '<td class="compact-info-empty"></td>';
+            }
+            $html .= '</tr>';
+        }
+        $html .= '</table>';
+
+        return $html;
+    };
+    $compactAnalysisBlocks = [];
+    $useCompactAnalysis = $isCompactList($resources) && $isCompactList($strengths) && $isCompactList($improvements);
+    if ($useCompactAnalysis) {
+        $compactAnalysisBlocks[] = ['title' => 'Resources, Equipment & Consumables Mobilised', 'value' => implode('; ', array_map($compactText, $resources))];
+        $compactAnalysisBlocks[] = ['title' => 'Strengths', 'value' => implode('; ', array_map($compactText, $strengths))];
+        $compactAnalysisBlocks[] = ['title' => 'Improvement Opportunities', 'value' => implode('; ', array_map($compactText, $improvements))];
+    }
 
     // Timeline / sign-offs
     $timeline = is_array($record['timeline'] ?? null) ? $record['timeline'] : [];
@@ -524,6 +603,9 @@
     <div class="card-head">Post-Incident Analysis</div>
     <div class="card-body">
 
+        @if ($useCompactAnalysis)
+            {!! $renderCompactAnalysis($compactAnalysisBlocks) !!}
+        @else
         {{-- Resources Mobilised --}}
         @if (count($resources))
         <div class="text-block">
@@ -560,6 +642,7 @@
                 @endforeach
             </ul>
         </div>
+        @endif
         @endif
 
         {{-- Photographs --}}

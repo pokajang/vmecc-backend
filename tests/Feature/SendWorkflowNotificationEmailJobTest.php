@@ -2,135 +2,207 @@
 
 namespace Tests\Feature;
 
-use App\Jobs\SendWorkflowNotificationEmailJob;
+use App\Jobs\SendWorkflowDigestEmailJob;
+use App\Jobs\SendWorkflowImmediateEmailJob;
+use App\Mail\WorkflowDigestNotificationMail;
+use App\Mail\WorkflowImmediateNotificationMail;
 use App\Models\User;
-use App\Models\UserRoleAssignment;
-use App\Models\WorkflowEmailDelivery;
 use App\Models\WorkflowNotification;
-use App\Services\AssignmentAuthorizationService;
-use App\Services\RoleCatalog;
+use App\Models\WorkflowNotificationRecipientState;
+use App\Services\WorkflowNotifications\WorkflowNotificationChannelPolicy;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Spatie\Permission\Models\Role;
+use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
 class SendWorkflowNotificationEmailJobTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_job_sends_email_and_uses_staff_claim_link_for_action_role_recipient(): void
+    public function test_immediate_job_sends_once_and_marks_delivery_state(): void
     {
+        Mail::fake();
         config([
             'mail.workflow_notifications.enabled' => true,
-            'mail.workflow_notifications.modules.salary' => true,
+            'mail.workflow_notifications.modules.report' => true,
         ]);
 
         $owner = User::factory()->create();
-        $reviewer = User::factory()->create();
-        $role = Role::firstOrCreate(['name' => 'Contract Manager', 'guard_name' => 'web']);
-        UserRoleAssignment::create([
-            'user_id' => $reviewer->id,
-            'role_id' => $role->id,
-            'scope_type' => RoleCatalog::GLOBAL,
-            'is_primary' => true,
-        ]);
+        $reviewer = User::factory()->create(['email' => 'reviewer@example.com']);
 
         $notification = WorkflowNotification::create([
-            'module' => 'salary',
+            'module' => 'report',
             'event_type' => 'submitted',
-            'record_type' => 'payroll_claim',
+            'record_type' => 'report',
             'record_id' => 77,
-            'record_display_id' => 'SC-2026-077',
+            'record_display_id' => 'RPT-77',
             'owner_user_id' => $owner->id,
-            'actor_data' => ['name' => 'System'],
+            'actor_data' => ['name' => $owner->name],
             'recipient_user_ids' => [$reviewer->id],
             'action_required' => true,
+            'category' => 'action_required_review',
+            'severity' => 'attention',
+            'channel_policy' => WorkflowNotificationChannelPolicy::IN_APP_PLUS_IMMEDIATE_PLUS_DIGEST_REMINDER,
+            'dedupe_key' => 'report|report|77|action_required_review|review',
             'title' => 'Request submitted',
-            'message' => 'A payroll claim needs action.',
+            'message' => 'A report needs review.',
             'metadata' => [
-                'module' => 'salary',
-                'status' => 'Pending',
+                'status' => 'Submitted',
+                'workflowStage' => 'review',
                 'nextActionRole' => 'Contract Manager',
-                'detailRouteKey' => 'SC-2026-077',
+                'reportType' => 'drill',
+                'reportUid' => 'report-drill-77',
+                'detailRouteKey' => 'report-drill-77',
             ],
             'created_at' => now(),
+            'updated_at' => now(),
         ]);
 
-        $job = new SendWorkflowNotificationEmailJob($notification->id);
-        $job->handle();
+        WorkflowNotificationRecipientState::create([
+            'notification_id' => $notification->id,
+            'user_id' => $reviewer->id,
+            'channel_policy' => WorkflowNotificationChannelPolicy::IN_APP_PLUS_IMMEDIATE_PLUS_DIGEST_REMINDER,
+        ]);
 
-        $delivery = WorkflowEmailDelivery::query()
+        $resolver = app(\App\Services\WorkflowNotifications\WorkflowNotificationLinkResolver::class);
+        $job = app()->make(SendWorkflowImmediateEmailJob::class, [
+            'notificationId' => $notification->id,
+            'userId' => $reviewer->id,
+        ]);
+
+        $job->handle($resolver);
+        $job->handle($resolver);
+
+        Mail::assertSent(WorkflowImmediateNotificationMail::class, 1);
+        $this->assertSame(1, \App\Models\WorkflowEmailDelivery::query()
             ->where('notification_id', $notification->id)
-            ->where('recipient_email', $reviewer->email)
-            ->first();
-
-        $this->assertNotNull($delivery);
-        $this->assertSame('sent', $delivery->status);
-
-        $authorizationService = app(AssignmentAuthorizationService::class);
-        $reflection = new \ReflectionClass(SendWorkflowNotificationEmailJob::class);
-        $method = $reflection->getMethod('buildDeepLink');
-        $method->setAccessible(true);
-
-        $deepLink = $method->invoke(
-            $job,
-            $notification,
-            $reviewer,
-            $authorizationService,
-            'http://localhost:3000',
-            'http://localhost:3000/notifications/workflow',
-        );
-
-        $this->assertSame('http://localhost:3000/staff/salary-claims/claim/SC-2026-077', $deepLink);
+            ->where('user_id', $reviewer->id)
+            ->where('delivery_kind', 'immediate')
+            ->count());
+        $this->assertDatabaseHas('workflow_email_deliveries', [
+            'notification_id' => $notification->id,
+            'user_id' => $reviewer->id,
+            'delivery_kind' => 'immediate',
+            'status' => 'sent',
+        ]);
+        $this->assertNotNull(WorkflowNotificationRecipientState::query()
+            ->where('notification_id', $notification->id)
+            ->where('user_id', $reviewer->id)
+            ->value('emailed_immediate_at'));
     }
 
-    public function test_job_uses_salary_assignment_link_for_assignment_notifications(): void
+    public function test_digest_job_sends_deferred_updates_and_reminders_once_per_window(): void
     {
+        Mail::fake();
         config([
             'mail.workflow_notifications.enabled' => true,
-            'mail.workflow_notifications.modules.salary_assignment' => true,
+            'mail.workflow_notifications.modules.report' => true,
+            'mail.workflow_notifications.modules.roster' => true,
         ]);
 
-        $owner = User::factory()->create();
-        $recipient = User::factory()->create();
+        $recipient = User::factory()->create(['email' => 'digest@example.com']);
+        $windowEnd = now()->startOfHour();
+        $windowStart = $windowEnd->copy()->subHours(12);
 
-        $notification = WorkflowNotification::create([
-            'module' => 'salary',
-            'event_type' => 'updated_salary',
-            'record_type' => 'salary_assignment',
-            'record_id' => 45,
-            'record_display_id' => '45',
-            'owner_user_id' => $owner->id,
+        $deferred = WorkflowNotification::create([
+            'module' => 'roster',
+            'event_type' => 'published',
+            'record_type' => 'roster',
+            'record_id' => 10,
+            'record_display_id' => 'July 2026',
+            'owner_user_id' => $recipient->id,
             'actor_data' => ['name' => 'System'],
             'recipient_user_ids' => [$recipient->id],
             'action_required' => false,
-            'title' => 'Salary assignment updated',
-            'message' => 'A salary assignment has been updated.',
-            'metadata' => [
-                'module' => 'salary',
-                'recordType' => 'salary_assignment',
-                'detailRouteKey' => '45',
-            ],
-            'created_at' => now(),
+            'category' => 'administrative_info',
+            'severity' => 'info',
+            'channel_policy' => WorkflowNotificationChannelPolicy::IN_APP_PLUS_DIGEST,
+            'dedupe_key' => 'roster|roster|10|administrative_info',
+            'title' => 'Roster published',
+            'message' => 'Roster published.',
+            'metadata' => ['detailRouteKey' => 'roster'],
+            'created_at' => $windowStart->copy()->addHour(),
+            'updated_at' => $windowStart->copy()->addHour(),
         ]);
 
-        $job = new SendWorkflowNotificationEmailJob($notification->id);
-        $authorizationService = app(AssignmentAuthorizationService::class);
-        $reflection = new \ReflectionClass(SendWorkflowNotificationEmailJob::class);
-        $method = $reflection->getMethod('buildDeepLink');
-        $method->setAccessible(true);
+        $reminder = WorkflowNotification::create([
+            'module' => 'report',
+            'event_type' => 'submitted',
+            'record_type' => 'report',
+            'record_id' => 11,
+            'record_display_id' => 'RPT-11',
+            'owner_user_id' => $recipient->id,
+            'actor_data' => ['name' => 'System'],
+            'recipient_user_ids' => [$recipient->id],
+            'action_required' => true,
+            'category' => 'action_required_review',
+            'severity' => 'attention',
+            'channel_policy' => WorkflowNotificationChannelPolicy::IN_APP_PLUS_IMMEDIATE_PLUS_DIGEST_REMINDER,
+            'dedupe_key' => 'report|report|11|action_required_review|review',
+            'title' => 'Request submitted',
+            'message' => 'A report needs review.',
+            'metadata' => [
+                'status' => 'Submitted',
+                'workflowStage' => 'review',
+                'nextActionRole' => 'Contract Manager',
+                'reportType' => 'inspection',
+                'reportUid' => 'report-ins-11',
+                'detailRouteKey' => 'report-ins-11',
+            ],
+            'created_at' => $windowStart->copy()->subHour(),
+            'updated_at' => $windowStart->copy()->subHour(),
+        ]);
 
-        $deepLink = $method->invoke(
-            $job,
-            $notification,
-            $recipient,
-            $authorizationService,
-            'http://localhost:3000',
-            'http://localhost:3000/notifications/workflow',
-        );
+        WorkflowNotificationRecipientState::insert([
+            [
+                'notification_id' => $deferred->id,
+                'user_id' => $recipient->id,
+                'channel_policy' => WorkflowNotificationChannelPolicy::IN_APP_PLUS_DIGEST,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'notification_id' => $reminder->id,
+                'user_id' => $recipient->id,
+                'channel_policy' => WorkflowNotificationChannelPolicy::IN_APP_PLUS_IMMEDIATE_PLUS_DIGEST_REMINDER,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
 
-        $this->assertSame(
-            'http://localhost:3000/staff/salary-claims/set-salary?assignmentId=45',
-            $deepLink,
-        );
+        $resolver = app(\App\Services\WorkflowNotifications\WorkflowNotificationLinkResolver::class);
+        $job = app()->make(SendWorkflowDigestEmailJob::class, [
+            'userId' => $recipient->id,
+            'windowStartIso' => $windowStart->toIso8601String(),
+            'windowEndIso' => $windowEnd->toIso8601String(),
+        ]);
+
+        $job->handle($resolver);
+        $job->handle($resolver);
+
+        Mail::assertSent(WorkflowDigestNotificationMail::class, 1);
+        $this->assertSame(2, \App\Models\WorkflowEmailDelivery::query()
+            ->where('user_id', $recipient->id)
+            ->whereIn('delivery_kind', ['digest', 'reminder'])
+            ->count());
+        $this->assertDatabaseHas('workflow_email_deliveries', [
+            'notification_id' => $deferred->id,
+            'user_id' => $recipient->id,
+            'delivery_kind' => 'digest',
+            'status' => 'sent',
+        ]);
+        $this->assertDatabaseHas('workflow_email_deliveries', [
+            'notification_id' => $reminder->id,
+            'user_id' => $recipient->id,
+            'delivery_kind' => 'reminder',
+            'status' => 'sent',
+        ]);
+        $this->assertNotNull(WorkflowNotificationRecipientState::query()
+            ->where('notification_id', $deferred->id)
+            ->where('user_id', $recipient->id)
+            ->value('emailed_digest_at'));
+        $this->assertNotNull(WorkflowNotificationRecipientState::query()
+            ->where('notification_id', $reminder->id)
+            ->where('user_id', $recipient->id)
+            ->value('last_reminder_at'));
     }
 }
