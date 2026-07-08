@@ -76,6 +76,8 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'permis
     Route::patch('feedback-reports/{reportId}', [FeedbackReportController::class, 'update']);
 });
 Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->prefix('stats')->group(function () {
+    Route::get('', [DashboardController::class, 'stats'])
+        ->middleware('permission.assignment:self.dashboard');
     Route::get('payroll', [DashboardController::class, 'payrollStats'])
         ->middleware(['module.enabled:dashboard.payroll', 'permission.assignment:self.dashboard', 'permission.assignment:dashboard.payroll.view']);
     Route::get('overtime', [DashboardController::class, 'overtimeStats'])

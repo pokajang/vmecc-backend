@@ -23,6 +23,11 @@ class DrillReportPdfTest extends TestCase
         ]);
         $this->grantDrillPermission($user);
         $this->actingAs($user);
+        $reviewer = User::factory()->create([
+            'status' => 'active',
+            'name' => 'Drill Incident Commander',
+        ]);
+        $this->grantDrillPermission($reviewer);
 
         $create = $this->postJson('/api/reports', [
             'display_id' => 'DRL-01-28042026',
@@ -43,6 +48,7 @@ class DrillReportPdfTest extends TestCase
         $create->assertCreated();
         $reportUid = (string) $create->json('data.id');
 
+        $this->actingAs($reviewer);
         $review = $this->postJson("/api/reports/{$reportUid}/review", [
             'version' => 1,
             'remarks' => 'Reviewed by safety officer',
@@ -55,6 +61,8 @@ class DrillReportPdfTest extends TestCase
         ]);
         $approve->assertOk();
         $currentVersion = (int) $approve->json('data.version');
+
+        $this->actingAs($user);
 
         $capturedRecord = null;
         $document = Mockery::mock(DomPdfWrapper::class);
@@ -203,7 +211,7 @@ class DrillReportPdfTest extends TestCase
             'guard_name' => 'web',
         ]);
         $role = Role::query()->firstOrCreate([
-            'name' => 'Drill Pdf Tester',
+            'name' => 'Incident Commander',
             'guard_name' => 'web',
         ]);
         if (! $role->hasPermissionTo($permission)) {

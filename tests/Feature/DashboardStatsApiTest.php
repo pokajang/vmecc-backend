@@ -282,6 +282,36 @@ class DashboardStatsApiTest extends TestCase
             ->assertJsonPath('byPersonnel', []);
     }
 
+    public function test_dashboard_stats_batch_returns_requested_authorized_modules(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-06-10 12:00:00'));
+
+        $user = $this->createDashboardUser([
+            'self.dashboard',
+            'dashboard.payroll.view',
+            'dashboard.leave.view',
+        ]);
+        SalaryAssignment::query()->create([
+            'employee_user_id' => $user->id,
+            'status' => 'Active',
+            'effective_from' => '2026-01-01',
+            'basic_salary' => 1,
+            'allowance_total' => 0,
+        ]);
+        $this->actingAs($user);
+
+        $this->getJson('/api/stats?period=this_month&modules=payroll,leave')
+            ->assertOk()
+            ->assertJsonStructure([
+                'payroll' => ['pendingApprovals', 'monthlyTrend'],
+                'leave' => ['pendingApprovals', 'monthlyTrend'],
+            ])
+            ->assertJsonMissingPath('overtime');
+
+        $this->getJson('/api/stats?period=this_month&modules=payroll,overtime')
+            ->assertStatus(403);
+    }
+
     private function createDashboardUser(array $permissions): User
     {
         foreach ($permissions as $permission) {

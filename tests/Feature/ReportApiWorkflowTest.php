@@ -3,7 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use App\Models\UserRoleAssignment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class ReportApiWorkflowTest extends TestCase
@@ -13,6 +16,8 @@ class ReportApiWorkflowTest extends TestCase
     public function test_report_crud_and_transition_workflow(): void
     {
         $user = User::factory()->create(['status' => 'active']);
+        $ic = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($ic, 'Incident Commander', 'reports.erco.view');
         $this->actingAs($user);
 
         $create = $this->postJson('/api/reports', [
@@ -45,6 +50,7 @@ class ReportApiWorkflowTest extends TestCase
         $update->assertJsonPath('data.version', 2);
         $update->assertJsonPath('data.revision', 2);
 
+        $this->actingAs($ic);
         $review = $this->postJson("/api/reports/{$reportUid}/review", [
             'version' => 2,
             'remarks' => 'Reviewed by supervisor',
@@ -65,6 +71,8 @@ class ReportApiWorkflowTest extends TestCase
     public function test_report_reject_requires_remarks_and_version_conflict_is_enforced(): void
     {
         $user = User::factory()->create(['status' => 'active']);
+        $ic = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($ic, 'Incident Commander', 'reports.drill.view');
         $this->actingAs($user);
 
         $create = $this->postJson('/api/reports', [
@@ -79,6 +87,7 @@ class ReportApiWorkflowTest extends TestCase
         $create->assertCreated();
         $reportUid = (string) $create->json('data.id');
 
+        $this->actingAs($ic);
         $this->postJson("/api/reports/{$reportUid}/review", [
             'version' => 1,
             'remarks' => 'Reviewed',
@@ -98,6 +107,7 @@ class ReportApiWorkflowTest extends TestCase
         $reject->assertJsonPath('data.status', 'Rejected');
         $reject->assertJsonPath('data.version', 3);
 
+        $this->actingAs($user);
         $conflict = $this->putJson("/api/reports/{$reportUid}", [
             'version' => 2,
             'status' => 'Submitted',
@@ -137,5 +147,28 @@ class ReportApiWorkflowTest extends TestCase
         $second->assertJsonPath('data.idempotent_replay', true);
 
         $this->assertDatabaseCount('reports', 1);
+    }
+
+    private function assignWorkflowRole(User $user, string $roleName, string $permissionName): void
+    {
+        $permission = Permission::query()->firstOrCreate([
+            'name' => $permissionName,
+            'guard_name' => 'web',
+        ]);
+        $role = Role::query()->firstOrCreate([
+            'name' => $roleName,
+            'guard_name' => 'web',
+        ]);
+        if (! $role->hasPermissionTo($permission)) {
+            $role->givePermissionTo($permission);
+        }
+
+        UserRoleAssignment::query()->create([
+            'user_id' => $user->id,
+            'role_id' => $role->id,
+            'scope_type' => 'global',
+            'team_id' => null,
+            'is_primary' => true,
+        ]);
     }
 }

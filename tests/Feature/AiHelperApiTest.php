@@ -1198,6 +1198,35 @@ MD;
             ->assertJsonPath('data.active', false);
     }
 
+    public function test_system_administrator_can_delete_another_users_markdown_knowledge(): void
+    {
+        config(['ai_helper.rate_limit_per_minute' => 60]);
+        Storage::fake('local');
+        $owner = User::factory()->create(['status' => 'active']);
+        $admin = $this->systemAdministrator();
+
+        $entry = AiHelperKnowledgeEntry::create([
+            'uploaded_by' => $owner->id,
+            'title' => 'Shared Markdown guidance',
+            'content' => 'Operational guidance.',
+            'source_filename' => 'shared-guidance.md',
+            'source_mime' => 'text/markdown',
+            'source_path' => 'ai-helper/knowledge/markdown/'.$owner->id.'/shared-guidance.md',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+            'active' => true,
+        ]);
+        Storage::disk('local')->put($entry->source_path, "# Shared guidance\n\nOperational guidance.");
+
+        $this->actingAs($admin)
+            ->deleteJson("/api/ai-helper/knowledge/{$entry->id}")
+            ->assertOk()
+            ->assertJsonPath('message', 'Knowledge deleted.');
+
+        $this->assertSoftDeleted('ai_helper_knowledge_entries', ['id' => $entry->id]);
+    }
+
     private function pdfExtractionResult(
         string $text,
         int $pageCount = 1,

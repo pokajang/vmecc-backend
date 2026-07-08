@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Report;
 use App\Models\User;
+use App\Models\UserRoleAssignment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -81,12 +82,13 @@ class ReportApiSecurityTest extends TestCase
         $this->postJson("/api/reports/{$reportUid}/review", [
             'version' => 1,
             'remarks' => 'Intruder review attempt',
-        ])->assertStatus(404);
+        ])->assertForbidden();
     }
 
     public function test_invalid_transition_is_rejected(): void
     {
         $user = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($user, 'Incident Commander', 'reports.drill.view');
         $this->actingAs($user);
 
         $created = $this->postJson('/api/reports', [
@@ -109,6 +111,8 @@ class ReportApiSecurityTest extends TestCase
     public function test_owner_can_delete_report_regardless_of_status(): void
     {
         $user = User::factory()->create(['status' => 'active']);
+        $ic = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($ic, 'Incident Commander', 'reports.fitness.view');
         $this->actingAs($user);
 
         $created = $this->postJson('/api/reports', [
@@ -120,6 +124,7 @@ class ReportApiSecurityTest extends TestCase
         $created->assertCreated();
         $reportUid = (string) $created->json('data.id');
 
+        $this->actingAs($ic);
         $this->postJson("/api/reports/{$reportUid}/review", [
             'version' => 1,
             'remarks' => 'Reviewed',
@@ -130,6 +135,7 @@ class ReportApiSecurityTest extends TestCase
             'remarks' => 'Approved',
         ])->assertOk();
 
+        $this->actingAs($user);
         $delete = $this->deleteJson("/api/reports/{$reportUid}");
         $delete->assertNoContent();
     }
@@ -148,5 +154,28 @@ class ReportApiSecurityTest extends TestCase
             $role->givePermissionTo($permission);
         }
         $user->assignRole($role);
+    }
+
+    private function assignWorkflowRole(User $user, string $roleName, string $permissionName): void
+    {
+        $permission = Permission::query()->firstOrCreate([
+            'name' => $permissionName,
+            'guard_name' => 'web',
+        ]);
+        $role = Role::query()->firstOrCreate([
+            'name' => $roleName,
+            'guard_name' => 'web',
+        ]);
+        if (! $role->hasPermissionTo($permission)) {
+            $role->givePermissionTo($permission);
+        }
+
+        UserRoleAssignment::query()->create([
+            'user_id' => $user->id,
+            'role_id' => $role->id,
+            'scope_type' => 'global',
+            'team_id' => null,
+            'is_primary' => true,
+        ]);
     }
 }

@@ -7,7 +7,7 @@ use App\Models\ReportTimelineEntry;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\InspectionCheckRowSyncService;
-use App\Services\InspectionWorkflowService;
+use App\Services\ReportingWorkflowService;
 use App\Services\RoleCatalog;
 use App\Services\WorkflowNotificationService;
 use App\Support\Inspection\FrtDailyReference;
@@ -26,7 +26,7 @@ class ReportController extends Controller
         private readonly WorkflowNotificationService $notificationService,
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly InspectionCheckRowSyncService $inspectionCheckRowSyncService,
-        private readonly InspectionWorkflowService $inspectionWorkflowService,
+        private readonly ReportingWorkflowService $reportingWorkflowService,
     ) {}
 
     private const STATUS_DRAFT = 'Draft';
@@ -40,6 +40,13 @@ class ReportController extends Controller
     private const STATUS_REJECTED = 'Rejected';
 
     private const STATUS_CANCELLED = 'Cancelled';
+
+    private const REPORTING_WORKFLOW_PERMISSIONS = [
+        'inspection' => 'reports.inspection.view',
+        'erco' => 'reports.erco.view',
+        'drill' => 'reports.drill.view',
+        'fitness-test' => 'reports.fitness.view',
+    ];
 
     private const INSPECTION_MAX_PHOTO_COUNT = 10;
 
@@ -128,18 +135,18 @@ class ReportController extends Controller
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
-        $reportTypeFilter = trim((string) $request->input('reportType', ''));
-        if (strtolower($reportTypeFilter) === 'inspection') {
-            $this->ensureInspectionPermission($request);
-        }
+        $reportTypeFilter = $this->normalizeReportType($request->input('reportType', ''));
         $scope = strtolower(trim((string) $request->input('scope', 'mine')));
-        $isAllInspectionScope =
+        if ($scope === 'all' && $this->isManagedReportingWorkflowType($reportTypeFilter)) {
+            $this->ensureReportingModulePermission($request, $reportTypeFilter);
+        }
+        $isAllManagedScope =
             $scope === 'all'
-            && strtolower($reportTypeFilter) === 'inspection'
-            && $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.view');
+            && $this->isManagedReportingWorkflowType($reportTypeFilter)
+            && $this->hasReportingModulePermission($user, $reportTypeFilter);
 
         $query = Report::query()->with('timelineEntries');
-        if (! $isAllInspectionScope) {
+        if (! $isAllManagedScope) {
             $query->where('owner_user_id', $user->id);
         }
 
@@ -149,7 +156,7 @@ class ReportController extends Controller
         if ($request->filled('status') && $request->input('status') !== 'All') {
             $query->where('status', trim((string) $request->input('status')));
         }
-        if (strtolower($reportTypeFilter) === 'inspection') {
+        if ($reportTypeFilter === 'inspection') {
             if ($request->filled('has_checklist')) {
                 $query->where('inspection_has_checklist', filter_var($request->input('has_checklist'), FILTER_VALIDATE_BOOLEAN));
             }
@@ -296,7 +303,9 @@ class ReportController extends Controller
         ]);
 
         $status = (string) ($data['status'] ?? self::STATUS_SUBMITTED);
-        $isInspection = strtolower(trim((string) ($data['report_type'] ?? ''))) === 'inspection';
+        $reportType = $this->normalizeReportType($data['report_type'] ?? '');
+        $isInspection = $reportType === 'inspection';
+        $isManagedWorkflow = $this->isManagedReportingWorkflowType($reportType);
         if ($isInspection) {
             $this->ensureInspectionPermission($request);
             $data['payload'] = $this->applyInspectionSessionInspector(
@@ -312,18 +321,18 @@ class ReportController extends Controller
             ? $this->extractInspectionChecklistIndex((array) $data['payload'])
             : ['ids' => [], 'labels' => [], 'hasChecklist' => false];
         $workflowFields = [];
-        if ($isInspection) {
-            if ($status === self::STATUS_SUBMITTED && ($blockReason = $this->inspectionWorkflowService->submissionBlockReason($user)) !== null) {
+        if ($isManagedWorkflow) {
+            if ($status === self::STATUS_SUBMITTED && ($blockReason = $this->reportingWorkflowService->submissionBlockReason($user, $reportType)) !== null) {
                 throw ValidationException::withMessages(['workflow' => [$blockReason]]);
             }
             $workflowFields = $status === self::STATUS_SUBMITTED
-                ? $this->inspectionWorkflowService->appendSubmissionHistory(
-                    $this->inspectionWorkflowService->buildWorkflowForSubmission($user),
+                ? $this->reportingWorkflowService->appendSubmissionHistory(
+                    $this->reportingWorkflowService->buildWorkflowForSubmission($user, $reportType),
                     $user,
                     'Submitted',
                     (string) ($data['remarks'] ?? ''),
                 )
-                : $this->inspectionWorkflowService->draftWorkflowFields();
+                : $this->reportingWorkflowService->draftWorkflowFields();
         }
 
         if ($submissionKey !== '') {
@@ -348,7 +357,7 @@ class ReportController extends Controller
                     'display_id' => trim((string) $data['display_id']),
                     'submission_key' => $submissionKey !== '' ? $submissionKey : null,
                     'owner_user_id' => $user->id,
-                    'report_type' => trim((string) $data['report_type']),
+                    'report_type' => $this->normalizeReportType($data['report_type'] ?? ''),
                     'status' => $status,
                     'version' => 1,
                     'revision' => 1,
@@ -405,7 +414,7 @@ class ReportController extends Controller
             eventType: $status === self::STATUS_DRAFT ? 'edited' : 'submitted',
             report: $report,
             actor: $user,
-            actionRequired: $isInspection && $status === self::STATUS_SUBMITTED,
+            actionRequired: $isManagedWorkflow && $status === self::STATUS_SUBMITTED,
             remarks: (string) ($data['remarks'] ?? ''),
         );
 
@@ -437,7 +446,9 @@ class ReportController extends Controller
         }
 
         $targetStatus = (string) ($data['status'] ?? self::STATUS_SUBMITTED);
-        $isInspection = strtolower(trim((string) ($report->report_type ?? ''))) === 'inspection';
+        $reportType = $this->normalizeReportType($report->report_type ?? '');
+        $isInspection = $reportType === 'inspection';
+        $isManagedWorkflow = $this->isManagedReportingWorkflowType($reportType);
         $isSystemAdministrator = $this->isSystemAdministrator($user);
         if ($isInspection) {
             $this->ensureInspectionPermission($request);
@@ -463,18 +474,18 @@ class ReportController extends Controller
             ? $this->extractInspectionChecklistIndex((array) $data['payload'])
             : ['ids' => [], 'labels' => [], 'hasChecklist' => false];
         $workflowFields = [];
-        if ($isInspection) {
-            if ($targetStatus === self::STATUS_SUBMITTED && ($blockReason = $this->inspectionWorkflowService->submissionBlockReason($user)) !== null) {
+        if ($isManagedWorkflow) {
+            if ($targetStatus === self::STATUS_SUBMITTED && ($blockReason = $this->reportingWorkflowService->submissionBlockReason($user, $reportType)) !== null) {
                 throw ValidationException::withMessages(['workflow' => [$blockReason]]);
             }
             $workflowFields = $targetStatus === self::STATUS_SUBMITTED
-                ? $this->inspectionWorkflowService->appendSubmissionHistory(
-                    $this->inspectionWorkflowService->buildWorkflowForSubmission($user),
+                ? $this->reportingWorkflowService->appendSubmissionHistory(
+                    $this->reportingWorkflowService->buildWorkflowForSubmission($user, $reportType),
                     $user,
                     'Resubmitted',
                     (string) ($data['remarks'] ?? ''),
                 )
-                : $this->inspectionWorkflowService->draftWorkflowFields();
+                : $this->reportingWorkflowService->draftWorkflowFields();
         }
 
         DB::transaction(function () use ($report, $data, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields) {
@@ -524,7 +535,7 @@ class ReportController extends Controller
             eventType: $targetStatus === self::STATUS_SUBMITTED ? 'submitted' : 'edited',
             report: $report,
             actor: $user,
-            actionRequired: $isInspection && $targetStatus === self::STATUS_SUBMITTED,
+            actionRequired: $isManagedWorkflow && $targetStatus === self::STATUS_SUBMITTED,
             remarks: (string) ($data['remarks'] ?? ''),
         );
 
@@ -616,9 +627,11 @@ class ReportController extends Controller
         $report = Report::query()
             ->where('report_uid', $reportUid)
             ->firstOrFail();
-        $isInspection = strtolower(trim((string) ($report->report_type ?? ''))) === 'inspection';
-        if ($isInspection) {
-            $this->ensureInspectionPermission($request);
+        $reportType = $this->normalizeReportType($report->report_type ?? '');
+        $isInspection = $reportType === 'inspection';
+        $isManagedWorkflow = $this->isManagedReportingWorkflowType($reportType);
+        if ($isManagedWorkflow) {
+            $this->ensureReportingModulePermission($request, $reportType);
         } else {
             if ((int) $report->owner_user_id !== (int) $user->id) {
                 abort(404);
@@ -654,30 +667,30 @@ class ReportController extends Controller
                 'action' => $action,
             ], 409);
         }
-        if ($isInspection) {
+        if ($isManagedWorkflow) {
             $workflowAction = match ($toStatus) {
                 self::STATUS_REVIEWED => 'review',
                 self::STATUS_APPROVED => 'approve',
                 self::STATUS_REJECTED => 'reject',
                 default => '',
             };
-            $authorizationError = $this->inspectionWorkflowService->authorizeAction($report, $user, $workflowAction);
+            $authorizationError = $this->reportingWorkflowService->authorizeAction($report, $user, $workflowAction);
             if ($authorizationError !== null) {
                 return response()->json([
                     'message' => $authorizationError,
-                    'code' => 'INSPECTION_WORKFLOW_FORBIDDEN',
+                    'code' => 'REPORTING_WORKFLOW_FORBIDDEN',
                 ], 403);
             }
         }
 
-        DB::transaction(function () use ($report, $toStatus, $action, $payload, $user, $isInspection) {
+        DB::transaction(function () use ($report, $toStatus, $action, $payload, $user, $isInspection, $isManagedWorkflow) {
             $fromStatus = $report->status;
             $nextVersion = (int) $report->version + 1;
             $update = [
                 'status' => $toStatus,
                 'version' => $nextVersion,
             ];
-            if ($isInspection) {
+            if ($isManagedWorkflow) {
                 $workflowAction = match ($toStatus) {
                     self::STATUS_REVIEWED => 'review',
                     self::STATUS_APPROVED => 'approve',
@@ -686,7 +699,7 @@ class ReportController extends Controller
                 };
                 $update = array_merge(
                     $update,
-                    $this->inspectionWorkflowService->advanceWorkflow(
+                    $this->reportingWorkflowService->advanceWorkflow(
                         $report,
                         $workflowAction,
                         $user,
@@ -734,7 +747,7 @@ class ReportController extends Controller
             eventType: strtolower($action),
             report: $report,
             actor: $user,
-            actionRequired: $isInspection && $toStatus === self::STATUS_REVIEWED,
+            actionRequired: $isManagedWorkflow && $toStatus === self::STATUS_REVIEWED,
             remarks: (string) ($payload['remarks'] ?? ''),
         );
 
@@ -748,7 +761,7 @@ class ReportController extends Controller
             ->where('report_uid', $reportUid)
             ->with('timelineEntries')
             ->firstOrFail();
-        if (strtolower(trim((string) ($report->report_type ?? ''))) === 'inspection') {
+        if ($this->normalizeReportType($report->report_type ?? '') === 'inspection') {
             $this->ensureInspectionPermission($request);
             if ((int) $report->owner_user_id === (int) $user->id || $this->isSystemAdministrator($user)) {
                 return $report;
@@ -770,7 +783,7 @@ class ReportController extends Controller
             ->with('timelineEntries')
             ->firstOrFail();
 
-        if (strtolower(trim((string) ($report->report_type ?? ''))) === 'inspection') {
+        if ($this->normalizeReportType($report->report_type ?? '') === 'inspection') {
             $this->ensureInspectionPermission($request);
             if ((int) $report->owner_user_id === (int) $user->id || $this->isSystemAdministrator($user)) {
                 return $report;
@@ -793,17 +806,17 @@ class ReportController extends Controller
             ->with('timelineEntries')
             ->firstOrFail();
 
-        if (strtolower(trim((string) ($report->report_type ?? ''))) === 'inspection') {
-            $this->ensureInspectionPermission($request);
-
+        $reportType = $this->normalizeReportType($report->report_type ?? '');
+        if ((int) $report->owner_user_id === (int) $user->id) {
             return $report;
         }
 
-        if ((int) $report->owner_user_id !== (int) $user->id) {
-            abort(404);
+        if ($this->isManagedReportingWorkflowType($reportType)) {
+            $this->ensureReportingModulePermission($request, $reportType);
+            return $report;
         }
 
-        return $report;
+        abort(404);
     }
 
     private function appendTimeline(
@@ -893,34 +906,34 @@ class ReportController extends Controller
 
     private function isInspectionReport(Report $report): bool
     {
-        return strtolower(trim((string) ($report->report_type ?? ''))) === 'inspection';
+        return $this->normalizeReportType($report->report_type ?? '') === 'inspection';
     }
 
-    private function effectiveInspectionWorkflow(Report $report): array
+    private function effectiveReportingWorkflow(Report $report): array
     {
-        return $this->isInspectionReport($report)
-            ? $this->inspectionWorkflowService->effectiveWorkflow($report)
+        return $this->isManagedReportingWorkflowType($report->report_type ?? '')
+            ? $this->reportingWorkflowService->effectiveWorkflow($report)
             : [];
     }
 
     private function formatWorkflowStage(Report $report): ?string
     {
-        return $this->effectiveInspectionWorkflow($report)['workflow_stage'] ?? $report->workflow_stage;
+        return $this->effectiveReportingWorkflow($report)['workflow_stage'] ?? $report->workflow_stage;
     }
 
     private function formatWorkflowSnapshot(Report $report): array
     {
-        return $this->effectiveInspectionWorkflow($report)['workflow_snapshot'] ?? (is_array($report->workflow_snapshot) ? $report->workflow_snapshot : []);
+        return $this->effectiveReportingWorkflow($report)['workflow_snapshot'] ?? (is_array($report->workflow_snapshot) ? $report->workflow_snapshot : []);
     }
 
     private function formatNextActionRole(Report $report): ?string
     {
-        return $this->effectiveInspectionWorkflow($report)['next_action_role'] ?? $report->next_action_role;
+        return $this->effectiveReportingWorkflow($report)['next_action_role'] ?? $report->next_action_role;
     }
 
     private function formatScopeTeamId(Report $report): ?int
     {
-        $teamId = $this->effectiveInspectionWorkflow($report)['scope_team_id'] ?? $report->scope_team_id;
+        $teamId = $this->effectiveReportingWorkflow($report)['scope_team_id'] ?? $report->scope_team_id;
 
         return $teamId !== null ? (int) $teamId : null;
     }
@@ -929,8 +942,10 @@ class ReportController extends Controller
     {
         $user = request()?->user();
 
-        return $this->isInspectionReport($report) && $user
-            ? $this->inspectionWorkflowService->canReview($report, $user)
+        return $this->isManagedReportingWorkflowType($report->report_type ?? '')
+            && $user
+            && $this->hasReportingModulePermission($user, (string) $report->report_type)
+            ? $this->reportingWorkflowService->canReview($report, $user)
             : false;
     }
 
@@ -938,8 +953,10 @@ class ReportController extends Controller
     {
         $user = request()?->user();
 
-        return $this->isInspectionReport($report) && $user
-            ? $this->inspectionWorkflowService->canApprove($report, $user)
+        return $this->isManagedReportingWorkflowType($report->report_type ?? '')
+            && $user
+            && $this->hasReportingModulePermission($user, (string) $report->report_type)
+            ? $this->reportingWorkflowService->canApprove($report, $user)
             : false;
     }
 
@@ -947,8 +964,10 @@ class ReportController extends Controller
     {
         $user = request()?->user();
 
-        return $this->isInspectionReport($report) && $user
-            ? $this->inspectionWorkflowService->canReject($report, $user)
+        return $this->isManagedReportingWorkflowType($report->report_type ?? '')
+            && $user
+            && $this->hasReportingModulePermission($user, (string) $report->report_type)
+            ? $this->reportingWorkflowService->canReject($report, $user)
             : false;
     }
 
@@ -985,13 +1004,13 @@ class ReportController extends Controller
         $nextActionRole = null;
         $scopeTeamId = null;
 
-        if ($this->isInspectionReport($report)) {
-            $workflow = $this->inspectionWorkflowService->effectiveWorkflow($report);
+        if ($this->isManagedReportingWorkflowType($report->report_type ?? '')) {
+            $workflow = $this->reportingWorkflowService->effectiveWorkflow($report);
             $workflowStage = $workflow['workflow_stage'] ?? $workflowStage;
             $nextActionRole = $workflow['next_action_role'] ?? null;
             $scopeTeamId = $workflow['scope_team_id'] ?? null;
             if ($actionRequired) {
-                $targetUserIds = $this->inspectionWorkflowService->recipientUserIdsForNextAction($report);
+                $targetUserIds = $this->reportingWorkflowService->recipientUserIdsForNextAction($report);
                 $excludeOwner = true;
             } elseif (in_array($eventType, ['approved', 'rejected'], true)) {
                 $targetUserIds = [(int) $report->owner_user_id];
@@ -1044,10 +1063,39 @@ class ReportController extends Controller
 
     private function ensureInspectionPermission(Request $request): void
     {
+        $this->ensureReportingModulePermission($request, 'inspection');
+    }
+
+    private function ensureReportingModulePermission(Request $request, string $reportType): void
+    {
         $user = $request->user();
-        if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.view')) {
+        if (! $user || ! $this->hasReportingModulePermission($user, $reportType)) {
             abort(403, 'Forbidden');
         }
+    }
+
+    private function hasReportingModulePermission(mixed $user, string $reportType): bool
+    {
+        if (! $user) {
+            return false;
+        }
+
+        $permission = self::REPORTING_WORKFLOW_PERMISSIONS[$this->normalizeReportType($reportType)] ?? null;
+        if (! $permission) {
+            return false;
+        }
+
+        return $this->authorizationService->hasPermission($user, "reports.manage|{$permission}");
+    }
+
+    private function isManagedReportingWorkflowType(?string $reportType): bool
+    {
+        return $this->reportingWorkflowService->isManagedModule($this->normalizeReportType($reportType));
+    }
+
+    private function normalizeReportType(mixed $reportType): string
+    {
+        return strtolower(trim((string) $reportType));
     }
 
     private function isSystemAdministrator(mixed $user): bool

@@ -557,12 +557,9 @@ class AiHelperController extends Controller
     public function destroyKnowledge(Request $request, int $knowledgeId): JsonResponse
     {
         try {
-            $entry = AiHelperKnowledgeEntry::query()
-                ->where('uploaded_by', $request->user()->id)
-                ->where('id', $knowledgeId)
-                ->first();
+            $entry = AiHelperKnowledgeEntry::query()->find($knowledgeId);
 
-            if (! $entry) {
+            if (! $entry || ! $this->authorization->canManageKnowledge($request->user(), $entry)) {
                 return response()->json([
                     'message' => 'Knowledge entry not found.',
                     'code' => 'AI_HELPER_KNOWLEDGE_NOT_FOUND',

@@ -23,6 +23,11 @@ class ErcoReportPdfTest extends TestCase
         ]);
         $this->grantErcoPermission($user);
         $this->actingAs($user);
+        $reviewer = User::factory()->create([
+            'status' => 'active',
+            'name' => 'ERCO Incident Commander',
+        ]);
+        $this->grantErcoPermission($reviewer);
 
         $create = $this->postJson('/api/reports', [
             'display_id' => 'ERCO-02-28042026',
@@ -43,6 +48,7 @@ class ErcoReportPdfTest extends TestCase
         $create->assertCreated();
         $reportUid = (string) $create->json('data.id');
 
+        $this->actingAs($reviewer);
         $review = $this->postJson("/api/reports/{$reportUid}/review", [
             'version' => 1,
             'remarks' => 'Reviewed by supervisor',
@@ -55,6 +61,8 @@ class ErcoReportPdfTest extends TestCase
         ]);
         $approve->assertOk();
         $currentVersion = (int) $approve->json('data.version');
+
+        $this->actingAs($user);
 
         $capturedRecord = null;
         $document = Mockery::mock(DomPdfWrapper::class);
@@ -252,7 +260,7 @@ class ErcoReportPdfTest extends TestCase
             'guard_name' => 'web',
         ]);
         $role = Role::query()->firstOrCreate([
-            'name' => 'Erco Pdf Tester',
+            'name' => 'Incident Commander',
             'guard_name' => 'web',
         ]);
         if (! $role->hasPermissionTo($permission)) {
