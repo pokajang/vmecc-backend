@@ -19,6 +19,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -416,6 +417,7 @@ class InspectionSessionController extends Controller
         $session = $this->findReadableSession($request, $sessionUid);
         $user = $request->user();
         $submissionKey = $this->text($request->input('submission_key', ''));
+        $submittedAt = $this->submittedAtFromRequest($request);
 
         if ($submissionKey !== '') {
             $existing = Report::query()
@@ -456,8 +458,9 @@ class InspectionSessionController extends Controller
             ]);
         }
 
-        $report = DB::transaction(function () use ($session, $completedResults, $request, $user): Report {
-            $payload = $this->compileSessionReportPayload($session, $completedResults);
+        $report = DB::transaction(function () use ($session, $completedResults, $request, $user, $submittedAt): Report {
+            $payload = $this->compileSessionReportPayload($session, $completedResults, $submittedAt);
+            $storedSubmittedAt = $submittedAt->copy()->setTimezone(config('app.timezone', 'UTC'));
             $workflowFields = $this->inspectionWorkflowService->appendSubmissionHistory(
                 $this->inspectionWorkflowService->buildWorkflowForSubmission($user),
                 $user,
@@ -477,7 +480,7 @@ class InspectionSessionController extends Controller
                 'inspection_checklist_item_ids' => [],
                 'inspection_checklist_item_labels' => [],
                 'inspection_has_checklist' => true,
-                'submitted_at' => now(),
+                'submitted_at' => $storedSubmittedAt,
             ] + $workflowFields);
 
             ReportTimelineEntry::query()->create([
@@ -496,7 +499,7 @@ class InspectionSessionController extends Controller
                 'status' => 'submitted',
                 'submitted_by_user_id' => $user->id,
                 'submitted_report_uid' => $report->report_uid,
-                'submitted_at' => now(),
+                'submitted_at' => $storedSubmittedAt,
                 'version' => ((int) $session->version) + 1,
             ]);
             $this->recordEvent($session, null, 'session.submitted', $request, [
@@ -706,7 +709,27 @@ class InspectionSessionController extends Controller
         return in_array(strtolower(trim($status)), ['not good', 'no', 'not operational'], true);
     }
 
-    private function compileSessionReportPayload(InspectionSession $session, $completedResults): array
+    private function submittedAtFromRequest(Request $request): Carbon
+    {
+        $value = $this->text(
+            $request->input('submitted_at', $request->input('submittedAt', ''))
+                ?: $request->input('inspected_at', $request->input('inspectedAt', ''))
+        );
+
+        if ($value !== '') {
+            try {
+                return Carbon::parse($value);
+            } catch (\Throwable) {
+                throw ValidationException::withMessages([
+                    'submitted_at' => ['Submitted timestamp must be a valid date and time.'],
+                ]);
+            }
+        }
+
+        return now();
+    }
+
+    private function compileSessionReportPayload(InspectionSession $session, $completedResults, Carbon $submittedAt): array
     {
         $checks = $completedResults
             ->map(fn (InspectionExtinguisherResult $result): array => array_merge($result->check_payload, [
@@ -727,7 +750,8 @@ class InspectionSessionController extends Controller
 
         return [
             'inspectionSessionUid' => $session->session_uid,
-            'compiledAt' => now()->toIso8601String(),
+            'compiledAt' => $submittedAt->toIso8601String(),
+            'inspectedAt' => $submittedAt->toIso8601String(),
             'incidentType' => self::FIRE_EXTINGUISHER_TYPE,
             'inspectionType' => self::FIRE_EXTINGUISHER_TYPE,
             'location' => $location,
@@ -736,7 +760,7 @@ class InspectionSessionController extends Controller
             'mainLocation' => $mainLocation,
             'subLocation' => '',
             'fireExtinguisherInspectedBy' => $session->startedBy?->name ?? '',
-            'fireExtinguisherInspectionDate' => now()->toDateString(),
+            'fireExtinguisherInspectionDate' => $submittedAt->toDateString(),
             'description' => sprintf(
                 'Fire extinguisher inspection session %s. %d extinguisher(s) checked.',
                 $session->session_uid,
