@@ -7,6 +7,7 @@ use App\Models\ReportDraft;
 use App\Models\User;
 use App\Support\Inspection\FrtDailyReference;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -2061,6 +2062,62 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $conflict->assertStatus(409);
         $conflict->assertJsonPath('code', 'REPORT_VERSION_CONFLICT');
         $conflict->assertJsonPath('currentReport.description', 'Server changed');
+    }
+
+    public function test_inspection_report_create_and_update_preserve_client_submitted_timestamp(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $createdAt = Carbon::parse('2026-07-08T21:07:00+08:00');
+        $updatedAt = Carbon::parse('2026-07-08T21:15:00+08:00');
+
+        $create = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-TIMESTAMP',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'Routine Inspection',
+                'location' => 'Zone Timestamp',
+                'description' => 'Client timestamp should be preserved.',
+                'submittedAt' => $createdAt->toIso8601String(),
+                'photos' => [
+                    [
+                        'id' => 'photo-1',
+                        'description' => 'ok',
+                        'url' => $this->makeImageDataUrl(16),
+                    ],
+                ],
+            ],
+        ]);
+        $create->assertCreated();
+        $reportUid = (string) $create->json('data.id');
+        $createdReport = Report::query()->where('report_uid', $reportUid)->firstOrFail();
+        $this->assertTrue($createdReport->submitted_at->equalTo($createdAt));
+        $this->assertTrue(Carbon::parse((string) $create->json('data.submittedAt'))->equalTo($createdAt));
+
+        $update = $this->putJson("/api/reports/{$reportUid}", [
+            'version' => 1,
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'Routine Inspection',
+                'location' => 'Zone Timestamp',
+                'description' => 'Client timestamp should still be preserved.',
+                'submittedAt' => $updatedAt->toIso8601String(),
+                'photos' => [
+                    [
+                        'id' => 'photo-1',
+                        'description' => 'ok',
+                        'url' => $this->makeImageDataUrl(16),
+                    ],
+                ],
+            ],
+        ]);
+        $update->assertOk();
+        $updatedReport = $createdReport->refresh();
+        $this->assertTrue($updatedReport->submitted_at->equalTo($updatedAt));
+        $this->assertTrue(Carbon::parse((string) $update->json('data.submittedAt'))->equalTo($updatedAt));
     }
 
     public function test_inspection_report_rejects_non_data_url_photo(): void

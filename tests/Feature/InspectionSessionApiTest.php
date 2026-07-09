@@ -10,6 +10,7 @@ use App\Models\Report;
 use App\Models\User;
 use App\Models\WorkflowNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -476,8 +477,10 @@ class InspectionSessionApiTest extends TestCase
             )->assertOk();
         }
 
+        $clientSubmittedAt = Carbon::parse('2026-07-08T21:07:00+08:00');
         $submit = $this->actingAs($user)->postJson("/api/inspection/sessions/{$sessionUid}/submit", [
             'display_id' => 'INS-FE-SESSION-001',
+            'submitted_at' => $clientSubmittedAt->toIso8601String(),
         ]);
 
         $submit->assertCreated();
@@ -486,7 +489,18 @@ class InspectionSessionApiTest extends TestCase
         $this->assertSame($sessionUid, $report->payload['inspectionSessionUid']);
         $this->assertSame('', $report->payload['reportRemarks'] ?? null);
         $this->assertCount(2, $report->payload['fireExtinguisherChecks']);
+        $this->assertTrue($report->submitted_at->equalTo($clientSubmittedAt));
+        $this->assertTrue(Carbon::parse($report->payload['compiledAt'])->equalTo($clientSubmittedAt));
+        $this->assertTrue(Carbon::parse($report->payload['inspectedAt'])->equalTo($clientSubmittedAt));
+        $this->assertSame('2026-07-08', $report->payload['fireExtinguisherInspectionDate']);
         $this->assertSame('submitted', InspectionSession::query()->where('session_uid', $sessionUid)->value('status'));
+        $this->assertTrue(
+            InspectionSession::query()
+                ->where('session_uid', $sessionUid)
+                ->firstOrFail()
+                ->submitted_at
+                ->equalTo($clientSubmittedAt)
+        );
         $this->assertDatabaseHas('workflow_notifications', [
             'module' => 'report',
             'event_type' => 'submitted',

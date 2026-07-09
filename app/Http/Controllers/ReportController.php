@@ -217,6 +217,10 @@ class ReportController extends Controller
             'payload' => ['required', 'array'],
             'status' => ['nullable', 'string', 'in:Draft,Submitted'],
             'remarks' => ['nullable', 'string', 'max:2000'],
+            'submitted_at' => ['nullable', 'string'],
+            'submittedAt' => ['nullable', 'string'],
+            'inspected_at' => ['nullable', 'string'],
+            'inspectedAt' => ['nullable', 'string'],
         ]);
 
         $status = (string) ($data['status'] ?? self::STATUS_SUBMITTED);
@@ -267,8 +271,12 @@ class ReportController extends Controller
             }
         }
 
+        $submittedAt = $status === self::STATUS_SUBMITTED
+            ? $this->submittedAtForReportPayload($data, $isInspection)
+            : null;
+
         try {
-            $report = DB::transaction(function () use ($data, $status, $action, $submissionKey, $user, $checklistIndex, $isInspection, $workflowFields) {
+            $report = DB::transaction(function () use ($data, $status, $action, $submissionKey, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt) {
                 $report = Report::create([
                     'report_uid' => trim((string) ($data['report_uid'] ?? Str::uuid()->toString())),
                     'display_id' => trim((string) $data['display_id']),
@@ -282,7 +290,7 @@ class ReportController extends Controller
                     'inspection_checklist_item_ids' => $checklistIndex['ids'],
                     'inspection_checklist_item_labels' => $checklistIndex['labels'],
                     'inspection_has_checklist' => $checklistIndex['hasChecklist'],
-                    'submitted_at' => $status === self::STATUS_SUBMITTED ? now() : null,
+                    'submitted_at' => $submittedAt,
                 ] + $workflowFields);
 
                 $this->appendTimeline(
@@ -351,6 +359,10 @@ class ReportController extends Controller
             'remarks' => ['nullable', 'string', 'max:2000'],
             'version' => ['required', 'integer', 'min:1'],
             'status' => ['nullable', 'string', 'in:Submitted,Draft'],
+            'submitted_at' => ['nullable', 'string'],
+            'submittedAt' => ['nullable', 'string'],
+            'inspected_at' => ['nullable', 'string'],
+            'inspectedAt' => ['nullable', 'string'],
         ]);
 
         if ((int) $data['version'] !== (int) $report->version) {
@@ -405,7 +417,11 @@ class ReportController extends Controller
                 : $this->reportingWorkflowService->draftWorkflowFields();
         }
 
-        DB::transaction(function () use ($report, $data, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields) {
+        $submittedAt = $targetStatus === self::STATUS_SUBMITTED
+            ? $this->submittedAtForReportPayload($data, $isInspection)
+            : $report->submitted_at;
+
+        DB::transaction(function () use ($report, $data, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt) {
             $fromStatus = $report->status;
             $report->update([
                 'payload' => $data['payload'],
@@ -415,7 +431,7 @@ class ReportController extends Controller
                 'status' => $targetStatus,
                 'revision' => $nextRevision,
                 'version' => $nextVersion,
-                'submitted_at' => $targetStatus === self::STATUS_SUBMITTED ? now() : $report->submitted_at,
+                'submitted_at' => $submittedAt,
                 'reviewed_at' => null,
                 'approved_at' => null,
                 'rejected_at' => null,
@@ -1127,5 +1143,40 @@ class ReportController extends Controller
         $timestamp = $report->submitted_at ?: ($report->updated_at ?: $report->created_at);
 
         return $timestamp instanceof Carbon ? $timestamp->toIso8601String() : null;
+    }
+
+    private function submittedAtForReportPayload(array $data, bool $isInspection): Carbon
+    {
+        if (! $isInspection) {
+            return now();
+        }
+
+        $payload = is_array($data['payload'] ?? null) ? $data['payload'] : [];
+        $candidates = [
+            $data['submitted_at'] ?? null,
+            $data['submittedAt'] ?? null,
+            $payload['submittedAt'] ?? null,
+            $payload['submitted_at'] ?? null,
+            $data['inspected_at'] ?? null,
+            $data['inspectedAt'] ?? null,
+            $payload['inspectedAt'] ?? null,
+            $payload['inspected_at'] ?? null,
+        ];
+
+        foreach ($candidates as $candidate) {
+            $value = trim((string) ($candidate ?? ''));
+            if ($value === '') {
+                continue;
+            }
+            try {
+                return Carbon::parse($value)->setTimezone(config('app.timezone', 'UTC'));
+            } catch (\Throwable) {
+                throw ValidationException::withMessages([
+                    'submitted_at' => ['Submitted timestamp must be a valid date and time.'],
+                ]);
+            }
+        }
+
+        return now();
     }
 }
