@@ -742,6 +742,7 @@ class InspectionSessionController extends Controller
                 $session->session_uid,
                 count($checks),
             ),
+            'reportRemarks' => '',
             'photos' => [],
             'fireExtinguisherChecks' => $checks,
             'checklist' => $this->compiledChecklist($checks),

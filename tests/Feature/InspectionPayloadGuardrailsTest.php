@@ -244,6 +244,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
                 'incidentType' => 'General Inspection',
                 'location' => 'Zone 1 > Workshop',
                 'description' => 'General inspection with separate findings.',
+                'reportRemarks' => 'Whole workshop access was limited after 1600.',
                 'photos' => [],
                 'inspectionIssues' => [
                     [
@@ -269,6 +270,8 @@ class InspectionPayloadGuardrailsTest extends TestCase
 
         $create->assertCreated();
         $report = Report::query()->where('report_uid', $create->json('data.id'))->firstOrFail();
+        $this->assertSame('Whole workshop access was limited after 1600.', $report->payload['reportRemarks'] ?? null);
+        $this->assertArrayNotHasKey('report_remarks', $report->payload);
         $this->assertCount(1, $report->payload['inspectionIssues'] ?? []);
         $this->assertSame('Blocked emergency exit.', $report->payload['inspectionIssues'][0]['description'] ?? null);
         $this->assertSame('Remove stored items.', $report->payload['inspectionIssues'][0]['actionRequired'] ?? null);
@@ -285,6 +288,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
                 'incidentType' => 'Health Safety Environment Inspection',
                 'location' => 'Zone 1 > Dock',
                 'description' => 'HSE inspection with separate findings.',
+                'report_remarks' => 'Dock inspection paused during vessel movement.',
                 'photos' => [],
                 'issues' => [
                     [
@@ -297,10 +301,89 @@ class InspectionPayloadGuardrailsTest extends TestCase
 
         $draft->assertCreated();
         $storedDraft = ReportDraft::query()->where('user_id', $user->id)->latest('id')->firstOrFail();
+        $this->assertSame('Dock inspection paused during vessel movement.', $storedDraft->payload['reportRemarks'] ?? null);
+        $this->assertArrayNotHasKey('report_remarks', $storedDraft->payload);
         $this->assertCount(1, $storedDraft->payload['inspectionIssues'] ?? []);
         $this->assertSame('Oil spill near walkway.', $storedDraft->payload['inspectionIssues'][0]['description'] ?? null);
         $this->assertSame('Barricade and clean area.', $storedDraft->payload['inspectionIssues'][0]['actionRequired'] ?? null);
         $this->assertSame($storedDraft->payload['inspectionIssues'], $storedDraft->payload['issues'] ?? null);
+    }
+
+    public function test_inspection_report_and_draft_reject_oversized_report_remarks(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+        $remarks = str_repeat('A', 2001);
+
+        $create = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-REPORT-REMARKS-LONG',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'Routine Inspection',
+                'location' => 'Zone Remarks',
+                'description' => 'Report remarks guardrail.',
+                'reportRemarks' => $remarks,
+                'photos' => [],
+            ],
+        ]);
+
+        $create->assertStatus(422);
+        $create->assertJsonValidationErrors(['payload.reportRemarks']);
+
+        $draft = $this->postJson('/api/reports/draft', [
+            'mode' => 'new',
+            'report_type' => 'inspection',
+            'payload' => [
+                'incidentType' => 'Routine Inspection',
+                'location' => 'Zone Remarks',
+                'description' => 'Draft remarks guardrail.',
+                'report_remarks' => $remarks,
+                'photos' => [],
+            ],
+        ]);
+
+        $draft->assertStatus(422);
+        $draft->assertJsonValidationErrors(['payload.reportRemarks']);
+    }
+
+    public function test_inspection_report_and_draft_reject_non_text_report_remarks(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $create = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-REPORT-REMARKS-NON-TEXT',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'Routine Inspection',
+                'location' => 'Zone Remarks',
+                'description' => 'Report remarks guardrail.',
+                'reportRemarks' => ['not' => 'text'],
+                'photos' => [],
+            ],
+        ]);
+
+        $create->assertStatus(422);
+        $create->assertJsonValidationErrors(['payload.reportRemarks']);
+
+        $draft = $this->postJson('/api/reports/draft', [
+            'mode' => 'new',
+            'report_type' => 'inspection',
+            'payload' => [
+                'incidentType' => 'Routine Inspection',
+                'location' => 'Zone Remarks',
+                'description' => 'Draft remarks guardrail.',
+                'report_remarks' => ['not' => 'text'],
+                'photos' => [],
+            ],
+        ]);
+
+        $draft->assertStatus(422);
+        $draft->assertJsonValidationErrors(['payload.reportRemarks']);
     }
 
     public function test_inspection_report_accepts_structured_checklist_payload(): void

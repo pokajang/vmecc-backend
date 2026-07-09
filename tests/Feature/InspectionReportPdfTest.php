@@ -152,6 +152,7 @@ class InspectionReportPdfTest extends TestCase
             'incidentType' => 'Housekeeping 5S Inspection',
             'location' => 'Warehouse Block A',
             'description' => 'Housekeeping inspection found minor labelling gaps.',
+            'reportRemarks' => 'Additional report remark for the full warehouse.',
             'submittedBy' => 'Inspector User',
             'submittedByRole' => 'Tactical Response Team',
             'submittedByRoleCode' => 'TRT',
@@ -236,6 +237,8 @@ class InspectionReportPdfTest extends TestCase
             'Housekeeping 5S Inspection',
             'Warehouse Block A',
             'Housekeeping inspection found minor labelling gaps.',
+            'Additional report remarks',
+            'Additional report remark for the full warehouse.',
             'Label on aisle rack requires replacement.',
             'Area clean',
             'Inspector User',
@@ -259,6 +262,24 @@ class InspectionReportPdfTest extends TestCase
         ] as $text) {
             $this->assertStringNotContainsString($text, $html);
         }
+    }
+
+    public function test_pdf_template_omits_empty_additional_report_remarks(): void
+    {
+        $html = view('pdf.inspection_report', [
+            'record' => [
+                'displayId' => 'INS-NO-REPORT-REMARKS',
+                'status' => 'Submitted',
+                'incidentType' => 'Routine Inspection',
+                'location' => 'Main Yard',
+                'description' => 'Routine inspection summary.',
+                'reportRemarks' => '',
+                'photos' => [],
+            ],
+        ])->render();
+
+        $this->assertStringContainsString('Routine inspection summary.', $html);
+        $this->assertStringNotContainsString('Additional report remarks', $html);
     }
 
     public function test_pdf_template_does_not_render_sections_from_other_inspection_forms(): void

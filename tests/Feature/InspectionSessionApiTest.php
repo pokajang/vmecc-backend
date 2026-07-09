@@ -484,6 +484,7 @@ class InspectionSessionApiTest extends TestCase
         $this->assertSame(1, Report::query()->where('report_type', 'inspection')->count());
         $report = Report::query()->where('display_id', 'INS-FE-SESSION-001')->firstOrFail();
         $this->assertSame($sessionUid, $report->payload['inspectionSessionUid']);
+        $this->assertSame('', $report->payload['reportRemarks'] ?? null);
         $this->assertCount(2, $report->payload['fireExtinguisherChecks']);
         $this->assertSame('submitted', InspectionSession::query()->where('session_uid', $sessionUid)->value('status'));
         $this->assertDatabaseHas('workflow_notifications', [

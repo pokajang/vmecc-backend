@@ -275,6 +275,7 @@
     $inspectionType = trim((string) ($record['incidentType'] ?? $record['inspectionType'] ?? $record['inspection_type'] ?? ''));
     $location = trim((string) ($record['location'] ?? $record['selectedLocation'] ?? ''));
     $description = (string) ($record['description'] ?? '');
+    $reportRemarks = trim((string) ($record['reportRemarks'] ?? $record['report_remarks'] ?? ''));
     $normalizeInspectionType = function ($value): string {
         $normalized = strtolower((string) $value);
         $normalized = preg_replace('/[^a-z0-9]+/', ' ', $normalized);
@@ -819,6 +820,18 @@
     <div class="card-body">
         <div class="text-block-label">Summary</div>
         <div class="text-block-value">{{ trim($description) !== '' ? $description : 'No description provided.' }}</div>
+        @if ($reportRemarks !== '')
+            <div class="text-block-label" style="margin-top: 10px;">Additional report remarks</div>
+            <div class="text-block-value">{{ $reportRemarks }}</div>
+        @endif
+    </div>
+</div>
+@elseif ($reportRemarks !== '')
+<div class="card">
+    <div class="card-head">Additional report evidence</div>
+    <div class="card-body">
+        <div class="text-block-label">Additional report remarks</div>
+        <div class="text-block-value">{{ $reportRemarks }}</div>
     </div>
 </div>
 @endif
