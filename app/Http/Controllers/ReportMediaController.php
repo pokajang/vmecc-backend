@@ -27,7 +27,7 @@ class ReportMediaController extends Controller
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'file' => ['required', 'file', 'max:15360'],
+            'file' => ['required', 'file', 'max:30720'],
             'module' => ['required', 'string', 'in:inspection,erco'],
             'source' => ['nullable', 'string', 'in:camera,upload'],
             'upload_id' => ['required', 'uuid'],

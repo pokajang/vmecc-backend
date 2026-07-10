@@ -19,7 +19,7 @@ class PhotoUploadCapacityService
 
         $reportBytes = (int) ReportMedia::query()->where('user_id', $userId)->doesntHave('links')->sum('size_bytes');
         $leaveBytes = (int) LeaveAttachment::query()->where('user_id', $userId)->whereNull('leave_id')->sum('size');
-        $quota = max(16 * 1024 * 1024, (int) config('report_media.temporary_user_quota_bytes', 134217728));
+        $quota = max(32 * 1024 * 1024, (int) config('report_media.temporary_user_quota_bytes', 134217728));
         if ($reportBytes + $leaveBytes + max(0, $incomingBytes) > $quota) {
             throw new ReportImageException(
                 'storage_quota_exceeded',

@@ -46,6 +46,34 @@ class ReportMediaHardeningTest extends TestCase
         $this->assertSame(64, strlen((string) $media->checksum_sha256));
     }
 
+    public function test_mobile_camera_upload_between_old_and_new_source_limits_is_accepted(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+
+        $this->actingAs($user)->post('/api/report-media', [
+            'file' => UploadedFile::fake()->image('large-camera.jpg', 1600, 900)->size(20 * 1024),
+            'module' => 'inspection',
+            'source' => 'camera',
+            'upload_id' => (string) Str::uuid(),
+        ], ['Accept' => 'application/json'])
+            ->assertCreated()
+            ->assertJsonPath('data.mime_type', 'image/jpeg');
+    }
+
+    public function test_source_upload_above_hard_limit_is_rejected_before_processing(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+
+        $this->actingAs($user)->post('/api/report-media', [
+            'file' => UploadedFile::fake()->image('oversized-camera.jpg')->size(31 * 1024),
+            'module' => 'inspection',
+            'source' => 'camera',
+            'upload_id' => (string) Str::uuid(),
+        ], ['Accept' => 'application/json'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('file');
+    }
+
     public function test_linked_media_requires_parent_report_access(): void
     {
         $owner = User::factory()->create(['status' => 'active']);
@@ -79,8 +107,8 @@ class ReportMediaHardeningTest extends TestCase
     {
         $user = User::factory()->create(['status' => 'active']);
         $media = $this->createMedia($user);
-        $media->update(['size_bytes' => 17 * 1024 * 1024]);
-        config(['report_media.temporary_user_quota_bytes' => 16 * 1024 * 1024]);
+        $media->update(['size_bytes' => 33 * 1024 * 1024]);
+        config(['report_media.temporary_user_quota_bytes' => 32 * 1024 * 1024]);
 
         $this->actingAs($user)->post('/api/report-media', [
             'file' => UploadedFile::fake()->image('camera.jpg'),

@@ -10,9 +10,9 @@ use Throwable;
 
 class ReportImageService
 {
-    private const CAMERA_MAX_BYTES = 12 * 1024 * 1024;
+    private const CAMERA_MAX_BYTES = 30 * 1024 * 1024;
 
-    private const UPLOAD_MAX_BYTES = 15 * 1024 * 1024;
+    private const UPLOAD_MAX_BYTES = 30 * 1024 * 1024;
 
     private const MAX_PIXELS = 100_000_000;
 
@@ -27,6 +27,8 @@ class ReportImageService
     private const STANDARD_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
 
     private const HEIF_MIMES = ['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence'];
+
+    private const EXTERNAL_ONLY_MIMES = ['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence', 'image/avif'];
 
     public function capabilities(): array
     {
@@ -85,8 +87,8 @@ class ReportImageService
 
         $path = (string) $file->getRealPath();
         $mime = strtolower((string) (new \finfo(FILEINFO_MIME_TYPE))->file($path));
-        if (! in_array($mime, [...self::STANDARD_MIMES, ...self::HEIF_MIMES], true)) {
-            throw new ReportImageException('unsupported_file_type', 'Only valid JPEG, PNG, WebP, HEIC, and HEIF images are supported.');
+        if (! in_array($mime, [...self::STANDARD_MIMES, ...self::EXTERNAL_ONLY_MIMES], true)) {
+            throw new ReportImageException('unsupported_file_type', 'Only valid JPEG, PNG, WebP, HEIC, HEIF, and AVIF images are supported.');
         }
         [$width, $height] = $this->sourceDimensions($path);
         if ($width <= 0 || $height <= 0) {
@@ -101,13 +103,13 @@ class ReportImageService
             try {
                 return $this->normalizeExternally($path, $size, $external);
             } catch (ReportImageException $exception) {
-                if (in_array($mime, self::HEIF_MIMES, true)) {
+                if (in_array($mime, self::EXTERNAL_ONLY_MIMES, true)) {
                     throw $exception;
                 }
             }
         }
         if (! in_array($mime, self::STANDARD_MIMES, true)) {
-            throw new ReportImageException('unsupported_file_type', 'HEIC/HEIF processing is unavailable on this server.');
+            throw new ReportImageException('unsupported_file_type', 'HEIC, HEIF, or AVIF processing is unavailable on this server.');
         }
         if (($width * $height) > self::GD_MAX_PIXELS || ! $this->hasSafeMemoryBudget($width, $height)) {
             throw new ReportImageException('image_dimensions_too_large', 'The image dimensions are too large for the available processor.');
