@@ -2,14 +2,19 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('ai_helper_knowledge_entries', function (Blueprint $table) {
-            $table->mediumText('content')->change();
+        $driver = DB::connection()->getDriverName();
+
+        Schema::table('ai_helper_knowledge_entries', function (Blueprint $table) use ($driver) {
+            if ($driver !== 'pgsql') {
+                $table->mediumText('content')->change();
+            }
             $table->uuid('ingestion_run_id')->nullable()->after('version')->index('ai_helper_knowledge_ingestion_run_idx');
             $table->unsignedInteger('ingestion_version')->default(1)->after('ingestion_run_id');
             $table->timestamp('ingestion_started_at')->nullable()->after('ingestion_version');
@@ -36,7 +41,6 @@ return new class extends Migration
         });
 
         Schema::table('ai_helper_knowledge_entries', function (Blueprint $table) {
-            $table->text('content')->change();
             $table->dropIndex('ai_helper_knowledge_ingestion_run_idx');
             $table->dropColumn([
                 'ingestion_run_id',
