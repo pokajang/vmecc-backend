@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Report;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\ReportMediaService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 
@@ -11,6 +12,7 @@ class ErcoReportPdfController extends Controller
 {
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
+        private readonly ReportMediaService $reportMediaService,
     ) {
     }
 
@@ -45,7 +47,7 @@ class ErcoReportPdfController extends Controller
             ], 409);
         }
 
-        $record = is_array($report->payload) ? $report->payload : [];
+        $record = $this->reportMediaService->hydratePayloadForPdf(is_array($report->payload) ? $report->payload : []);
         $record['id'] = $report->report_uid;
         $record['displayId'] = $report->display_id;
         $record['reportType'] = $report->report_type;

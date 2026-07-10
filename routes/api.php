@@ -1,54 +1,56 @@
 <?php
 
-use App\Http\Controllers\AuthController;
-use App\Http\Controllers\PasswordResetController;
-use App\Http\Controllers\SocialAuthController;
-use App\Http\Controllers\UserManagementController;
+use App\Http\Controllers\AiHelperController;
 use App\Http\Controllers\AuditLogController;
-use App\Http\Controllers\TeamController;
-use App\Http\Controllers\RosterController;
-use App\Http\Controllers\SettingsController;
-use App\Http\Controllers\RolePermissionController;
-use App\Http\Controllers\MessageAttachmentController;
-use App\Http\Controllers\MessageController;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DrillReportPdfController;
+use App\Http\Controllers\ErcoReportPdfController;
+use App\Http\Controllers\FeedbackReportController;
+use App\Http\Controllers\HolidayController;
+use App\Http\Controllers\InspectionEquipmentController;
+use App\Http\Controllers\InspectionFireExtinguisherController;
+use App\Http\Controllers\InspectionFireTruckController;
+use App\Http\Controllers\InspectionLocationController;
+use App\Http\Controllers\InspectionReportPdfController;
+use App\Http\Controllers\InspectionScbaCatalogController;
+use App\Http\Controllers\InspectionSessionController;
+use App\Http\Controllers\LeaveAssignmentController;
+use App\Http\Controllers\LeaveAttachmentController;
 use App\Http\Controllers\LeaveController;
 use App\Http\Controllers\LeaveDraftController;
-use App\Http\Controllers\LeaveAttachmentController;
 use App\Http\Controllers\LeaveManagementController;
-use App\Http\Controllers\LeaveWorkflowController;
-use App\Http\Controllers\LeaveAssignmentController;
 use App\Http\Controllers\LeaveNotificationController;
+use App\Http\Controllers\LeaveWorkflowController;
+use App\Http\Controllers\MessageAttachmentController;
+use App\Http\Controllers\MessageController;
 use App\Http\Controllers\ModuleActivationController;
-use App\Http\Controllers\WorkflowNotificationController;
-use App\Http\Controllers\WorkflowAttachmentController;
+use App\Http\Controllers\OnboardingStateController;
+use App\Http\Controllers\OtPayrollMigrationController;
 use App\Http\Controllers\OvertimeController;
 use App\Http\Controllers\OvertimeDraftController;
 use App\Http\Controllers\OvertimeManagementController;
 use App\Http\Controllers\OvertimeWorkflowController;
+use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\PayrollClaimController;
 use App\Http\Controllers\PayrollClaimDraftController;
 use App\Http\Controllers\PayrollClaimManagementController;
 use App\Http\Controllers\PayrollClaimWorkflowController;
 use App\Http\Controllers\PayrollPayslipController;
-use App\Http\Controllers\SalaryAssignmentController;
-use App\Http\Controllers\SalaryAssignmentDraftController;
-use App\Http\Controllers\OtPayrollMigrationController;
-use App\Http\Controllers\HolidayController;
-use App\Http\Controllers\DrillReportPdfController;
-use App\Http\Controllers\ErcoReportPdfController;
-use App\Http\Controllers\InspectionReportPdfController;
-use App\Http\Controllers\InspectionEquipmentController;
-use App\Http\Controllers\InspectionFireTruckController;
-use App\Http\Controllers\InspectionFireExtinguisherController;
-use App\Http\Controllers\InspectionLocationController;
-use App\Http\Controllers\InspectionScbaCatalogController;
-use App\Http\Controllers\InspectionSessionController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportDraftController;
-use App\Http\Controllers\DashboardController;
-use App\Http\Controllers\FeedbackReportController;
-use App\Http\Controllers\AiHelperController;
-use App\Http\Controllers\OnboardingStateController;
+use App\Http\Controllers\ReportMediaController;
+use App\Http\Controllers\RolePermissionController;
+use App\Http\Controllers\RosterController;
+use App\Http\Controllers\SalaryAssignmentController;
+use App\Http\Controllers\SalaryAssignmentDraftController;
+use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\SocialAuthController;
+use App\Http\Controllers\TeamController;
+use App\Http\Controllers\UserManagementController;
+use App\Http\Controllers\WorkflowAttachmentController;
+use App\Http\Controllers\WorkflowNotificationController;
+use App\Http\Middleware\LimitPhotoUploadConcurrency;
 use Illuminate\Support\Facades\Route;
 
 Route::post('auth/login', [AuthController::class, 'login']);
@@ -136,7 +138,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'module
     Route::post('messages/{id}/read', [MessageController::class, 'markRead']);
 });
 
-    Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group(function () {
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group(function () {
     Route::get('users', [UserManagementController::class, 'index'])
         ->middleware('permission.assignment:users.manage|staff.view|staff.manage|staff.leave.manage|staff.salary.manage');
     Route::post('users', [UserManagementController::class, 'store'])->middleware('permission.assignment:users.manage');
@@ -217,6 +219,10 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'module
     Route::post('reports/erco/pdf', [ErcoReportPdfController::class, 'download']);
     Route::post('reports/drill/pdf', [DrillReportPdfController::class, 'download']);
     Route::post('reports/inspection/pdf', [InspectionReportPdfController::class, 'download']);
+    Route::get('report-media/health', [ReportMediaController::class, 'health']);
+    Route::post('report-media', [ReportMediaController::class, 'store'])->middleware(['throttle:photo-uploads', LimitPhotoUploadConcurrency::class]);
+    Route::get('report-media/{mediaId}', [ReportMediaController::class, 'show']);
+    Route::delete('report-media/{mediaId}', [ReportMediaController::class, 'destroy']);
     Route::get('inspection/location-options', [InspectionLocationController::class, 'index']);
     Route::post('inspection/locations', [InspectionLocationController::class, 'store']);
     Route::patch('inspection/locations/{locationId}', [InspectionLocationController::class, 'update']);
@@ -282,7 +288,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'module
         Route::post('leave/draft', [LeaveDraftController::class, 'store']);
         Route::delete('leave/draft', [LeaveDraftController::class, 'destroy']);
 
-        Route::post('leave/attachments', [LeaveAttachmentController::class, 'store']);
+        Route::post('leave/attachments', [LeaveAttachmentController::class, 'store'])->middleware(['throttle:photo-uploads', LimitPhotoUploadConcurrency::class]);
         Route::get('leave/attachments/{attachmentId}', [LeaveAttachmentController::class, 'show']);
         Route::delete('leave/attachments/{attachmentId}', [LeaveAttachmentController::class, 'destroy']);
 

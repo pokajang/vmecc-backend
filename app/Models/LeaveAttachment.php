@@ -9,6 +9,7 @@ class LeaveAttachment extends Model
 {
     protected $fillable = [
         'user_id',
+        'client_upload_id',
         'leave_id',
         'original_name',
         'mime_type',

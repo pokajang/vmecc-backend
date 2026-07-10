@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\InspectionFireExtinguisher;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class InspectionFireExtinguisherCatalogSeeder extends Seeder
 {
@@ -20,8 +21,9 @@ class InspectionFireExtinguisherCatalogSeeder extends Seeder
             return;
         }
 
+        $deduplicatedRows = $this->deduplicateSeedRows($rows);
         $seededSourceRows = [];
-        foreach ($rows as $index => $row) {
+        foreach ($deduplicatedRows as $index => $row) {
             if (! is_array($row)) {
                 continue;
             }
@@ -62,9 +64,85 @@ class InspectionFireExtinguisherCatalogSeeder extends Seeder
             $staleSeedQuery->update(
                 Schema::hasColumn('inspection_fire_extinguishers', 'active_identity_key')
                     ? ['is_active' => false, 'active_identity_key' => null]
-                    : ['is_active' => false],
+                : ['is_active' => false],
             );
         }
+    }
+
+    /**
+     * @param array<int, mixed> $rows
+     * @return array<int, array<string, mixed>>
+     */
+    private function deduplicateSeedRows(array $rows): array
+    {
+        $deduplicated = [];
+        $selectedIndexesByIdentity = [];
+
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            $identityKey = $this->identityKey($row);
+            if ($identityKey === '') {
+                $deduplicated[] = $row;
+                continue;
+            }
+
+            $sourceRowNumber = (int) ($row['sourceRowNumber'] ?? 0);
+            if (! isset($selectedIndexesByIdentity[$identityKey])) {
+                $selectedIndexesByIdentity[$identityKey] = count($deduplicated);
+                $deduplicated[] = $row;
+                continue;
+            }
+
+            $selectedIndex = $selectedIndexesByIdentity[$identityKey];
+            $existingRow = $deduplicated[$selectedIndex];
+            if ($this->isBetterSeedDuplicateRow($row, $existingRow)) {
+                $deduplicated[$selectedIndex] = $row;
+            } elseif (
+                (int) $sourceRowNumber > 0 &&
+                (int) ($existingRow['sourceRowNumber'] ?? 0) === 0
+            ) {
+                $deduplicated[$selectedIndex] = $row;
+            }
+        }
+
+        return $deduplicated;
+    }
+
+    private function isBetterSeedDuplicateRow(array $candidate, array $existing): bool
+    {
+        $candidateSourceRow = (int) ($candidate['sourceRowNumber'] ?? 0);
+        $existingSourceRow = (int) ($existing['sourceRowNumber'] ?? 0);
+
+        if ($candidateSourceRow <= 0 && $existingSourceRow <= 0) {
+            return false;
+        }
+
+        if ($candidateSourceRow <= 0) {
+            return false;
+        }
+
+        if ($existingSourceRow <= 0) {
+            return true;
+        }
+
+        $candidateDate = $this->date($candidate['certificationValidity'] ?? '');
+        $existingDate = $this->date($existing['certificationValidity'] ?? '');
+
+        if ($candidateDate !== $existingDate) {
+            if ($candidateDate !== null && $existingDate === null) {
+                return true;
+            }
+            if ($candidateDate === null && $existingDate !== null) {
+                return false;
+            }
+
+            return $candidateDate > $existingDate;
+        }
+
+        return $candidateSourceRow > $existingSourceRow;
     }
 
     private function text(mixed $value): string
@@ -81,5 +159,35 @@ class InspectionFireExtinguisherCatalogSeeder extends Seeder
     {
         $text = $this->text($value);
         return preg_match('/^\d{4}-\d{2}-\d{2}$/', $text) ? $text : null;
+    }
+
+    private function identityKey(array $row): string
+    {
+        $idLocNo = $this->text($row['idLocNo'] ?? '');
+        $barcodeNo = $this->text($row['barcodeNo'] ?? '');
+
+        if ($idLocNo === '' && $barcodeNo === '') {
+            return '';
+        }
+
+        return implode('|', [
+            $this->identityPart($row['zone'] ?? ''),
+            $this->identityPart($row['mainLocation'] ?? ''),
+            $this->identityPart($row['subLocation'] ?? ''),
+            $this->identityPart($idLocNo),
+            $this->identityPart($barcodeNo),
+            $this->identityPart($this->normalizeFeType($row['feType'] ?? '')),
+        ]);
+    }
+
+    private function identityPart(mixed $value): string
+    {
+        return Str::of(
+            str_replace(
+                ['COÂ²', 'COï¿½', 'COÃ‚Â²', 'COÃ¯Â¿Â½'],
+                'CO2',
+                (string) $value,
+            ),
+        )->squish()->lower()->toString();
     }
 }

@@ -25,6 +25,13 @@ class AiHelperApiTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['ai_helper.knowledge_ocr_languages' => 'eng']);
+    }
+
     public function test_context_requires_authentication(): void
     {
         $this->getJson('/api/ai-helper/context?path=/inspection')
@@ -95,6 +102,73 @@ class AiHelperApiTest extends TestCase
         $this->assertStringContainsString('event: delta', $content);
         $this->assertStringContainsString('event: done', $content);
         $this->assertMatchesRegularExpression('/"request_id":"[^"]+"/', $content);
+    }
+
+    public function test_stream_persists_page_aware_sources_from_retrieved_guidance(): void
+    {
+        config(['ai_helper.enabled' => true, 'ai_helper.api_key' => 'test-key']);
+        $user = User::factory()->create(['status' => 'active']);
+        $this->actingAs($user);
+
+        $entry = AiHelperKnowledgeEntry::create([
+            'title' => 'Emergency Response Plan',
+            'source_mime' => 'application/pdf',
+            'content' => 'Emergency response guidance.',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+            'active' => true,
+        ]);
+        AiHelperKnowledgeChunk::create([
+            'knowledge_entry_id' => $entry->id,
+            'chunk_index' => 0,
+            'page_start' => 12,
+            'page_end' => 13,
+            'content' => 'Emergency response guidance.',
+            'content_hash' => hash('sha256', 'Emergency response guidance.'),
+            'active' => true,
+        ]);
+
+        $context = app(AiHelperKnowledgeService::class)->buildContext(
+            ['path' => '/dashboard'],
+            $user,
+            'What does the emergency plan say?',
+        );
+        $this->assertSame($entry->id, $context['guidance'][0]['id']);
+        $this->assertSame([[
+            'knowledge_id' => $entry->id,
+            'title' => 'Emergency Response Plan',
+            'source_mime' => 'application/pdf',
+            'page_start' => 12,
+            'page_end' => 13,
+        ]], app(AiHelperKnowledgeService::class)->citationsForGuidance($context['guidance']));
+
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('isAvailable')->andReturnTrue();
+            $mock->shouldReceive('streamResponse')->once()->andReturnUsing(function ($instructions, $input, $onDelta) {
+                $onDelta('Refer to the plan.');
+                return ['response_id' => 'resp_sources_123'];
+            });
+        });
+
+        $response = $this->postJson('/api/ai-helper/messages/stream', [
+            'message' => 'What does the emergency plan say?',
+            'page_context' => ['path' => '/dashboard'],
+            'new_thread' => true,
+        ])->assertOk();
+        $response->streamedContent();
+
+        $assistant = AiHelperMessage::query()
+            ->where('role', AiHelperMessage::ROLE_ASSISTANT)
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame([[
+            'knowledge_id' => $entry->id,
+            'title' => 'Emergency Response Plan',
+            'source_mime' => 'application/pdf',
+            'page_start' => 12,
+            'page_end' => 13,
+        ]], $assistant->sources);
     }
 
     public function test_stream_keeps_embedded_helpers_outside_chat_persistence(): void
@@ -423,6 +497,24 @@ class AiHelperApiTest extends TestCase
         $this->assertNull($entry->module_key);
         $this->assertNull($entry->route_key);
         Queue::assertPushed(ProcessAiHelperKnowledgeEntry::class);
+    }
+
+    public function test_pdf_upload_is_rejected_when_the_required_ocr_runtime_is_unavailable(): void
+    {
+        config(['ai_helper.knowledge_ocr_languages' => 'missing-language']);
+        Queue::fake();
+        $this->actingAs(User::factory()->create(['status' => 'active']));
+
+        $this->post('/api/ai-helper/knowledge', [
+            'file' => UploadedFile::fake()->create('guide.pdf', 20, 'application/pdf'),
+            'scope_type' => AiHelperKnowledgeEntry::SCOPE_GLOBAL,
+            'acknowledged' => 'true',
+        ])
+            ->assertStatus(503)
+            ->assertJsonPath('code', 'AI_HELPER_KNOWLEDGE_RUNTIME_UNAVAILABLE')
+            ->assertJsonPath('runtime.ready', false);
+
+        Queue::assertNothingPushed();
     }
 
     public function test_module_knowledge_upload_stores_selected_allowed_module(): void
@@ -783,7 +875,7 @@ MD;
         $this->assertGreaterThan(0, $entry->chunks()->count());
     }
 
-    public function test_pdf_processing_rejects_image_heavy_pdf_with_too_little_text(): void
+    public function test_pdf_processing_preserves_image_heavy_pdf_text_for_ocr_capable_ingestion(): void
     {
         $entry = AiHelperKnowledgeEntry::create([
             'uploaded_by' => User::factory()->create(['status' => 'active'])->id,
@@ -811,14 +903,11 @@ MD;
         app(AiHelperKnowledgeProcessingService::class)->process($entry->id);
 
         $entry->refresh();
-        $this->assertSame(AiHelperKnowledgeEntry::STATUS_FAILED, $entry->status);
-        $this->assertFalse($entry->active);
-        $this->assertSame(
-            'This PDF appears to be mostly image-based. Ask AI can only learn readable text, so upload a text-based PDF instead.',
-            $entry->error,
-        );
+        $this->assertSame(AiHelperKnowledgeEntry::STATUS_ACTIVE, $entry->status);
+        $this->assertTrue($entry->active);
+        $this->assertNull($entry->error);
         $this->assertSame(5, $entry->pdf_image_count);
-        $this->assertSame(0, $entry->chunks()->count());
+        $this->assertGreaterThan(0, $entry->chunks()->count());
     }
 
     public function test_knowledge_list_exposes_safe_pdf_metrics_without_full_content(): void
@@ -863,6 +952,69 @@ MD;
         $this->assertArrayNotHasKey('content', $first);
         $this->assertArrayNotHasKey('content_preview', $first);
         $this->assertArrayNotHasKey('chunks', $first);
+    }
+
+    public function test_corpus_readiness_requires_all_uploaded_documents_to_finish_ingestion(): void
+    {
+        AiHelperKnowledgeEntry::create([
+            'title' => 'Still processing',
+            'content' => '',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'status' => AiHelperKnowledgeEntry::STATUS_PROCESSING,
+            'active' => false,
+        ]);
+
+        $readiness = app(AiHelperKnowledgeService::class)->corpusReadiness();
+
+        $this->assertFalse($readiness['ready']);
+        $this->assertSame(1, $readiness['counts'][AiHelperKnowledgeEntry::STATUS_PROCESSING]);
+    }
+
+    public function test_catalogue_intent_includes_all_authorized_ready_documents(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        foreach (['First procedure', 'Second procedure'] as $title) {
+            AiHelperKnowledgeEntry::create([
+                'title' => $title,
+                'content' => 'Indexed guidance.',
+                'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+                'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+                'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+                'active' => true,
+            ]);
+        }
+
+        $context = app(AiHelperKnowledgeService::class)->buildContext(
+            ['path' => '/dashboard'],
+            $user,
+            'Please list all uploaded files.',
+        );
+
+        $this->assertSame(2, $context['catalogue']['total']);
+        $this->assertSame(['First procedure', 'Second procedure'], array_column($context['catalogue']['entries'], 'title'));
+    }
+
+    public function test_catalogue_reports_an_exact_total_when_the_display_list_is_capped(): void
+    {
+        config(['ai_helper.knowledge_catalogue_limit' => 1]);
+        $user = User::factory()->create(['status' => 'active']);
+        foreach (['First procedure', 'Second procedure'] as $title) {
+            AiHelperKnowledgeEntry::create([
+                'title' => $title,
+                'content' => 'Indexed guidance.',
+                'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+                'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+                'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+                'active' => true,
+            ]);
+        }
+
+        $catalogue = app(AiHelperKnowledgeService::class)->catalogueForUser($user);
+
+        $this->assertSame(2, $catalogue['total']);
+        $this->assertTrue($catalogue['truncated']);
+        $this->assertCount(1, $catalogue['entries']);
     }
 
     public function test_owner_can_fetch_personal_knowledge_detail_with_full_extracted_text(): void
@@ -1218,6 +1370,13 @@ MD;
             'active' => true,
         ]);
         Storage::disk('local')->put($entry->source_path, "# Shared guidance\n\nOperational guidance.");
+        AiHelperKnowledgeChunk::create([
+            'knowledge_entry_id' => $entry->id,
+            'chunk_index' => 0,
+            'content' => 'Operational guidance.',
+            'content_hash' => hash('sha256', 'Operational guidance.'),
+            'active' => true,
+        ]);
 
         $this->actingAs($admin)
             ->deleteJson("/api/ai-helper/knowledge/{$entry->id}")
@@ -1225,6 +1384,9 @@ MD;
             ->assertJsonPath('message', 'Knowledge deleted.');
 
         $this->assertSoftDeleted('ai_helper_knowledge_entries', ['id' => $entry->id]);
+        Storage::disk('local')->assertMissing($entry->source_path);
+        $this->assertDatabaseMissing('ai_helper_knowledge_chunks', ['knowledge_entry_id' => $entry->id]);
+        $this->assertSame('', AiHelperKnowledgeEntry::withTrashed()->findOrFail($entry->id)->content);
     }
 
     private function pdfExtractionResult(

@@ -15,6 +15,8 @@ class AiHelperKnowledgeEntry extends Model
     public const STATUS_ACTIVE = 'active';
     public const STATUS_DISABLED = 'disabled';
     public const STATUS_FAILED = 'failed';
+    public const STATUS_DELETING = 'deleting';
+    public const STATUS_DELETED = 'deleted';
 
     public const VISIBILITY_PERSONAL = 'personal';
     public const VISIBILITY_SHARED = 'shared';
@@ -46,6 +48,8 @@ class AiHelperKnowledgeEntry extends Model
         self::STATUS_ACTIVE,
         self::STATUS_DISABLED,
         self::STATUS_FAILED,
+        self::STATUS_DELETING,
+        self::STATUS_DELETED,
     ];
 
     public const VISIBILITIES = [
@@ -91,6 +95,13 @@ class AiHelperKnowledgeEntry extends Model
         'tags',
         'active',
         'version',
+        'ingestion_run_id',
+        'ingestion_version',
+        'ingestion_started_at',
+        'ingestion_completed_at',
+        'extraction_mode',
+        'extraction_complete',
+        'extracted_characters',
     ];
 
     protected $casts = [
@@ -105,9 +116,14 @@ class AiHelperKnowledgeEntry extends Model
         'pdf_readable_word_count' => 'integer',
         'pdf_image_coverage_estimate' => 'integer',
         'processing_warnings' => 'array',
+        'extraction_complete' => 'boolean',
+        'ingestion_version' => 'integer',
+        'extracted_characters' => 'integer',
         'acknowledged_at' => 'datetime',
         'processed_at' => 'datetime',
         'reviewed_at' => 'datetime',
+        'ingestion_started_at' => 'datetime',
+        'ingestion_completed_at' => 'datetime',
     ];
 
     public function uploader(): BelongsTo

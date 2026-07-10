@@ -33,6 +33,18 @@ class RouteServiceProvider extends ServiceProvider
                 ->by($request->user()?->id ?: $request->ip());
         });
 
+        RateLimiter::for('photo-uploads', function (Request $request) {
+            $response = fn (Request $request, array $headers) => response()->json([
+                'message' => 'Too many photo uploads. Wait briefly and retry.',
+                'code' => 'rate_limited',
+            ], 429, $headers);
+
+            return [
+                Limit::perMinute(20)->by('user:'.($request->user()?->id ?: $request->ip()))->response($response),
+                Limit::perMinute(60)->by('ip:'.$request->ip())->response($response),
+            ];
+        });
+
         $this->routes(function () {
             Route::middleware('api')
                 ->prefix('api')

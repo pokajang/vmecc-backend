@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\ReportMedia;
+
 use App\Support\Inspection\FrtDailyReference;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -2057,6 +2059,19 @@ class InspectionPayloadService
                 throw ValidationException::withMessages([
                     $fieldPath => ['Invalid photo payload.'],
                 ]);
+            }
+
+            $mediaId = trim((string) ($photo['mediaId'] ?? $photo['media_id'] ?? ''));
+            if ($mediaId !== '') {
+                $media = ReportMedia::query()->where('public_id', $mediaId)->where('module', 'inspection')->first();
+                if (! $media) {
+                    throw ValidationException::withMessages(["{$fieldPath}.mediaId" => ['Invalid managed photo reference.']]);
+                }
+                if ((int) $media->size_bytes > self::INSPECTION_MAX_PHOTO_BYTES) {
+                    throw ValidationException::withMessages(["{$fieldPath}.mediaId" => ['Each photo must be 1.5 MB or smaller.']]);
+                }
+                $totalPhotoBytes += (int) $media->size_bytes;
+                continue;
             }
 
             $url = trim((string) ($photo['url'] ?? ''));

@@ -23,10 +23,12 @@ class AiHelperMessage extends Model
         'openai_response_id',
         'status',
         'error',
+        'sources',
     ];
 
     protected $casts = [
         'route_context' => 'array',
+        'sources' => 'array',
     ];
 
     public function thread(): BelongsTo

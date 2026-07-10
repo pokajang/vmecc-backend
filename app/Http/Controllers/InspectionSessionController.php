@@ -12,6 +12,7 @@ use App\Services\AssignmentAuthorizationService;
 use App\Services\InspectionCheckRowSyncService;
 use App\Services\InspectionFireExtinguisherSessionProgressService;
 use App\Services\InspectionWorkflowService;
+use App\Services\ReportMediaService;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -53,6 +54,7 @@ class InspectionSessionController extends Controller
         private readonly InspectionFireExtinguisherSessionProgressService $sessionProgressService,
         private readonly InspectionWorkflowService $inspectionWorkflowService,
         private readonly WorkflowNotificationService $workflowNotificationService,
+        private readonly ReportMediaService $reportMediaService,
     ) {}
 
     public function active(Request $request): JsonResponse
@@ -325,6 +327,7 @@ class InspectionSessionController extends Controller
         }
 
         $session->increment('version');
+        $this->reportMediaService->syncPayloadLinks((array) $result->check_payload, 'inspection_result', (string) $result->id, (int) $request->user()->id, 'inspection');
 
         return response()->json([
             'data' => $this->formatResult($result->refresh()->load('checkedBy')),
@@ -355,16 +358,6 @@ class InspectionSessionController extends Controller
                     $this->sessionProgressService->sync($session, $request->user()?->id, $asset);
 
                     return null;
-                }
-
-                $isCompletedByAnotherUser = $existing->status === 'completed'
-                    && (int) $existing->checked_by_user_id !== (int) $request->user()->id;
-
-                if ($isCompletedByAnotherUser) {
-                    $existing->load('checkedBy');
-                    throw ValidationException::withMessages([
-                        'extinguisher' => 'This fire extinguisher was inspected by another user and cannot be reset by you.',
-                    ])->status(Response::HTTP_CONFLICT);
                 }
 
                 $existing->fill([
@@ -508,6 +501,7 @@ class InspectionSessionController extends Controller
             ]);
 
             $this->inspectionCheckRowSyncService->syncForReport($report->refresh(), (int) $user->id);
+            $this->reportMediaService->syncPayloadLinks($payload, 'report', (string) $report->report_uid, (int) $user->id, 'inspection');
 
             return $report->load('timelineEntries');
         });

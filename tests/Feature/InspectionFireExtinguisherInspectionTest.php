@@ -26,7 +26,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
         $response->assertOk();
         $this->assertSame('database', $response->json('meta.source'));
-        $this->assertCount(23, $response->json('data'));
+        $this->assertCount(17, $response->json('data'));
         $this->assertSame(true, $response->json('data.0.canEdit'));
         $this->assertSame('Manjung Hub', $response->json('data.0.mainLocation'));
         $this->assertSame('catalog:'.(string) $response->json('data.0.catalogId'), $response->json('data.0.canonicalAssetKey'));
@@ -38,7 +38,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         $this->assertSame('CO2 5KG', $search->json('data.0.feType'));
         $this->assertSame($user->id, auth()->id());
 
-        $this->assertSame(2, InspectionFireExtinguisher::query()
+        $this->assertSame(1, InspectionFireExtinguisher::query()
             ->where('id_loc_no', 'ADO-007')
             ->where('barcode_no', 'SR072015Y133879')
             ->count());
@@ -194,6 +194,23 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         $response->assertJsonPath('meta.normalizedLocator', 'sr102014z060199');
     }
 
+    public function test_fire_extinguisher_lookup_matches_id_location_number(): void
+    {
+        $this->actingAsInspectionUser();
+
+        $created = $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
+            'idLocNo' => 'FE-LOC-LOOKUP-001',
+            'barcodeNo' => 'SR102014Z060200',
+        ]))->assertCreated();
+
+        $response = $this->getJson('/api/inspection/fire-extinguishers/lookup?locator=fe-loc-lookup-001');
+
+        $response->assertOk();
+        $response->assertJsonPath('data.id', $created->json('data.id'));
+        $response->assertJsonPath('data.idLocNo', 'FE-LOC-LOOKUP-001');
+        $response->assertJsonPath('meta.normalizedLocator', 'fe-loc-lookup-001');
+    }
+
     public function test_fire_extinguisher_lookup_returns_not_found_for_unknown_locator(): void
     {
         $this->actingAsInspectionUser();
@@ -248,6 +265,23 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             'mainLocation' => 'Other QA Yard',
             'idLocNo' => '',
             'barcodeNo' => 'sr-scan-dup-001',
+        ]))->assertStatus(422)
+            ->assertJsonValidationErrors(['barcodeNo']);
+    }
+
+    public function test_scan_registration_rejects_duplicate_active_locator_across_barcode_and_id_location(): void
+    {
+        $this->actingAsInspectionUser();
+
+        $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
+            'idLocNo' => 'SR-CROSS-DUP-001',
+            'barcodeNo' => 'BAR-CROSS-DUP-001',
+        ]))->assertCreated();
+
+        $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
+            'mainLocation' => 'Other QA Yard',
+            'idLocNo' => '',
+            'barcodeNo' => 'sr-cross-dup-001',
         ]))->assertStatus(422)
             ->assertJsonValidationErrors(['barcodeNo']);
     }

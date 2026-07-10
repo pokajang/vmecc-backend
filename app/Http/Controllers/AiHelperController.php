@@ -25,6 +25,8 @@ use App\Services\AiHelperOpenAiService;
 use App\Services\AiHelperMarkdownKnowledgeParser;
 use App\Services\AiHelperKnowledgeProcessingService;
 use App\Services\AiHelperKnowledgeQuotaService;
+use App\Services\AiHelperKnowledgeLifecycleService;
+use App\Services\AiHelperKnowledgeRuntimeService;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -47,6 +49,8 @@ class AiHelperController extends Controller
         private readonly AiHelperKnowledgeProcessingService $knowledgeProcessor,
         private readonly AiHelperMarkdownKnowledgeParser $markdownParser,
         private readonly AiHelperKnowledgeQuotaService $knowledgeQuota,
+        private readonly AiHelperKnowledgeLifecycleService $knowledgeLifecycle,
+        private readonly AiHelperKnowledgeRuntimeService $knowledgeRuntime,
         private readonly AiHelperConversationService $conversation,
         private readonly AiHelperApiResponder $responder,
     ) {
@@ -177,7 +181,7 @@ class AiHelperController extends Controller
                 })
                 ->orderByRaw('CASE WHEN uploaded_by = ? THEN 0 ELSE 1 END', [$request->user()->id])
                 ->latest('created_at')
-                ->limit(50)
+                ->limit(max(1, (int) config('ai_helper.knowledge_catalogue_limit', 250)))
                 ->get()
                 ->map(fn (AiHelperKnowledgeEntry $entry) => $this->formatKnowledgeEntry($entry))
                 ->values();
@@ -256,6 +260,7 @@ class AiHelperController extends Controller
 
         try {
             $actor = $request->user();
+            $this->knowledgeRuntime->assertPdfIngestionReady();
             $scopeType = (string) $validated['scope_type'];
             $visibility = (string) ($validated['visibility'] ?? AiHelperKnowledgeEntry::VISIBILITY_PERSONAL);
             $routeKey = '';
@@ -315,7 +320,8 @@ class AiHelperController extends Controller
                 'version' => 1,
             ]);
 
-            ProcessAiHelperKnowledgeEntry::dispatch($entry->id);
+            $ingestionRunId = $this->knowledgeLifecycle->beginIngestion($entry);
+            ProcessAiHelperKnowledgeEntry::dispatch($entry->id, $ingestionRunId);
             $entry = $entry->fresh(['uploader', 'reviewer']);
             AuditLogger::log($request, 'ai_helper_knowledge_uploaded', $actor, [
                 'knowledge_entry_id' => $entry->id,
@@ -331,6 +337,14 @@ class AiHelperController extends Controller
                 'data' => $this->formatKnowledgeEntry($entry),
                 'request_id' => $this->responder->requestId($request),
             ], 201);
+        } catch (RuntimeException $e) {
+            return $this->responder->error(
+                $request,
+                $e->getMessage(),
+                'AI_HELPER_KNOWLEDGE_RUNTIME_UNAVAILABLE',
+                503,
+                ['runtime' => $this->knowledgeRuntime->diagnostics()],
+            );
         } catch (Throwable $e) {
             return $this->safeFailure($request, $e, 'knowledge_upload');
         }
@@ -448,26 +462,24 @@ class AiHelperController extends Controller
                 'content_hash' => hash('sha256', $content),
                 'scope_type' => $scopeType,
                 'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
-                'status' => $active ? AiHelperKnowledgeEntry::STATUS_ACTIVE : AiHelperKnowledgeEntry::STATUS_DISABLED,
+                'status' => AiHelperKnowledgeEntry::STATUS_PROCESSING,
                 'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
                 'reviewed_by' => $actor->id,
                 'reviewed_at' => now(),
-                'active' => $active,
+                'active' => false,
                 'acknowledged_at' => now(),
-                'processed_at' => now(),
+                'processed_at' => null,
                 'error' => null,
                 'tags' => $tags,
                 'version' => $version,
             ]);
 
-            if ($active && ! $this->knowledgeProcessor->processTextEntry($entry, $content, $summary)) {
+            $ingestionRunId = $this->knowledgeLifecycle->beginIngestion($entry);
+            $this->knowledgeProcessor->process($entry->id, $ingestionRunId);
+            if (! $active && $entry->fresh()?->status === AiHelperKnowledgeEntry::STATUS_ACTIVE) {
                 $entry->forceFill([
-                    'status' => AiHelperKnowledgeEntry::STATUS_FAILED,
+                    'status' => AiHelperKnowledgeEntry::STATUS_DISABLED,
                     'active' => false,
-                    'content' => '',
-                    'summary' => null,
-                    'error' => 'Could not prepare readable guidance from this Markdown file.',
-                    'processed_at' => now(),
                 ])->save();
             }
 
@@ -566,7 +578,7 @@ class AiHelperController extends Controller
                 ], 404);
             }
 
-            $entry->delete();
+            $this->knowledgeLifecycle->purge($entry);
             AuditLogger::log($request, 'ai_helper_knowledge_deleted', $request->user(), [
                 'knowledge_entry_id' => $entry->id,
                 'request_id' => $this->responder->requestId($request),
@@ -854,6 +866,7 @@ class AiHelperController extends Controller
                     'queue' => [
                         'default_connection' => config('queue.default'),
                     ],
+                    'knowledge_runtime' => $this->knowledgeRuntime->diagnostics(),
                     'storage' => [
                         'used_bytes' => $storageBytes,
                         'max_total_bytes' => (int) config('ai_helper.knowledge_max_total_upload_bytes', 0),
@@ -983,7 +996,7 @@ class AiHelperController extends Controller
                 ], 404);
             }
 
-            $entry->delete();
+            $this->knowledgeLifecycle->purge($entry);
             AuditLogger::log($request, 'ai_helper_admin_knowledge_deleted', $request->user(), [
                 'knowledge_entry_id' => $entry->id,
                 'request_id' => $this->responder->requestId($request),
@@ -1012,6 +1025,17 @@ class AiHelperController extends Controller
             );
         }
 
+        $corpus = $this->knowledge->corpusReadiness();
+        if ((bool) config('ai_helper.knowledge_strict_readiness', true) && ! ($corpus['ready'] ?? false)) {
+            return $this->responder->error(
+                $request,
+                'Ask AI is waiting for the uploaded knowledge corpus to finish processing. Resolve failed documents or wait for ingestion to complete.',
+                'AI_HELPER_KNOWLEDGE_NOT_READY',
+                409,
+                ['corpus' => $corpus],
+            );
+        }
+
         try {
             $actor = $request->user();
             $conversationPurpose = $this->normalizeConversationPurpose($validated['conversation_purpose'] ?? null);
@@ -1026,6 +1050,7 @@ class AiHelperController extends Controller
                 $pageContext,
                 (string) ($validated['response_language'] ?? 'bm')
             );
+            $sources = $this->knowledge->citationsForGuidance($pageContext['guidance'] ?? []);
 
             if ($conversationPurpose === self::CONVERSATION_PURPOSE_EMBEDDED_HELPER) {
                 if (! empty($validated['thread_id'])) {
@@ -1055,6 +1080,7 @@ class AiHelperController extends Controller
                     $actor->id,
                     count($pageContext['guidance'] ?? []),
                     $pageContext['page'] ?? [],
+                    $sources,
                 );
             }
 
@@ -1096,7 +1122,7 @@ class AiHelperController extends Controller
             return $this->safeFailure($request, $e, 'stream_prepare');
         }
 
-        return response()->stream(function () use ($thread, $assistantMessage, $history, $instructions, $requestId) {
+        return response()->stream(function () use ($thread, $assistantMessage, $history, $instructions, $requestId, $sources) {
             $this->emit('meta', [
                 'request_id' => $requestId,
                 'contract_version' => 1,
@@ -1121,6 +1147,7 @@ class AiHelperController extends Controller
                     'openai_response_id' => $result['response_id'] ?? null,
                     'status' => AiHelperMessage::STATUS_COMPLETED,
                     'error' => null,
+                    'sources' => $sources,
                 ])->save();
 
                 $thread->touch();
@@ -1171,8 +1198,9 @@ class AiHelperController extends Controller
         int $userId,
         int $guidanceCount,
         array $pageContext,
+        array $sources,
     ): StreamedResponse {
-        return response()->stream(function () use ($history, $instructions, $requestId, $userId, $guidanceCount, $pageContext) {
+        return response()->stream(function () use ($history, $instructions, $requestId, $userId, $guidanceCount, $pageContext, $sources) {
             $this->emit('meta', [
                 'request_id' => $requestId,
                 'contract_version' => 1,
@@ -1206,7 +1234,7 @@ class AiHelperController extends Controller
                     'request_id' => $requestId,
                     'conversation_purpose' => self::CONVERSATION_PURPOSE_EMBEDDED_HELPER,
                     'thread' => null,
-                    'message' => $this->formatTransientAssistantMessage($content, $pageContext),
+                    'message' => $this->formatTransientAssistantMessage($content, $pageContext, $sources),
                 ], $requestId);
             } catch (Throwable $e) {
                 $aborted = str_contains($e->getMessage(), 'aborted by client') || connection_aborted();
@@ -1432,11 +1460,12 @@ class AiHelperController extends Controller
             'content' => (string) $message->content,
             'status' => $message->status,
             'route_context' => $message->route_context ?: [],
+            'sources' => $message->sources ?: [],
             'created_at' => optional($message->created_at)->toIso8601String(),
         ];
     }
 
-    private function formatTransientAssistantMessage(string $content, array $pageContext): array
+    private function formatTransientAssistantMessage(string $content, array $pageContext, array $sources = []): array
     {
         return [
             'id' => null,
@@ -1444,6 +1473,7 @@ class AiHelperController extends Controller
             'content' => $content,
             'status' => AiHelperMessage::STATUS_COMPLETED,
             'route_context' => $pageContext,
+            'sources' => $sources,
             'created_at' => now()->toIso8601String(),
         ];
     }
@@ -1533,6 +1563,13 @@ class AiHelperController extends Controller
             'pdf_readable_word_count' => $entry->pdf_readable_word_count,
             'pdf_image_coverage_estimate' => $entry->pdf_image_coverage_estimate,
             'processing_warnings' => $entry->processing_warnings ?: [],
+            'ingestion_run_id' => $entry->ingestion_run_id,
+            'ingestion_version' => $entry->ingestion_version,
+            'ingestion_started_at' => optional($entry->ingestion_started_at)->toIso8601String(),
+            'ingestion_completed_at' => optional($entry->ingestion_completed_at)->toIso8601String(),
+            'extraction_mode' => $entry->extraction_mode,
+            'extraction_complete' => (bool) $entry->extraction_complete,
+            'extracted_characters' => (int) ($entry->extracted_characters ?? 0),
             'error' => $entry->error,
             'acknowledged_at' => optional($entry->acknowledged_at)->toIso8601String(),
             'processed_at' => optional($entry->processed_at)->toIso8601String(),
@@ -1553,6 +1590,9 @@ class AiHelperController extends Controller
                     'chunk_index' => $chunk->chunk_index,
                     'content' => $chunk->content,
                     'token_estimate' => $chunk->token_estimate,
+                    'page_start' => $chunk->page_start,
+                    'page_end' => $chunk->page_end,
+                    'extraction_mode' => $chunk->extraction_mode,
                 ])->values()
                 : [],
         ];

@@ -353,7 +353,7 @@ class InspectionSessionApiTest extends TestCase
         ]);
     }
 
-    public function test_completed_extinguisher_result_cannot_be_reset_by_another_checker(): void
+    public function test_completed_extinguisher_result_can_be_reset_by_another_checker(): void
     {
         $firstUser = $this->inspectionUser('Inspector A');
         $secondUser = $this->inspectionUser('Inspector B');
@@ -370,10 +370,18 @@ class InspectionSessionApiTest extends TestCase
             ['checkPayload' => $this->checkPayload($extinguisher)],
         );
 
-        $response->assertStatus(409);
-        $response->assertJsonPath('code', 'inspection_extinguisher_result_conflict');
-        $response->assertJsonPath('data.status', 'completed');
-        $response->assertJsonPath('data.checkedBy', 'Inspector A');
+        $response->assertOk();
+        $response->assertJsonPath('data.status', 'in_progress');
+        $response->assertJsonPath('data.checkedBy', '');
+        $response->assertJsonPath('data.checkedAt', null);
+        $this->assertDatabaseHas('inspection_extinguisher_results', [
+            'inspection_session_id' => InspectionSession::query()
+                ->where('session_uid', $sessionUid)
+                ->value('id'),
+            'fire_extinguisher_id' => $extinguisher->id,
+            'status' => 'in_progress',
+            'checked_by_user_id' => null,
+        ]);
     }
 
     public function test_location_results_repair_progress_and_match_display_zone_labels(): void

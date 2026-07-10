@@ -16,12 +16,19 @@ class AiHelperKnowledgeChunk extends Model
         'module_key',
         'route_key',
         'active',
+        'page_start',
+        'page_end',
+        'extraction_mode',
+        'ingestion_version',
     ];
 
     protected $casts = [
         'active' => 'boolean',
         'chunk_index' => 'integer',
         'token_estimate' => 'integer',
+        'page_start' => 'integer',
+        'page_end' => 'integer',
+        'ingestion_version' => 'integer',
     ];
 
     public function knowledgeEntry(): BelongsTo

@@ -14,11 +14,14 @@ class AiHelperKnowledgeService
     {
         $context = $this->normalizePageContext($rawContext);
         $guidance = $this->guidanceForContext($context, $user, $message);
+        $catalogueIntent = $this->isCatalogueIntent($message);
 
         return [
             'page' => $context,
             'guidance' => $guidance,
             'available' => count($guidance) > 0,
+            'corpus' => $this->corpusReadiness(),
+            'catalogue' => $catalogueIntent ? $this->catalogueForUser($user) : null,
         ];
     }
 
@@ -55,7 +58,7 @@ class AiHelperKnowledgeService
         $limit = max(1, (int) config('ai_helper.knowledge_retrieval_limit', 6));
 
         $chunks = AiHelperKnowledgeChunk::query()
-            ->with('knowledgeEntry:id,title,module_key,route_key,tags,version,uploaded_by,visibility,review_status,status,active,deleted_at')
+            ->with('knowledgeEntry:id,title,source_mime,module_key,route_key,tags,version,uploaded_by,visibility,review_status,status,active,deleted_at')
             ->where('active', true)
             ->where(function ($query) use ($moduleKey, $routeKey) {
                 $this->applyScopeFilter($query, $moduleKey, $routeKey);
@@ -64,7 +67,6 @@ class AiHelperKnowledgeService
                 $this->applyUsableEntryFilter($query, $user);
             })
             ->latest('updated_at')
-            ->limit(80)
             ->get();
 
         $ranked = $chunks
@@ -96,6 +98,34 @@ class AiHelperKnowledgeService
         return $ranked->map(fn (array $entry) => Arr::except($entry, ['score']))->all();
     }
 
+    /**
+     * @param array<int, array<string, mixed>> $guidance
+     * @return array<int, array{knowledge_id: int, title: string, source_mime: string, page_start: ?int, page_end: ?int}>
+     */
+    public function citationsForGuidance(array $guidance): array
+    {
+        return collect($guidance)
+            ->filter(fn (array $entry) => (int) ($entry['id'] ?? 0) > 0)
+            ->groupBy(fn (array $entry) => implode(':', [
+                (int) $entry['id'],
+                (int) ($entry['page_start'] ?? 0),
+                (int) ($entry['page_end'] ?? 0),
+            ]))
+            ->map(function ($entries) {
+                $entry = $entries->first();
+                return [
+                    'knowledge_id' => (int) $entry['id'],
+                    'title' => Str::limit(trim((string) ($entry['title'] ?? 'Knowledge source')), 140, ''),
+                    'source_mime' => trim((string) ($entry['source_mime'] ?? 'application/pdf')),
+                    'page_start' => isset($entry['page_start']) ? (int) $entry['page_start'] : null,
+                    'page_end' => isset($entry['page_end']) ? (int) $entry['page_end'] : null,
+                ];
+            })
+            ->take(6)
+            ->values()
+            ->all();
+    }
+
     public function instructionsFor(array $contextEnvelope, string $responseLanguage = 'auto'): string
     {
         $page = $contextEnvelope['page'] ?? [];
@@ -117,6 +147,15 @@ class AiHelperKnowledgeService
             'module_key' => $page['module_key'] ?? '',
             'title' => $page['title'] ?? '',
         ], JSON_UNESCAPED_SLASHES);
+        $corpus = $contextEnvelope['corpus'] ?? [];
+        $catalogue = $contextEnvelope['catalogue'] ?? null;
+        $corpusSummary = json_encode([
+            'ready' => (bool) ($corpus['ready'] ?? false),
+            'counts' => $corpus['counts'] ?? [],
+        ], JSON_UNESCAPED_SLASHES);
+        $catalogueText = $catalogue === null
+            ? 'No complete document catalogue was requested for this question.'
+            : json_encode($catalogue, JSON_UNESCAPED_SLASHES);
 
         return <<<TEXT
 You are the VMECC in-app AI helper. Help signed-in users understand how to use the VMECC operations management system.
@@ -125,6 +164,7 @@ Rules:
 - Be concise, practical, and specific to the current page when possible.
 - Use only the provided page context and guidance for VMECC-specific workflow or policy claims.
 - If guidance is missing or incomplete, say that page-specific guidance is not loaded yet and give a safe general navigation answer.
+- When a document catalogue is supplied, use its count and titles exactly. Do not infer a catalogue from retrieved passages. If it is marked truncated, say that only the first listed titles are shown.
 - Do not claim to submit, approve, delete, create, or modify VMECC records. You are advisory only.
 - Do not request passwords, API keys, IC numbers, banking details, medical details, or other sensitive personal data.
 - Render plain text only.
@@ -135,7 +175,60 @@ Current page context:
 
 Available VMECC guidance:
 {$guidanceText}
+
+Knowledge corpus state:
+{$corpusSummary}
+
+Document catalogue for this request:
+{$catalogueText}
 TEXT;
+    }
+
+    /** @return array{ready: bool, counts: array<string, int>} */
+    public function corpusReadiness(): array
+    {
+        $counts = AiHelperKnowledgeEntry::query()
+            ->selectRaw('status, count(*) as aggregate')
+            ->groupBy('status')
+            ->pluck('aggregate', 'status')
+            ->map(static fn ($count) => (int) $count)
+            ->all();
+        $blocking = (int) ($counts[AiHelperKnowledgeEntry::STATUS_PROCESSING] ?? 0);
+        $failed = (int) ($counts[AiHelperKnowledgeEntry::STATUS_FAILED] ?? 0);
+
+        return [
+            'ready' => $blocking === 0 && $failed === 0,
+            'counts' => $counts,
+        ];
+    }
+
+    /** @return array{total: int, truncated: bool, entries: array<int, array{id: int, title: string, status: string, scope_type: ?string, module_key: ?string}>} */
+    public function catalogueForUser(?User $user): array
+    {
+        $limit = max(1, (int) config('ai_helper.knowledge_catalogue_limit', 250));
+        $query = AiHelperKnowledgeEntry::query()
+            ->where(function ($query) use ($user) {
+                $this->applyUsableEntryFilter($query, $user);
+            });
+        $total = (clone $query)->count();
+        $entries = $query
+            ->orderBy('title')
+            ->limit($limit)
+            ->get(['id', 'title', 'status', 'scope_type', 'module_key'])
+            ->map(static fn (AiHelperKnowledgeEntry $entry) => [
+                'id' => $entry->id,
+                'title' => $entry->title,
+                'status' => $entry->status,
+                'scope_type' => $entry->scope_type,
+                'module_key' => $entry->module_key,
+            ])
+            ->all();
+
+        return [
+            'total' => $total,
+            'truncated' => $total > count($entries),
+            'entries' => $entries,
+        ];
     }
 
     private function languageInstruction(string $responseLanguage): string
@@ -200,10 +293,13 @@ TEXT;
             'module_key' => $chunk->module_key,
             'route_key' => $chunk->route_key,
             'title' => $entry?->title ?: 'Knowledge source',
+            'source_mime' => $entry?->source_mime ?: 'application/pdf',
             'content' => $chunk->content,
             'tags' => $entry?->tags ?: [],
             'version' => $entry?->version ?: 1,
             'source_scope' => $this->sourceScope($chunk->module_key, $chunk->route_key, $moduleKey, $routeKey),
+            'page_start' => $chunk->page_start,
+            'page_end' => $chunk->page_end,
             'score' => $this->rankScore($chunk->content, $chunk->module_key, $chunk->route_key, $moduleKey, $routeKey, $message),
         ];
     }
@@ -217,10 +313,13 @@ TEXT;
             'module_key' => $entry->module_key,
             'route_key' => $entry->route_key,
             'title' => $entry->title,
+            'source_mime' => $entry->source_mime ?: 'application/pdf',
             'content' => $content,
             'tags' => $entry->tags ?: [],
             'version' => $entry->version,
             'source_scope' => $this->sourceScope($entry->module_key, $entry->route_key, $moduleKey, $routeKey),
+            'page_start' => null,
+            'page_end' => null,
             'score' => $this->rankScore($content, $entry->module_key, $entry->route_key, $moduleKey, $routeKey, $message),
         ];
     }
@@ -265,6 +364,24 @@ TEXT;
 
         $haystack = Str::lower($content);
         return $terms->sum(fn (string $term) => str_contains($haystack, $term) ? 20 : 0);
+    }
+
+    private function isCatalogueIntent(string $message): bool
+    {
+        $message = Str::lower($message);
+
+        return str_contains($message, 'list all')
+            || str_contains($message, 'all files')
+            || str_contains($message, 'how many')
+            || str_contains($message, 'uploaded files')
+            || str_contains($message, 'uploaded documents')
+            || str_contains($message, 'uploaded guidance')
+            || str_contains($message, 'guidance has been uploaded')
+            || str_contains($message, 'senarai')
+            || str_contains($message, 'berapa')
+            || str_contains($message, 'semua fail')
+            || str_contains($message, 'semua dokumen')
+            || str_contains($message, 'dokumen yang dimuat naik');
     }
 
     private function routeKeyForPath(string $path): string

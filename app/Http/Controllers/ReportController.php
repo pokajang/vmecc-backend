@@ -9,6 +9,7 @@ use App\Services\AuditLogger;
 use App\Services\InspectionCheckRowSyncService;
 use App\Services\InspectionPayloadService;
 use App\Services\ReportingWorkflowService;
+use App\Services\ReportMediaService;
 use App\Services\RoleCatalog;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Database\QueryException;
@@ -28,6 +29,7 @@ class ReportController extends Controller
         private readonly InspectionCheckRowSyncService $inspectionCheckRowSyncService,
         private readonly ReportingWorkflowService $reportingWorkflowService,
         private readonly InspectionPayloadService $inspectionPayloadService,
+        private readonly ReportMediaService $reportMediaService,
     ) {}
 
     private const STATUS_DRAFT = 'Draft';
@@ -329,6 +331,7 @@ class ReportController extends Controller
             throw $exception;
         }
 
+        $this->reportMediaService->syncPayloadLinks((array) $report->payload, 'report', (string) $report->report_uid, (int) $user->id, $reportType);
         AuditLogger::log($request, 'report_created', $user, [
             'report_uid' => $report->report_uid,
             'display_id' => $report->display_id,
@@ -457,6 +460,7 @@ class ReportController extends Controller
         });
 
         $report->load('timelineEntries');
+        $this->reportMediaService->syncPayloadLinks((array) $report->payload, 'report', (string) $report->report_uid, (int) $user->id, $reportType);
         AuditLogger::log($request, 'report_updated', $user, [
             'report_uid' => $report->report_uid,
             'display_id' => $report->display_id,
@@ -491,6 +495,7 @@ class ReportController extends Controller
                 remarks: 'Owner deleted report.',
             );
             $this->inspectionCheckRowSyncService->softDeleteForReport($report);
+            $this->reportMediaService->removeParentLinks('report', (string) $report->report_uid);
             $report->delete();
         });
 

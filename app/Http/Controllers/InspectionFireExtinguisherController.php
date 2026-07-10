@@ -138,6 +138,7 @@ class InspectionFireExtinguisherController extends Controller
         $issues = Str::of((string) $request->query('issues', 'all'))->squish()->lower()->toString();
         $certification = Str::of((string) $request->query('certification', 'all'))->squish()->lower()->toString();
         $inspectedBy = Str::of((string) $request->query('inspectedBy', $request->query('lastInspectedBy', 'all')))->squish()->toString();
+        $duplicateScope = Str::of((string) $request->query('duplicateScope', 'all'))->squish()->lower()->toString();
         $sort = Str::of((string) $request->query('sort', 'zone-location'))->squish()->lower()->toString();
         $direction = Str::of((string) $request->query('direction', 'asc'))->squish()->lower()->toString() === 'desc'
             ? 'desc'
@@ -179,10 +180,12 @@ class InspectionFireExtinguisherController extends Controller
 
         [$periodStart, $periodEnd] = $this->coveragePeriodRange($period, $periodFrom, $periodTo);
         $coverageRows = $this->coverageRowsForCatalog($catalogRows, $periodStart, $periodEnd);
+        $locatorDuplicateCounts = $this->coverageLocatorDuplicateCounts($catalogRows);
         $data = $catalogRows
             ->map(fn (InspectionFireExtinguisher $row) => $this->formatCoverageRow(
                 $row,
                 $coverageRows[(int) $row->id] ?? null,
+                $locatorDuplicateCounts[(int) $row->id] ?? 1,
             ))
             ->values();
         $filteredData = $this->filterCoverageData($data, [
@@ -190,6 +193,7 @@ class InspectionFireExtinguisherController extends Controller
             'issues' => $issues,
             'certification' => $certification,
             'inspectedBy' => $inspectedBy,
+            'duplicateScope' => $duplicateScope,
         ]);
         $sortedData = $this->sortCoverageData($filteredData, $sort, $direction);
         $filteredCount = $sortedData->count();
@@ -213,6 +217,7 @@ class InspectionFireExtinguisherController extends Controller
                 'issues' => $issues,
                 'certification' => $certification,
                 'inspectedBy' => $inspectedBy,
+                'duplicateScope' => $duplicateScope,
                 'sort' => $sort,
                 'direction' => $direction,
                 'page' => $page,
@@ -236,13 +241,21 @@ class InspectionFireExtinguisherController extends Controller
         $row = $this->findActiveRow($extinguisherId);
         [$periodStart, $periodEnd] = $this->coveragePeriodRange($period, $periodFrom, $periodTo);
         $coverageRows = $this->coverageRowsForCatalog(collect([$row]), $periodStart, $periodEnd);
+        $locatorDuplicateCounts = $this->coverageLocatorDuplicateCounts(collect([$row]));
         $coverage = $coverageRows[(int) $row->id] ?? null;
 
         return response()->json([
-            'data' => array_merge($this->formatCoverageRow($row, $coverage), [
-                'checks' => $coverage['checks'] ?? $this->emptyCoverageChecks(),
-                'duplicateReports' => $coverage['duplicateReports'] ?? [],
-            ]),
+            'data' => array_merge(
+                $this->formatCoverageRow(
+                    $row,
+                    $coverage,
+                    $locatorDuplicateCounts[(int) $row->id] ?? 1,
+                ),
+                [
+                    'checks' => $coverage['checks'] ?? $this->emptyCoverageChecks(),
+                    'duplicateReports' => $coverage['duplicateReports'] ?? [],
+                ],
+            ),
             'meta' => [
                 'source' => 'database',
                 'period' => $period,
@@ -265,8 +278,11 @@ class InspectionFireExtinguisherController extends Controller
 
         $rows = InspectionFireExtinguisher::query()
             ->where('is_active', true)
-            ->whereNotNull('barcode_no')
-            ->whereRaw('LOWER(TRIM(barcode_no)) = ?', [$locator])
+            ->where(function ($query) use ($locator): void {
+                $query
+                    ->whereRaw('LOWER(TRIM(barcode_no)) = ?', [$locator])
+                    ->orWhereRaw('LOWER(TRIM(id_loc_no)) = ?', [$locator]);
+            })
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
@@ -460,11 +476,24 @@ class InspectionFireExtinguisherController extends Controller
                 $issues = $filters['issues'] ?? 'all';
                 $certification = $filters['certification'] ?? 'all';
                 $inspectedBy = $filters['inspectedBy'] ?? 'all';
+                $duplicateScope = $filters['duplicateScope'] ?? 'all';
 
                 if ($status !== 'all' && $inspectionStatus !== $status) {
                     return false;
                 }
                 if ($inspectedBy !== 'all' && $this->text($row['inspectedBy'] ?? '') !== $inspectedBy) {
+                    return false;
+                }
+                if (
+                    $duplicateScope === 'locator' &&
+                    (int) ($row['locatorDuplicateCount'] ?? 0) <= 1
+                ) {
+                    return false;
+                }
+                if (
+                    ($duplicateScope === 'report' || $duplicateScope === 'reports') &&
+                    (int) ($row['duplicateCount'] ?? 0) <= 1
+                ) {
                     return false;
                 }
                 if ($issues === 'with-issues' && (int) ($row['issueCount'] ?? 0) <= 0) {
@@ -494,6 +523,10 @@ class InspectionFireExtinguisherController extends Controller
                 'days-left' => $this->compareCoverageValues((int) ($a['daysLeft'] ?? 0), (int) ($b['daysLeft'] ?? 0)),
                 'issues' => $this->compareCoverageValues((int) ($b['issueCount'] ?? 0), (int) ($a['issueCount'] ?? 0)),
                 'duplicates', 'reports' => $this->compareCoverageValues((int) ($b['duplicateCount'] ?? 0), (int) ($a['duplicateCount'] ?? 0)),
+                'locator-duplicates' => $this->compareCoverageValues(
+                    (int) ($b['locatorDuplicateCount'] ?? 0),
+                    (int) ($a['locatorDuplicateCount'] ?? 0),
+                ),
                 default => $this->compareCoverageLocation($a, $b),
             };
         })->values();
@@ -674,6 +707,66 @@ class InspectionFireExtinguisherController extends Controller
                 return [(int) $catalogRow->id => $this->buildCoverageData($catalogRow, $checkRows)];
             })
             ->filter()
+            ->all();
+    }
+
+    /**
+     * @param Collection<int, InspectionFireExtinguisher> $catalogRows
+     * @return array<int, int>
+     */
+    private function coverageLocatorDuplicateCounts(Collection $catalogRows): array
+    {
+        $normalizedLocators = $catalogRows
+            ->flatMap(fn (InspectionFireExtinguisher $row): array => $this->locatorCandidates([
+                'barcodeNo' => $row->barcode_no ?? '',
+                'idLocNo' => $row->id_loc_no ?? '',
+            ]))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($normalizedLocators)) {
+            return [];
+        }
+
+        $targetLocators = array_fill_keys($normalizedLocators, true);
+        $activeRows = InspectionFireExtinguisher::query()
+            ->where('is_active', true)
+            ->where(function ($query) use ($normalizedLocators): void {
+                $query
+                    ->whereIn(DB::raw('LOWER(TRIM(barcode_no))'), $normalizedLocators)
+                    ->orWhereIn(DB::raw('LOWER(TRIM(id_loc_no))'), $normalizedLocators);
+            })
+            ->get(['id', 'barcode_no', 'id_loc_no']);
+
+        $activeIdsByLocator = [];
+        foreach ($activeRows as $activeRow) {
+            foreach ($this->locatorCandidates([
+                'barcodeNo' => $activeRow->barcode_no ?? '',
+                'idLocNo' => $activeRow->id_loc_no ?? '',
+            ]) as $locator) {
+                if (! isset($targetLocators[$locator])) {
+                    continue;
+                }
+                $activeIdsByLocator[$locator][(int) $activeRow->id] = true;
+            }
+        }
+
+        return $catalogRows
+            ->mapWithKeys(function (InspectionFireExtinguisher $row) use ($activeIdsByLocator): array {
+                $matchingIds = [];
+                foreach ($this->locatorCandidates([
+                    'barcodeNo' => $row->barcode_no ?? '',
+                    'idLocNo' => $row->id_loc_no ?? '',
+                ]) as $locator) {
+                    foreach ($activeIdsByLocator[$locator] ?? [] as $activeId => $_) {
+                        $matchingIds[(int) $activeId] = true;
+                    }
+                }
+
+                return [(int) $row->id => max(1, count($matchingIds))];
+            })
             ->all();
     }
 
@@ -924,7 +1017,11 @@ class InspectionFireExtinguisherController extends Controller
      * @param array<string, mixed>|null $coverage
      * @return array<string, mixed>
      */
-    private function formatCoverageRow(InspectionFireExtinguisher $row, ?array $coverage = null): array
+    private function formatCoverageRow(
+        InspectionFireExtinguisher $row,
+        ?array $coverage = null,
+        int $locatorDuplicateCount = 1,
+    ): array
     {
         $validity = $row->certification_validity;
         $latestRow = $coverage['latestRow'] ?? null;
@@ -961,6 +1058,7 @@ class InspectionFireExtinguisherController extends Controller
             'reportCount' => $reportCount,
             'repeatCount' => max(0, $reportCount - 1),
             'duplicateCount' => $reportCount,
+            'locatorDuplicateCount' => max(1, $locatorDuplicateCount),
             'latestReportId' => $latestRow instanceof InspectionCheckRow ? (string) $latestRow->display_id : '',
         ];
     }
@@ -977,6 +1075,9 @@ class InspectionFireExtinguisherController extends Controller
             'notInspected' => $rows->filter(fn (array $row): bool => (string) ($row['latestInspectionAt'] ?? '') === '')->count(),
             'issues' => $rows->filter(fn (array $row): bool => (int) ($row['issueCount'] ?? 0) > 0)->count(),
             'duplicates' => $rows->filter(fn (array $row): bool => (int) ($row['duplicateCount'] ?? 0) > 1)->count(),
+            'locatorDuplicates' => $rows->filter(
+                fn (array $row): bool => (int) ($row['locatorDuplicateCount'] ?? 0) > 1,
+            )->count(),
             'expired' => $rows->filter(fn (array $row): bool => (int) ($row['daysLeft'] ?? 0) < 0)->count(),
         ];
     }
@@ -1085,15 +1186,18 @@ class InspectionFireExtinguisherController extends Controller
      */
     private function assertUniqueActiveLocator(array $data, ?int $ignoreId = null, bool $lock = false): void
     {
-        $locator = $this->locatorPart($data['barcodeNo'] ?? $data['barcode_no'] ?? '');
-        if ($locator === '') {
+        $locators = $this->locatorCandidates($data);
+        if ($locators === []) {
             return;
         }
 
         $duplicateExists = InspectionFireExtinguisher::query()
             ->where('is_active', true)
-            ->whereNotNull('barcode_no')
-            ->whereRaw('LOWER(TRIM(barcode_no)) = ?', [$locator])
+            ->where(function ($query) use ($locators): void {
+                $query
+                    ->whereIn(DB::raw('LOWER(TRIM(barcode_no))'), $locators)
+                    ->orWhereIn(DB::raw('LOWER(TRIM(id_loc_no))'), $locators);
+            })
             ->when($ignoreId, fn ($query) => $query->whereKeyNot($ignoreId))
             ->when($lock, fn ($query) => $query->lockForUpdate())
             ->exists();
@@ -1113,7 +1217,13 @@ class InspectionFireExtinguisherController extends Controller
      */
     private function locatorChanged(InspectionFireExtinguisher $row, array $data): bool
     {
-        return $this->locatorPart($row->barcode_no ?? '') !== $this->locatorPart($data['barcodeNo'] ?? $data['barcode_no'] ?? '');
+        $previousLocators = $this->locatorCandidates([
+            'barcodeNo' => $row->barcode_no ?? '',
+            'idLocNo' => $row->id_loc_no ?? '',
+        ]);
+        $nextLocators = $this->locatorCandidates($data);
+
+        return $previousLocators !== $nextLocators;
     }
 
     /**
@@ -1157,6 +1267,28 @@ class InspectionFireExtinguisherController extends Controller
         }
 
         return hash('sha256', implode('|', [$mainLocation, $subLocation, $idLocNo, $barcodeNo]));
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @return array<int, string>
+     */
+    private function locatorCandidates(array $data): array
+    {
+        $locators = [
+            $this->locatorPart($data['barcodeNo'] ?? $data['barcode_no'] ?? ''),
+            $this->locatorPart($data['idLocNo'] ?? $data['id_loc_no'] ?? ''),
+        ];
+        $unique = [];
+        foreach ($locators as $locator) {
+            if ($locator !== '') {
+                $unique[$locator] = $locator;
+            }
+        }
+
+        $normalized = array_values($unique);
+        sort($normalized);
+        return $normalized;
     }
 
     private function identityPart(mixed $value): string

@@ -20,6 +20,7 @@ class Kernel extends ConsoleKernel
         }
         $schedule->command('messages:digest')->dailyAt('09:00')->withoutOverlapping();
         $schedule->command('ai-helper:prune-knowledge-files')->dailyAt('02:30')->withoutOverlapping();
+        $schedule->command('report-media:prune')->dailyAt('03:00')->withoutOverlapping();
     }
 
     /**

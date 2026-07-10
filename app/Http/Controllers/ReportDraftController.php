@@ -6,6 +6,7 @@ use App\Models\ReportDraft;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\InspectionPayloadService;
 use App\Services\RoleCatalog;
+use App\Services\ReportMediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -22,6 +23,7 @@ class ReportDraftController extends Controller
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly InspectionPayloadService $inspectionPayloadService,
+        private readonly ReportMediaService $reportMediaService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -135,6 +137,7 @@ class ReportDraftController extends Controller
 
         if (! $row) {
             $row = $this->createDraft($user->id, $data, $reportType);
+            $this->reportMediaService->syncPayloadLinks((array) $data['payload'], 'report_draft', (string) $row->draft_id, (int) $user->id, $reportType);
 
             return response()->json(['data' => $this->formatRow($row)], 201);
         }
@@ -147,6 +150,7 @@ class ReportDraftController extends Controller
             'saved_at' => now(),
         ]);
         $row->save();
+        $this->reportMediaService->syncPayloadLinks((array) $data['payload'], 'report_draft', (string) $row->draft_id, (int) $user->id, $reportType);
 
         return response()->json(['data' => $this->formatRow($row)]);
     }
@@ -187,6 +191,7 @@ class ReportDraftController extends Controller
             'saved_at' => now(),
         ]);
         $row->save();
+        $this->reportMediaService->syncPayloadLinks((array) $data['payload'], 'report_draft', (string) $row->draft_id, (int) $user->id, (string) $row->report_type);
 
         return response()->json(['data' => $this->formatRow($row)]);
     }
@@ -199,10 +204,12 @@ class ReportDraftController extends Controller
             return response()->json(['message' => 'report_type is required.'], 422);
         }
 
-        ReportDraft::query()
+        $draftIds = ReportDraft::query()
             ->where('user_id', $user->id)
             ->where('report_type', $reportType)
-            ->delete();
+            ->pluck('draft_id');
+        foreach ($draftIds as $draftId) $this->reportMediaService->removeParentLinks('report_draft', (string) $draftId);
+        ReportDraft::query()->where('user_id', $user->id)->where('report_type', $reportType)->delete();
 
         return response()->json(['message' => 'Draft cleared.']);
     }
@@ -210,10 +217,14 @@ class ReportDraftController extends Controller
     public function destroyById(Request $request, string $draftId): JsonResponse
     {
         $user = $request->user();
-        ReportDraft::query()
+        $row = ReportDraft::query()
             ->where('user_id', $user->id)
             ->where('draft_id', trim((string) $draftId))
-            ->delete();
+            ->first();
+        if ($row) {
+            $this->reportMediaService->removeParentLinks('report_draft', (string) $row->draft_id);
+            $row->delete();
+        }
 
         return response()->json(['message' => 'Draft deleted.']);
     }

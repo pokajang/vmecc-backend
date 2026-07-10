@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Report;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\ReportMediaService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 
@@ -11,6 +12,7 @@ class InspectionReportPdfController extends Controller
 {
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
+        private readonly ReportMediaService $reportMediaService,
     ) {
     }
 
@@ -44,7 +46,7 @@ class InspectionReportPdfController extends Controller
             ], 409);
         }
 
-        $payload = is_array($report->payload) ? $report->payload : [];
+        $payload = $this->reportMediaService->hydratePayloadForPdf(is_array($report->payload) ? $report->payload : []);
         $payload['id'] = $report->report_uid;
         $payload['displayId'] = $report->display_id;
         $payload['reportType'] = $report->report_type;

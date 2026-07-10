@@ -17,12 +17,13 @@ class PruneAiHelperKnowledgeFiles extends Command
         $dryRun = (bool) $this->option('dry-run');
         $deletedCutoff = now()->subDays(max(1, (int) config('ai_helper.knowledge_deleted_retention_days', 30)));
         $failedCutoff = now()->subDays(max(1, (int) config('ai_helper.knowledge_failed_retention_days', 14)));
+        $deletingCutoff = now()->subMinutes(5);
         $pruned = 0;
 
         AiHelperKnowledgeEntry::withTrashed()
             ->whereNotNull('source_path')
             ->where('source_path', 'not like', 'seed:%')
-            ->where(function ($query) use ($deletedCutoff, $failedCutoff) {
+            ->where(function ($query) use ($deletedCutoff, $failedCutoff, $deletingCutoff) {
                 $query
                     ->whereNotNull('deleted_at')
                     ->where('deleted_at', '<=', $deletedCutoff)
@@ -31,6 +32,12 @@ class PruneAiHelperKnowledgeFiles extends Command
                             ->whereNull('deleted_at')
                             ->where('status', AiHelperKnowledgeEntry::STATUS_FAILED)
                             ->where('updated_at', '<=', $failedCutoff);
+                    })
+                    ->orWhere(function ($deleting) use ($deletingCutoff) {
+                        $deleting
+                            ->whereNull('deleted_at')
+                            ->where('status', AiHelperKnowledgeEntry::STATUS_DELETING)
+                            ->where('updated_at', '<=', $deletingCutoff);
                     });
             })
             ->orderBy('id')
