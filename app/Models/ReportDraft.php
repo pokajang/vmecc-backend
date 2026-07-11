@@ -15,10 +15,12 @@ class ReportDraft extends Model
         'source_report_uid',
         'payload',
         'saved_at',
+        'version',
     ];
 
     protected $casts = [
         'payload' => 'array',
         'saved_at' => 'datetime',
+        'version' => 'integer',
     ];
 }

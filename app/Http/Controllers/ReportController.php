@@ -6,6 +6,7 @@ use App\Models\Report;
 use App\Models\ReportTimelineEntry;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
+use App\Services\DrillPayloadService;
 use App\Services\InspectionCheckRowSyncService;
 use App\Services\InspectionPayloadService;
 use App\Services\ReportingWorkflowService;
@@ -30,6 +31,7 @@ class ReportController extends Controller
         private readonly ReportingWorkflowService $reportingWorkflowService,
         private readonly InspectionPayloadService $inspectionPayloadService,
         private readonly ReportMediaService $reportMediaService,
+        private readonly DrillPayloadService $drillPayloadService,
     ) {}
 
     private const STATUS_DRAFT = 'Draft';
@@ -229,8 +231,17 @@ class ReportController extends Controller
         $reportType = $this->normalizeReportType($data['report_type'] ?? '');
         $isInspection = $reportType === 'inspection';
         $isManagedWorkflow = $this->isManagedReportingWorkflowType($reportType);
+        if ($isManagedWorkflow) {
+            $this->ensureReportingModulePermission($request, $reportType);
+        }
+        if ($reportType === 'drill') {
+            if ($status === self::STATUS_DRAFT) {
+                $this->drillPayloadService->validateForDraft((array) $data['payload']);
+            } else {
+                $this->drillPayloadService->validateForSubmit((array) $data['payload']);
+            }
+        }
         if ($isInspection) {
-            $this->ensureInspectionPermission($request);
             $data['payload'] = $this->applyInspectionSessionInspector(
                 (array) $data['payload'],
                 $request
@@ -278,7 +289,7 @@ class ReportController extends Controller
             : null;
 
         try {
-            $report = DB::transaction(function () use ($data, $status, $action, $submissionKey, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt) {
+            $report = DB::transaction(function () use ($data, $status, $action, $submissionKey, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType) {
                 $report = Report::create([
                     'report_uid' => trim((string) ($data['report_uid'] ?? Str::uuid()->toString())),
                     'display_id' => trim((string) $data['display_id']),
@@ -310,6 +321,7 @@ class ReportController extends Controller
                     $report->refresh();
                     $this->inspectionCheckRowSyncService->syncForReport($report, (int) $user->id);
                 }
+                $this->reportMediaService->syncPayloadLinks((array) $report->payload, 'report', (string) $report->report_uid, (int) $user->id, $reportType);
 
                 return $report->load('timelineEntries');
             });
@@ -331,7 +343,6 @@ class ReportController extends Controller
             throw $exception;
         }
 
-        $this->reportMediaService->syncPayloadLinks((array) $report->payload, 'report', (string) $report->report_uid, (int) $user->id, $reportType);
         AuditLogger::log($request, 'report_created', $user, [
             'report_uid' => $report->report_uid,
             'display_id' => $report->display_id,
@@ -382,6 +393,13 @@ class ReportController extends Controller
         $isInspection = $reportType === 'inspection';
         $isManagedWorkflow = $this->isManagedReportingWorkflowType($reportType);
         $isSystemAdministrator = $this->isSystemAdministrator($user);
+        if ($reportType === 'drill') {
+            if ($targetStatus === self::STATUS_DRAFT) {
+                $this->drillPayloadService->validateForDraft((array) $data['payload']);
+            } else {
+                $this->drillPayloadService->validateForSubmit((array) $data['payload']);
+            }
+        }
         if ($isInspection) {
             $this->ensureInspectionPermission($request);
             $data['payload'] = $this->applyInspectionSessionInspector(
@@ -424,7 +442,7 @@ class ReportController extends Controller
             ? $this->submittedAtForReportPayload($data, $isInspection)
             : $report->submitted_at;
 
-        DB::transaction(function () use ($report, $data, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt) {
+        DB::transaction(function () use ($report, $data, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType) {
             $fromStatus = $report->status;
             $report->update([
                 'payload' => $data['payload'],
@@ -457,10 +475,10 @@ class ReportController extends Controller
                 $report->refresh();
                 $this->inspectionCheckRowSyncService->syncForReport($report, (int) $user->id);
             }
+            $this->reportMediaService->syncPayloadLinks((array) $report->payload, 'report', (string) $report->report_uid, (int) $user->id, $reportType);
         });
 
         $report->load('timelineEntries');
-        $this->reportMediaService->syncPayloadLinks((array) $report->payload, 'report', (string) $report->report_uid, (int) $user->id, $reportType);
         AuditLogger::log($request, 'report_updated', $user, [
             'report_uid' => $report->report_uid,
             'display_id' => $report->display_id,
@@ -699,8 +717,11 @@ class ReportController extends Controller
             ->where('report_uid', $reportUid)
             ->with('timelineEntries')
             ->firstOrFail();
-        if ($this->normalizeReportType($report->report_type ?? '') === 'inspection') {
-            $this->ensureInspectionPermission($request);
+        $reportType = $this->normalizeReportType($report->report_type ?? '');
+        if ($this->isManagedReportingWorkflowType($reportType)) {
+            $this->ensureReportingModulePermission($request, $reportType);
+        }
+        if ($reportType === 'inspection') {
             if ((int) $report->owner_user_id === (int) $user->id || $this->isSystemAdministrator($user)) {
                 return $report;
             }
@@ -721,8 +742,11 @@ class ReportController extends Controller
             ->with('timelineEntries')
             ->firstOrFail();
 
-        if ($this->normalizeReportType($report->report_type ?? '') === 'inspection') {
-            $this->ensureInspectionPermission($request);
+        $reportType = $this->normalizeReportType($report->report_type ?? '');
+        if ($this->isManagedReportingWorkflowType($reportType)) {
+            $this->ensureReportingModulePermission($request, $reportType);
+        }
+        if ($reportType === 'inspection') {
             if ((int) $report->owner_user_id === (int) $user->id || $this->isSystemAdministrator($user)) {
                 return $report;
             }

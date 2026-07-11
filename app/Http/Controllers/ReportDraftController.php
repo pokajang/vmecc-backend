@@ -4,11 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\ReportDraft;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\DrillPayloadService;
 use App\Services\InspectionPayloadService;
-use App\Services\RoleCatalog;
 use App\Services\ReportMediaService;
+use App\Services\RoleCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -20,10 +23,18 @@ class ReportDraftController extends Controller
 
     private const INSPECTION_TYPE = 'inspection';
 
+    private const REPORT_PERMISSIONS = [
+        'inspection' => 'reports.inspection.view',
+        'erco' => 'reports.erco.view',
+        'drill' => 'reports.drill.view',
+        'fitness-test' => 'reports.fitness.view',
+    ];
+
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly InspectionPayloadService $inspectionPayloadService,
         private readonly ReportMediaService $reportMediaService,
+        private readonly DrillPayloadService $drillPayloadService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -103,11 +114,17 @@ class ReportDraftController extends Controller
             'origin_mode' => ['nullable', 'string', 'in:new,edit'],
             'source_report_uid' => ['nullable', 'string', 'max:190'],
             'draft_id' => ['nullable', 'string', 'max:80'],
+            'base_version' => ['nullable', 'integer', 'min:1'],
+            'create_new' => ['nullable', 'boolean'],
         ]);
 
         $reportType = $this->normalizeReportType((string) $data['report_type']);
         if ($reportType === '') {
             return response()->json(['message' => 'report_type is required.'], 422);
+        }
+        $this->ensureReportPermission($request, $reportType);
+        if ($reportType === 'drill') {
+            $this->drillPayloadService->validateForDraft((array) $data['payload']);
         }
         if ($reportType === self::INSPECTION_TYPE) {
             $data['payload'] = $this->applyInspectionSessionInspector(
@@ -115,7 +132,7 @@ class ReportDraftController extends Controller
                 $request
             );
             $this->inspectionPayloadService->validateForDraft((array) $data['payload']);
-            $data['payload'] = $this->inspectionPayloadService->normalize((array) $data['payload']);
+            $data['payload'] = $this->inspectionPayloadService->normalizeForDraft((array) $data['payload']);
         }
 
         $incomingDraftId = trim((string) ($data['draft_id'] ?? ''));
@@ -126,7 +143,7 @@ class ReportDraftController extends Controller
                 ->where('user_id', $user->id)
                 ->where('draft_id', $incomingDraftId)
                 ->first();
-        } else {
+        } elseif (($data['create_new'] ?? false) !== true) {
             $row = ReportDraft::query()
                 ->where('user_id', $user->id)
                 ->where('report_type', $reportType)
@@ -136,21 +153,27 @@ class ReportDraftController extends Controller
         }
 
         if (! $row) {
-            $row = $this->createDraft($user->id, $data, $reportType);
-            $this->reportMediaService->syncPayloadLinks((array) $data['payload'], 'report_draft', (string) $row->draft_id, (int) $user->id, $reportType);
+            $row = DB::transaction(function () use ($user, $data, $reportType): ReportDraft {
+                $created = $this->createDraft($user->id, $data, $reportType);
+                $this->reportMediaService->syncPayloadLinks((array) $data['payload'], 'report_draft', (string) $created->draft_id, (int) $user->id, $reportType);
+
+                return $created;
+            });
 
             return response()->json(['data' => $this->formatRow($row)], 201);
         }
 
-        $row->fill([
-            'payload' => $data['payload'],
-            'title' => $this->normalizeNullableString($data['title'] ?? null),
-            'origin_mode' => $this->normalizeOriginMode($data['origin_mode'] ?? null),
-            'source_report_uid' => $this->normalizeNullableString($data['source_report_uid'] ?? null),
-            'saved_at' => now(),
-        ]);
-        $row->save();
-        $this->reportMediaService->syncPayloadLinks((array) $data['payload'], 'report_draft', (string) $row->draft_id, (int) $user->id, $reportType);
+        $outcome = $this->updateDraftRow(
+            $row,
+            $data,
+            (int) $user->id,
+            $reportType,
+            isset($data['base_version']) ? (int) $data['base_version'] : null,
+        );
+        if ($outcome['conflict']) {
+            return $this->draftConflictResponse($outcome['row']);
+        }
+        $row = $outcome['row'];
 
         return response()->json(['data' => $this->formatRow($row)]);
     }
@@ -163,6 +186,7 @@ class ReportDraftController extends Controller
             'title' => ['nullable', 'string', 'max:190'],
             'origin_mode' => ['nullable', 'string', 'in:new,edit'],
             'source_report_uid' => ['nullable', 'string', 'max:190'],
+            'base_version' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $row = ReportDraft::query()
@@ -174,24 +198,32 @@ class ReportDraftController extends Controller
             return response()->json(['message' => 'Draft not found.'], 404);
         }
 
+        $this->ensureReportPermission($request, (string) $row->report_type);
+
+        if ($this->normalizeReportType((string) $row->report_type) === 'drill') {
+            $this->drillPayloadService->validateForDraft((array) $data['payload']);
+        }
+
         if ($this->normalizeReportType((string) ($row->report_type ?? '')) === self::INSPECTION_TYPE) {
             $data['payload'] = $this->applyInspectionSessionInspector(
                 (array) $data['payload'],
                 $request
             );
             $this->inspectionPayloadService->validateForDraft((array) $data['payload']);
-            $data['payload'] = $this->inspectionPayloadService->normalize((array) $data['payload']);
+            $data['payload'] = $this->inspectionPayloadService->normalizeForDraft((array) $data['payload']);
         }
 
-        $row->fill([
-            'payload' => $data['payload'],
-            'title' => $this->normalizeNullableString($data['title'] ?? null),
-            'origin_mode' => $this->normalizeOriginMode($data['origin_mode'] ?? null),
-            'source_report_uid' => $this->normalizeNullableString($data['source_report_uid'] ?? null),
-            'saved_at' => now(),
-        ]);
-        $row->save();
-        $this->reportMediaService->syncPayloadLinks((array) $data['payload'], 'report_draft', (string) $row->draft_id, (int) $user->id, (string) $row->report_type);
+        $outcome = $this->updateDraftRow(
+            $row,
+            $data,
+            (int) $user->id,
+            (string) $row->report_type,
+            isset($data['base_version']) ? (int) $data['base_version'] : null,
+        );
+        if ($outcome['conflict']) {
+            return $this->draftConflictResponse($outcome['row']);
+        }
+        $row = $outcome['row'];
 
         return response()->json(['data' => $this->formatRow($row)]);
     }
@@ -203,13 +235,19 @@ class ReportDraftController extends Controller
         if ($reportType === '') {
             return response()->json(['message' => 'report_type is required.'], 422);
         }
+        $this->ensureReportPermission($request, $reportType);
 
-        $draftIds = ReportDraft::query()
-            ->where('user_id', $user->id)
-            ->where('report_type', $reportType)
-            ->pluck('draft_id');
-        foreach ($draftIds as $draftId) $this->reportMediaService->removeParentLinks('report_draft', (string) $draftId);
-        ReportDraft::query()->where('user_id', $user->id)->where('report_type', $reportType)->delete();
+        DB::transaction(function () use ($user, $reportType): void {
+            $rows = ReportDraft::query()
+                ->where('user_id', $user->id)
+                ->where('report_type', $reportType)
+                ->lockForUpdate()
+                ->get(['id', 'draft_id']);
+            foreach ($rows as $row) {
+                $this->reportMediaService->removeParentLinks('report_draft', (string) $row->draft_id);
+            }
+            ReportDraft::query()->whereIn('id', $rows->pluck('id'))->delete();
+        });
 
         return response()->json(['message' => 'Draft cleared.']);
     }
@@ -222,8 +260,16 @@ class ReportDraftController extends Controller
             ->where('draft_id', trim((string) $draftId))
             ->first();
         if ($row) {
-            $this->reportMediaService->removeParentLinks('report_draft', (string) $row->draft_id);
-            $row->delete();
+            $this->ensureReportPermission($request, (string) $row->report_type);
+            DB::transaction(function () use ($row, $user): void {
+                $locked = ReportDraft::query()
+                    ->where('id', $row->id)
+                    ->where('user_id', $user->id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+                $this->reportMediaService->removeParentLinks('report_draft', (string) $locked->draft_id);
+                $locked->delete();
+            });
         }
 
         return response()->json(['message' => 'Draft deleted.']);
@@ -232,6 +278,15 @@ class ReportDraftController extends Controller
     private function normalizeReportType(string $value): string
     {
         return strtolower(trim($value));
+    }
+
+    private function ensureReportPermission(Request $request, string $reportType): void
+    {
+        $permission = self::REPORT_PERMISSIONS[$this->normalizeReportType($reportType)] ?? null;
+        $user = $request->user();
+        if (! $user || ! $permission || ! $this->authorizationService->hasPermission($user, "reports.manage|{$permission}")) {
+            abort(403, 'Forbidden');
+        }
     }
 
     private function normalizeNullableString(mixed $value): ?string
@@ -271,7 +326,63 @@ class ReportDraftController extends Controller
             'source_report_uid' => $this->normalizeNullableString($data['source_report_uid'] ?? null),
             'payload' => $data['payload'],
             'saved_at' => now(),
+            'version' => 1,
         ]);
+    }
+
+    /**
+     * @return array{conflict: bool, row: ReportDraft}
+     */
+    private function updateDraftRow(
+        ReportDraft $draft,
+        array $data,
+        int $userId,
+        string $reportType,
+        ?int $baseVersion,
+    ): array {
+        return DB::transaction(function () use ($draft, $data, $userId, $reportType, $baseVersion): array {
+            $row = ReportDraft::query()
+                ->where('id', $draft->id)
+                ->where('user_id', $userId)
+                ->lockForUpdate()
+                ->firstOrFail();
+            if ($baseVersion !== null && (int) $row->version !== $baseVersion) {
+                return ['conflict' => true, 'row' => $row];
+            }
+
+            $row->fill([
+                'payload' => $data['payload'],
+                'title' => $this->normalizeNullableString($data['title'] ?? null),
+                'origin_mode' => $this->normalizeOriginMode($data['origin_mode'] ?? null),
+                'source_report_uid' => $this->normalizeNullableString($data['source_report_uid'] ?? null),
+                'saved_at' => now(),
+                'version' => ((int) $row->version) + 1,
+            ])->save();
+            $this->reportMediaService->syncPayloadLinks(
+                (array) $data['payload'],
+                'report_draft',
+                (string) $row->draft_id,
+                $userId,
+                $reportType,
+            );
+
+            return ['conflict' => false, 'row' => $row->refresh()];
+        });
+    }
+
+    private function draftConflictResponse(ReportDraft $row): JsonResponse
+    {
+        Log::notice('report_draft_version_conflict', [
+            'draft_id' => $row->draft_id,
+            'user_id' => $row->user_id,
+            'current_version' => $row->version,
+        ]);
+
+        return response()->json([
+            'message' => 'This draft changed since it was loaded.',
+            'code' => 'report_draft_version_conflict',
+            'currentDraft' => $this->formatRow($row),
+        ], 409);
     }
 
     private function formatRow(ReportDraft $row): array
@@ -285,6 +396,7 @@ class ReportDraftController extends Controller
             'source_report_uid' => $row->source_report_uid,
             'payload' => is_array($row->payload) ? $row->payload : [],
             'saved_at' => optional($row->saved_at)->toIso8601String(),
+            'version' => (int) $row->version,
             'created_at' => optional($row->created_at)->toIso8601String(),
             'updated_at' => optional($row->updated_at)->toIso8601String(),
         ];

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\OvertimeRecord;
+use App\Models\WorkflowAttachment;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\HolidayGuidanceFeatureGate;
@@ -10,10 +11,12 @@ use App\Services\HolidayGuidanceTelemetry;
 use App\Services\HolidayResolver;
 use App\Services\OvertimeDateClassifier;
 use App\Services\OvertimeEligibilityService;
+use App\Services\OvertimeClaimGuardService;
 use App\Services\OvertimeWorkflowService;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -27,6 +30,7 @@ class OvertimeController extends Controller
         private readonly WorkflowNotificationService $notificationService,
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly OvertimeEligibilityService $overtimeEligibilityService,
+        private readonly OvertimeClaimGuardService $claimGuardService,
         private readonly OvertimeDateClassifier $overtimeDateClassifier,
         private readonly HolidayResolver $holidayResolver,
         private readonly HolidayGuidanceFeatureGate $guidanceGate,
@@ -111,7 +115,7 @@ class OvertimeController extends Controller
         if ($eligibilityResponse) {
             return $eligibilityResponse;
         }
-        $data = $this->validatePayload($request);
+        $data = $this->validatePayload($request, (int) $user->id);
         try {
             $derivedOvertimeType = $this->overtimeDateClassifier->classify($user, $data['claim_date']);
         } catch (\Throwable $exception) {
@@ -158,6 +162,7 @@ class OvertimeController extends Controller
                 'approval_history' => [$entry],
                 'submitted_by' => (string) ($user->name ?? ''),
                 'attachment_id' => $data['attachment_id'] ?? null,
+                'version' => 1,
             ]);
         });
 
@@ -210,7 +215,8 @@ class OvertimeController extends Controller
             ]);
         }
 
-        $data = $this->validatePayload($request);
+        $data = $this->validatePayload($request, (int) $user->id, (int) $row->id);
+        $this->assertExpectedVersion($row, $data['expected_version'] ?? null);
         try {
             $derivedOvertimeType = $this->overtimeDateClassifier->classify($user, $data['claim_date']);
         } catch (\Throwable $exception) {
@@ -225,17 +231,19 @@ class OvertimeController extends Controller
         $entry = [
             'id' => (string) \Illuminate\Support\Str::uuid(),
             'at' => now()->toIso8601String(),
-            'action' => 'Edited',
+            'action' => $row->status === 'Needs Correction' ? 'Resubmitted' : 'Edited',
             'by' => (string) ($user->name ?? ''),
             'byUserId' => (string) $user->id,
-            'remarks' => 'Overtime updated and resubmitted.',
+            'remarks' => $row->status === 'Needs Correction'
+                ? 'Overtime claim corrected and resubmitted.'
+                : 'Overtime updated and resubmitted.',
         ];
 
         $history = collect(is_array($row->approval_history) ? $row->approval_history : [])->push($entry)->take(-20)->values()->all();
         $roles = $this->authorizationService->getActiveRoleNames($user)->all();
         $workflow = $this->workflowService->buildWorkflowForSubmission($roles);
 
-        $row->update([
+        $updates = [
             'overtime_type' => $data['overtime_type'] ?? $row->overtime_type,
             'claim_date' => $data['claim_date'] ?? $row->claim_date,
             'start_time' => $data['start_time'] ?? $row->start_time,
@@ -250,7 +258,9 @@ class OvertimeController extends Controller
             'applicant_roles' => $workflow['applicantRoles'],
             'approval_history' => $history,
             'attachment_id' => $data['attachment_id'] ?? $row->attachment_id,
-        ]);
+            'version' => ((int) $row->version) + 1,
+        ];
+        $this->updateWithVersion($row, $updates, $data['expected_version'] ?? null);
 
         $this->notificationService->emit(
             module: 'overtime',
@@ -304,6 +314,8 @@ class OvertimeController extends Controller
     {
         $user = $request->user();
         $row = OvertimeRecord::query()->where('user_id', $user->id)->findOrFail($id);
+        $expectedVersion = $this->validateExpectedVersion($request);
+        $this->assertExpectedVersion($row, $expectedVersion);
 
         if (!in_array($row->status, ['Draft', 'Cancelled'], true)) {
             throw ValidationException::withMessages([
@@ -311,7 +323,13 @@ class OvertimeController extends Controller
             ]);
         }
 
-        $row->delete();
+        $deleted = OvertimeRecord::query()
+            ->whereKey($row->id)
+            ->where('version', $expectedVersion ?? $row->version)
+            ->delete();
+        if ($deleted === 0) {
+            $this->throwVersionConflict($row);
+        }
 
         AuditLogger::log($request, 'overtime_deleted', $user, [
             'overtime_id' => $row->id,
@@ -334,7 +352,9 @@ class OvertimeController extends Controller
 
         $payload = $request->validate([
             'remarks' => ['nullable', 'string', 'max:1000'],
+            'expected_version' => ['nullable', 'integer', 'min:1'],
         ]);
+        $this->assertExpectedVersion($row, $payload['expected_version'] ?? null);
 
         $nextRole = $row->next_action_role;
         $updates = $this->workflowService->advanceWorkflow(
@@ -345,7 +365,8 @@ class OvertimeController extends Controller
             $payload['remarks'] ?? null,
         );
 
-        $row->update($updates);
+        $updates['version'] = ((int) $row->version) + 1;
+        $this->updateWithVersion($row, $updates, $payload['expected_version'] ?? null);
 
         $this->notificationService->emit(
             module: 'overtime',
@@ -372,13 +393,13 @@ class OvertimeController extends Controller
         return response()->json(['data' => self::formatRecord($row)]);
     }
 
-    private function validatePayload(Request $request): array
+    private function validatePayload(Request $request, int $userId, ?int $excludingRecordId = null): array
     {
         $payload = $request->all();
         $payload['start_time'] = $this->normalizeClockTime($payload['start_time'] ?? null);
         $payload['end_time'] = $this->normalizeClockTime($payload['end_time'] ?? null);
 
-        return Validator::make($payload, [
+        $validated = Validator::make($payload, [
             'overtime_type' => ['required', 'in:weekday,weekend,publicHoliday'],
             'claim_date' => ['required', 'date'],
             'start_time' => ['required', 'date_format:H:i'],
@@ -387,7 +408,20 @@ class OvertimeController extends Controller
             'duration_minutes' => ['required', 'integer', 'min:1'],
             'reason' => ['required', 'string', 'min:5', 'max:3000'],
             'attachment_id' => ['nullable', 'integer', 'exists:workflow_attachments,id'],
+            'expected_version' => ['nullable', 'integer', 'min:1'],
         ])->validate();
+        $this->claimGuardService->validateWindow($validated, $userId, $excludingRecordId);
+
+        if (!empty($validated['attachment_id']) && !WorkflowAttachment::query()
+            ->whereKey($validated['attachment_id'])
+            ->where('owner_user_id', $userId)
+            ->exists()) {
+            throw ValidationException::withMessages([
+                'attachment_id' => ['The selected attachment is unavailable for this overtime claim.'],
+            ]);
+        }
+
+        return $validated;
     }
 
     public function classifyDate(Request $request): JsonResponse
@@ -467,6 +501,10 @@ class OvertimeController extends Controller
             return true;
         }
 
+        if ($row->status === 'Needs Correction') {
+            return true;
+        }
+
         if ($row->status !== 'Pending') {
             return false;
         }
@@ -523,7 +561,45 @@ class OvertimeController extends Controller
             ] : null,
             'created_at' => optional($row->created_at)->toIso8601String(),
             'updated_at' => optional($row->updated_at)->toIso8601String(),
+            'version' => (int) ($row->version ?: 1),
         ];
+    }
+
+    private function validateExpectedVersion(Request $request): ?int
+    {
+        $payload = $request->validate([
+            'expected_version' => ['nullable', 'integer', 'min:1'],
+        ]);
+        return array_key_exists('expected_version', $payload) ? (int) $payload['expected_version'] : null;
+    }
+
+    private function assertExpectedVersion(OvertimeRecord $row, ?int $expectedVersion): void
+    {
+        if ($expectedVersion !== null && $expectedVersion !== (int) $row->version) {
+            $this->throwVersionConflict($row);
+        }
+    }
+
+    private function updateWithVersion(OvertimeRecord $row, array $updates, ?int $expectedVersion): void
+    {
+        $currentVersion = (int) $row->version;
+        $updated = OvertimeRecord::query()
+            ->whereKey($row->id)
+            ->where('version', $expectedVersion ?? $currentVersion)
+            ->update($updates);
+        if ($updated === 0) {
+            $this->throwVersionConflict($row);
+        }
+    }
+
+    private function throwVersionConflict(OvertimeRecord $row): never
+    {
+        throw new HttpResponseException(response()->json([
+            'code' => 'OT_VERSION_CONFLICT',
+            'message' => 'This overtime claim changed. Reload the latest record before trying again.',
+            'currentVersion' => (int) $row->version,
+            'currentRecord' => self::formatRecord($row),
+        ], 409));
     }
 
     private static function normalizeTimeForResponse(mixed $value): ?string

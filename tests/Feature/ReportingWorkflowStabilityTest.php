@@ -36,6 +36,7 @@ class ReportingWorkflowStabilityTest extends TestCase
         $approver = User::factory()->create(['status' => 'active']);
         $unrelated = User::factory()->create(['status' => 'active']);
 
+        $this->assignWorkflowRole($submitter, 'Tactical Response Team', $permissionName);
         $this->assignWorkflowRole($reviewer, 'Incident Commander', $permissionName);
         $this->assignWorkflowRole($approver, 'Incident Commander', $permissionName);
 
@@ -171,6 +172,7 @@ class ReportingWorkflowStabilityTest extends TestCase
     {
         $submitter = User::factory()->create(['status' => 'active']);
         $reviewer = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($submitter, 'Tactical Response Team', 'reports.erco.view');
         $this->assignWorkflowRole($reviewer, 'Incident Commander', 'reports.erco.view');
 
         $this->actingAs($submitter);

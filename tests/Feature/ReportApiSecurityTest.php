@@ -67,6 +67,7 @@ class ReportApiSecurityTest extends TestCase
     {
         $owner = User::factory()->create(['status' => 'active']);
         $intruder = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($owner, 'ERCO Reporter', 'reports.erco.view');
 
         $this->actingAs($owner);
         $created = $this->postJson('/api/reports', [
@@ -112,6 +113,7 @@ class ReportApiSecurityTest extends TestCase
     {
         $user = User::factory()->create(['status' => 'active']);
         $ic = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($user, 'Fitness Reporter', 'reports.fitness.view');
         $this->assignWorkflowRole($ic, 'Incident Commander', 'reports.fitness.view');
         $this->actingAs($user);
 

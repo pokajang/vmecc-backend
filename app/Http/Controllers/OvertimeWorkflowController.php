@@ -3,11 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\OvertimeRecord;
-use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
+use App\Services\OvertimeManagementScopeService;
 use App\Services\OvertimeWorkflowService;
 use App\Services\WorkflowNotificationService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -16,7 +18,7 @@ class OvertimeWorkflowController extends Controller
     public function __construct(
         private readonly OvertimeWorkflowService $workflowService,
         private readonly WorkflowNotificationService $notificationService,
-        private readonly AssignmentAuthorizationService $authorizationService,
+        private readonly OvertimeManagementScopeService $scopeService,
     ) {
     }
 
@@ -45,27 +47,55 @@ class OvertimeWorkflowController extends Controller
         return $this->handleAction($request, $ownerId, $recordId, 'cancel');
     }
 
+    public function requestCorrection(Request $request, int $ownerId, int $recordId): JsonResponse
+    {
+        return $this->handleAction($request, $ownerId, $recordId, 'request_correction');
+    }
+
     private function handleAction(Request $request, int $ownerId, int $recordId, string $action): JsonResponse
     {
         $actor = $request->user();
         $payload = $request->validate([
             'remarks' => ['nullable', 'string', 'max:1000'],
+            'expected_version' => ['nullable', 'integer', 'min:1'],
         ]);
 
-        $row = OvertimeRecord::query()->where('user_id', $ownerId)->with('attachment')->findOrFail($recordId);
+        if ($action === 'request_correction' && !trim((string) ($payload['remarks'] ?? ''))) {
+            throw ValidationException::withMessages([
+                'remarks' => ['Remarks are required when requesting correction.'],
+            ]);
+        }
 
-        $this->assertActionAllowed($row, $action, $actor);
+        $row = DB::transaction(function () use ($ownerId, $recordId, $action, $actor, $payload) {
+            $row = OvertimeRecord::query()
+                ->where('user_id', $ownerId)
+                ->with(['user', 'attachment'])
+                ->lockForUpdate()
+                ->findOrFail($recordId);
 
-        $updates = $this->workflowService->advanceWorkflow(
-            $row,
-            $action,
-            (int) $actor->id,
-            (string) ($actor->name ?? ''),
-            $payload['remarks'] ?? null,
-        );
+            $this->assertActionAllowed($row, $action, $actor);
+            $this->assertExpectedVersion($row, $payload['expected_version'] ?? null);
 
-        $row->update($this->toColumnKeys($updates));
-        $row->refresh()->load('attachment');
+            $updates = $this->workflowService->advanceWorkflow(
+                $row,
+                $action,
+                (int) $actor->id,
+                (string) ($actor->name ?? ''),
+                $payload['remarks'] ?? null,
+            );
+
+            $updates = $this->toColumnKeys($updates);
+            $updates['version'] = ((int) $row->version) + 1;
+            $updated = OvertimeRecord::query()
+                ->whereKey($row->id)
+                ->where('version', $payload['expected_version'] ?? $row->version)
+                ->update($updates);
+            if ($updated === 0) {
+                $this->throwVersionConflict($row);
+            }
+
+            return $row->fresh(['attachment']);
+        });
 
         $nextRole = $row->next_action_role;
         $eventType = match ($action) {
@@ -74,6 +104,7 @@ class OvertimeWorkflowController extends Controller
             'approve' => 'approved',
             'reject' => 'rejected',
             'cancel' => 'cancelled',
+            'request_correction' => 'correction_requested',
             default => $action,
         };
 
@@ -120,19 +151,22 @@ class OvertimeWorkflowController extends Controller
             ]);
         }
 
-        $actorRoles = $this->authorizationService->getActiveRoleNames($actor)->all();
-        if (in_array('System Administrator', $actorRoles, true)) {
+        if ($this->scopeService->isSystemAdministrator($actor)) {
             return;
         }
 
-        if (in_array($action, ['reject', 'cancel'], true)) {
-            return;
+        if ($action === 'cancel') {
+            throw ValidationException::withMessages([
+                'role' => ['Only a system administrator can cancel another employee\'s overtime claim.'],
+            ]);
         }
 
         $expectedRole = trim((string) ($record->next_action_role ?? ''));
-        if ($expectedRole !== '' && !in_array($expectedRole, $actorRoles, true)) {
+        if ($expectedRole === '' || ! $this->scopeService->canPerformWorkflowRole($actor, $record, $expectedRole)) {
             throw ValidationException::withMessages([
-                'role' => ["This action requires the '{$expectedRole}' role."],
+                'role' => [$expectedRole !== ''
+                    ? "This action requires the '{$expectedRole}' role for the employee's team."
+                    : 'This overtime claim has no configured workflow action owner.'],
             ]);
         }
 
@@ -141,6 +175,7 @@ class OvertimeWorkflowController extends Controller
             'review' => 'review',
             'recommend' => 'recommend',
             'approve' => 'approve',
+            'reject', 'request_correction' => $expectedStage,
             default => '',
         };
 
@@ -148,6 +183,20 @@ class OvertimeWorkflowController extends Controller
             throw ValidationException::withMessages([
                 'stage' => ["Current workflow stage is '{$expectedStage}', not '{$requiredStage}'."],
             ]);
+        }
+
+        $snapshot = is_array($record->workflow_snapshot) ? $record->workflow_snapshot : [];
+        if (($snapshot['enforceDistinctApprovers'] ?? false) === true
+            && in_array($action, ['review', 'recommend', 'approve'], true)) {
+            $hasAlreadyApproved = collect($record->approval_history ?: [])->contains(
+                fn ($entry) => (string) ($entry['byUserId'] ?? '') === (string) $actor->id
+                    && in_array((string) ($entry['action'] ?? ''), ['Reviewed', 'Recommended', 'Approved'], true),
+            );
+            if ($hasAlreadyApproved) {
+                throw ValidationException::withMessages([
+                    'role' => ['This workflow requires a different approver at each stage.'],
+                ]);
+            }
         }
     }
 
@@ -163,5 +212,22 @@ class OvertimeWorkflowController extends Controller
             }] = $value;
         }
         return $mapped;
+    }
+
+    private function assertExpectedVersion(OvertimeRecord $row, ?int $expectedVersion): void
+    {
+        if ($expectedVersion !== null && $expectedVersion !== (int) $row->version) {
+            $this->throwVersionConflict($row);
+        }
+    }
+
+    private function throwVersionConflict(OvertimeRecord $row): never
+    {
+        throw new HttpResponseException(response()->json([
+            'code' => 'OT_VERSION_CONFLICT',
+            'message' => 'This overtime claim changed. Reload the latest record before trying again.',
+            'currentVersion' => (int) $row->version,
+            'currentRecord' => OvertimeController::formatRecord($row),
+        ], 409));
     }
 }

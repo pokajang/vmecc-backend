@@ -30,7 +30,9 @@ class Leave extends Model
         'next_action_role',
         'applicant_roles',
         'approval_history',
+        'roster_impact_snapshot',
         'submitted_by',
+        'version',
     ];
 
     protected $casts = [
@@ -41,6 +43,8 @@ class Leave extends Model
         'workflow_snapshot' => 'array',
         'applicant_roles' => 'array',
         'approval_history' => 'array',
+        'roster_impact_snapshot' => 'array',
+        'version' => 'integer',
         'deleted_at' => 'datetime',
     ];
 

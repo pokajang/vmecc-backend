@@ -28,6 +28,7 @@ class InspectionFireExtinguisherSessionProgressService
 
         return [
             'sessionUid' => $session->session_uid,
+            'sessionVersion' => (int) $session->version,
             'status' => $session->status,
             'totalResults' => $results->count(),
             'completedResults' => $completed,
@@ -38,7 +39,7 @@ class InspectionFireExtinguisherSessionProgressService
     }
 
     /**
-     * @param array{zone?: string, mainLocation?: string, subLocation?: string} $scope
+     * @param  array{zone?: string, mainLocation?: string, subLocation?: string}  $scope
      */
     public function sync(InspectionSession $session, ?int $actorUserId = null, array $scope = []): void
     {
@@ -251,7 +252,7 @@ class InspectionFireExtinguisherSessionProgressService
     }
 
     /**
-     * @param array{zone: string, mainLocation: string, subLocation: string} $scope
+     * @param  array{zone: string, mainLocation: string, subLocation: string}  $scope
      */
     private function locationMatchesScope(
         mixed $zone,
@@ -273,7 +274,7 @@ class InspectionFireExtinguisherSessionProgressService
     }
 
     /**
-     * @param array<string, mixed> $fields
+     * @param  array<string, mixed>  $fields
      */
     private function progressFieldsChanged(InspectionSessionLocationProgress $progress, array $fields): bool
     {

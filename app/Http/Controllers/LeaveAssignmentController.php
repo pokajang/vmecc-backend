@@ -7,6 +7,7 @@ use App\Models\LeaveAssignmentHistory;
 use App\Models\User;
 use App\Services\AuditLogger;
 use App\Services\LeaveNotificationService;
+use App\Services\LeavePolicyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -16,15 +17,8 @@ class LeaveAssignmentController extends Controller
 {
     public function __construct(
         private readonly LeaveNotificationService $notificationService,
+        private readonly LeavePolicyService $policyService,
     ) {}
-    private const LEAVE_TYPES = [
-        'Annual Leave',
-        'Medical Leave',
-        'Emergency Leave',
-        'Compassionate Leave',
-        'Unpaid Leave',
-        'Other Leave',
-    ];
 
     // ── Own balance (employee) ────────────────────────────────────────────────
 
@@ -74,7 +68,7 @@ class LeaveAssignmentController extends Controller
         $data = $request->validate([
             'user_id'     => ['required', 'integer', 'exists:users,id'],
             'year'        => ['required', 'integer', 'min:2000', 'max:2100'],
-            'leave_type'  => ['required', 'string', Rule::in(self::LEAVE_TYPES)],
+            'leave_type'  => ['required', 'string', Rule::in(array_keys($this->policyService->types()))],
             'entitlement' => ['required', 'numeric', 'min:0', 'max:365'],
             'used'        => ['nullable', 'numeric', 'min:0'],
             'pending'     => ['nullable', 'numeric', 'min:0'],

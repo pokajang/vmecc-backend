@@ -17,6 +17,7 @@ class ReportApiWorkflowTest extends TestCase
     {
         $user = User::factory()->create(['status' => 'active']);
         $ic = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($user, 'ERCO Reporter', 'reports.erco.view');
         $this->assignWorkflowRole($ic, 'Incident Commander', 'reports.erco.view');
         $this->actingAs($user);
 
@@ -72,6 +73,7 @@ class ReportApiWorkflowTest extends TestCase
     {
         $user = User::factory()->create(['status' => 'active']);
         $ic = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($user, 'Drill Reporter', 'reports.drill.view');
         $this->assignWorkflowRole($ic, 'Incident Commander', 'reports.drill.view');
         $this->actingAs($user);
 
@@ -123,6 +125,7 @@ class ReportApiWorkflowTest extends TestCase
     public function test_report_submission_key_replays_same_record_without_duplicate_create(): void
     {
         $user = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($user, 'Fitness Reporter', 'reports.fitness.view');
         $this->actingAs($user);
 
         $payload = [

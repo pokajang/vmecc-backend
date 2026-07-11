@@ -4,10 +4,13 @@ namespace Tests\Feature;
 
 use App\Models\Report;
 use App\Models\ReportDraft;
+use App\Models\ReportMedia;
+use App\Models\ReportMediaLink;
 use App\Models\User;
 use App\Support\Inspection\FrtDailyReference;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -15,6 +18,147 @@ use Tests\TestCase;
 class InspectionPayloadGuardrailsTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_managed_inspection_photo_survives_draft_retry_and_submit(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+        $media = $this->createManagedInspectionPhoto($user, 'rpm_draft_retry_photo');
+        $photo = [
+            'id' => 'camera-photo-1',
+            'mediaId' => $media->public_id,
+            'fileName' => 'camera.jpg',
+            'description' => 'Defect evidence.',
+            'url' => '/api/report-media/'.$media->public_id,
+            'thumbnailUrl' => '/api/report-media/'.$media->public_id.'?variant=thumbnail',
+            'mimeType' => 'image/jpeg',
+            'sizeBytes' => $media->size_bytes,
+            'width' => 1200,
+            'height' => 900,
+        ];
+        $payload = [
+            'incidentType' => 'General Inspection',
+            'location' => 'Zone 1 > Workshop',
+            'description' => 'Managed photo sync regression.',
+            'photos' => [$photo],
+        ];
+
+        $createdDraft = $this->postJson('/api/reports/draft', [
+            'report_type' => 'inspection',
+            'payload' => $payload,
+        ])->assertCreated();
+        $draftId = (string) $createdDraft->json('data.draft_id');
+
+        $this->assertSame($media->public_id, $createdDraft->json('data.payload.photos.0.mediaId'));
+        $this->assertDatabaseHas('report_media_links', [
+            'report_media_id' => $media->id,
+            'parent_type' => 'report_draft',
+            'parent_key' => $draftId,
+        ]);
+
+        $payload['photos'][0]['description'] = 'Updated after Retry Sync.';
+        $this->postJson('/api/reports/draft', [
+            'report_type' => 'inspection',
+            'payload' => $payload,
+        ])->assertOk()->assertJsonPath('data.payload.photos.0.mediaId', $media->public_id);
+
+        $createdReport = $this->postJson('/api/reports', [
+            'display_id' => 'INS-MANAGED-PHOTO-RETRY',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ])->assertCreated();
+        $reportUid = (string) $createdReport->json('data.id');
+
+        $this->assertSame($media->public_id, $createdReport->json('data.photos.0.mediaId'));
+        $this->assertDatabaseHas('report_media_links', [
+            'report_media_id' => $media->id,
+            'parent_type' => 'report',
+            'parent_key' => $reportUid,
+        ]);
+    }
+
+    public function test_invalid_managed_photo_does_not_leave_a_half_saved_draft(): void
+    {
+        $owner = User::factory()->create(['status' => 'active']);
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $media = $this->createManagedInspectionPhoto($owner, 'rpm_other_user_photo');
+        $this->actingAs($user);
+
+        $this->postJson('/api/reports/draft', [
+            'report_type' => 'inspection',
+            'payload' => [
+                'incidentType' => 'General Inspection',
+                'location' => 'Zone 1 > Workshop',
+                'description' => 'Unauthorized photo regression.',
+                'photos' => [[
+                    'id' => 'camera-photo-unauthorized',
+                    'mediaId' => $media->public_id,
+                    'fileName' => 'camera.jpg',
+                    'url' => '/api/report-media/'.$media->public_id,
+                ]],
+            ],
+        ])->assertUnprocessable()->assertJsonValidationErrors(['photos']);
+
+        $this->assertDatabaseMissing('report_drafts', [
+            'user_id' => $user->id,
+            'report_type' => 'inspection',
+        ]);
+        $this->assertSame(0, ReportMediaLink::query()->count());
+    }
+
+    public function test_multi_type_draft_counts_unique_managed_photos_per_report(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+        $photosByType = [];
+
+        foreach (['general', 'hse'] as $type) {
+            for ($index = 1; $index <= 6; $index++) {
+                $media = $this->createManagedInspectionPhoto(
+                    $user,
+                    "rpm_{$type}_workspace_{$index}",
+                );
+                $photosByType[$type][] = [
+                    'id' => "{$type}-photo-{$index}",
+                    'mediaId' => $media->public_id,
+                    'fileName' => "{$type}-{$index}.jpg",
+                    'url' => '/api/report-media/'.$media->public_id,
+                ];
+            }
+        }
+
+        $generalDraft = [
+            'incidentType' => 'General Inspection',
+            'location' => 'Zone 1 > Workshop',
+            'description' => 'General inspection workspace draft.',
+            'photos' => $photosByType['general'],
+        ];
+        $hseDraft = [
+            'incidentType' => 'Health Safety Environment Inspection',
+            'location' => 'Zone 1 > Workshop',
+            'description' => 'HSE workspace draft.',
+            'photos' => $photosByType['hse'],
+        ];
+
+        $this->postJson('/api/reports/draft', [
+            'report_type' => 'inspection',
+            'payload' => array_merge($generalDraft, [
+                'inspectionTypeDrafts' => [
+                    'general inspection' => $generalDraft,
+                    'health safety environment inspection' => $hseDraft,
+                ],
+            ]),
+        ])->assertCreated();
+
+        $this->assertSame(
+            12,
+            ReportMediaLink::query()->where('parent_type', 'report_draft')->count(),
+        );
+    }
 
     public function test_inspection_endpoints_require_inspection_permission(): void
     {
@@ -974,7 +1118,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $this->assertSame('General regulator photo.', $report->payload['scbaCustomSections'][0]['rows'][0]['photos'][0]['description'] ?? null);
     }
 
-    public function test_scba_custom_section_rejects_not_good_without_issue_photo(): void
+    public function test_scba_custom_section_accepts_not_good_without_optional_issue_photo(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantInspectionPermission($user);
@@ -1010,10 +1154,8 @@ class InspectionPayloadGuardrailsTest extends TestCase
             ],
         ]);
 
-        $response->assertUnprocessable();
-        $response->assertJsonValidationErrors([
-            'payload.scbaCustomSections.0.rows.0.purgeValvePhotos',
-        ]);
+        $response->assertCreated();
+        $response->assertJsonPath('data.scbaCustomSections.0.rows.0.purgeValvePhotos', []);
     }
 
     public function test_scba_inspection_draft_persists_structured_checks_to_database(): void
@@ -1464,7 +1606,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonValidationErrors(['payload.frtOneOffChecks.15.remarks']);
     }
 
-    public function test_inspection_report_rejects_frt_issue_rows_without_photos(): void
+    public function test_inspection_report_accepts_frt_issue_rows_without_photos(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantInspectionPermission($user);
@@ -1480,11 +1622,11 @@ class InspectionPayloadGuardrailsTest extends TestCase
             'payload' => $payload,
         ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.frtDailyChecks.89.photos']);
+        $response->assertCreated();
+        $response->assertJsonPath('data.frtDailyChecks.89.photos', []);
     }
 
-    public function test_inspection_report_rejects_frt_not_good_rows_without_photos(): void
+    public function test_inspection_report_accepts_frt_not_good_rows_without_photos(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantInspectionPermission($user);
@@ -1500,8 +1642,8 @@ class InspectionPayloadGuardrailsTest extends TestCase
             'payload' => $payload,
         ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.frtOneOffChecks.15.photos']);
+        $response->assertCreated();
+        $response->assertJsonPath('data.frtOneOffChecks.15.photos', []);
     }
 
     public function test_inspection_report_rejects_invalid_frt_issue_photo_url(): void
@@ -1653,6 +1795,40 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonValidationErrors(['payload.scbaFaceMaskChecks.0.leakTestRemarks']);
     }
 
+    public function test_inspection_report_accepts_scba_not_good_row_without_optional_photo(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-SCBA-OPTIONAL-PHOTO',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'SCBA Inspection',
+                'location' => 'FRT',
+                'scbaFaceMaskChecks' => [[
+                    'location' => 'FRT',
+                    'brand' => 'Drager',
+                    'serialNo' => '02',
+                    'visorCondition' => 'Good',
+                    'ldvPort' => 'Good',
+                    'ldvReleaseButton' => 'Good',
+                    'leakTest' => 'Not Good',
+                    'leakTestRemarks' => 'Seal leaks under pressure.',
+                    'leakTestPhotos' => [],
+                    'speechDiaphragm' => 'Good',
+                    'harness' => 'Good',
+                    'neckStrap' => 'Good',
+                ]],
+            ],
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.scbaFaceMaskChecks.0.leakTestPhotos', []);
+    }
+
     public function test_inspection_report_rejects_invalid_high_angle_check_payload(): void
     {
         $user = User::factory()->create(['status' => 'active']);
@@ -1713,6 +1889,39 @@ class InspectionPayloadGuardrailsTest extends TestCase
 
         $response->assertStatus(422);
         $response->assertJsonValidationErrors(['payload.highAngleChecks.0.conditionRemarks']);
+    }
+
+    public function test_inspection_report_accepts_high_angle_not_good_row_without_optional_photo(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-HA-OPTIONAL-PHOTO',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'High Angle Rescue Equipment Inspection',
+                'location' => 'Response Kit #1',
+                'mainLocation' => 'Response Kit #1',
+                'highAngleInspectedBy' => 'Inspector Rope',
+                'highAngleInspectionDate' => '2026-06-28',
+                'highAngleChecks' => [[
+                    'id' => 'response-kit-1:3',
+                    'rowNumber' => '3',
+                    'mainLocation' => 'Response Kit #1',
+                    'equipment' => 'Locking Carabiner',
+                    'quantity' => '10',
+                    'condition' => 'Not Good',
+                    'conditionRemarks' => 'Gate spring is sticking.',
+                    'conditionPhotos' => [],
+                ]],
+            ],
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.highAngleChecks.0.conditionPhotos', []);
     }
 
     public function test_inspection_report_rejects_high_angle_reports_without_session_meta(): void
@@ -1836,7 +2045,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonValidationErrors(['payload.hydraulicChecks.0.physicalCondition']);
     }
 
-    public function test_inspection_report_rejects_hydraulic_defect_without_photo_evidence(): void
+    public function test_inspection_report_accepts_hydraulic_defect_without_photo_evidence(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantInspectionPermission($user);
@@ -1864,8 +2073,8 @@ class InspectionPayloadGuardrailsTest extends TestCase
             ],
         ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.hydraulicChecks.0.functionTestPhotos']);
+        $response->assertCreated();
+        $response->assertJsonPath('data.hydraulicChecks.0.functionTestPhotos', []);
     }
 
     public function test_inspection_report_rejects_invalid_er_aux_check_payload(): void
@@ -1895,7 +2104,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonValidationErrors(['payload.erAuxChecks.0.condition']);
     }
 
-    public function test_inspection_report_rejects_er_aux_defect_without_photo_evidence(): void
+    public function test_inspection_report_accepts_er_aux_defect_without_photo_evidence(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantInspectionPermission($user);
@@ -1920,8 +2129,102 @@ class InspectionPayloadGuardrailsTest extends TestCase
             ],
         ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.erAuxChecks.0.defectPhotos']);
+        $response->assertCreated();
+        $response->assertJsonPath('data.erAuxChecks.0.defectPhotos', []);
+    }
+
+    public function test_incomplete_inspection_type_rows_are_accepted_as_drafts(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $frtRow = FrtDailyReference::dailyRows()[0];
+        $payloads = [
+            'FRT daily' => [
+                'incidentType' => 'FRT Daily Inspection',
+                'frtDailyChecks' => [[
+                    ...$frtRow,
+                    'status' => 'Issue',
+                    'remarks' => '',
+                    'photos' => [],
+                ]],
+                'frtOneOffChecks' => [],
+            ],
+            'High Angle' => [
+                'incidentType' => 'High Angle Rescue Equipment Inspection',
+                'highAngleChecks' => [[
+                    'id' => 'draft-high-angle-1',
+                    'mainLocation' => 'Response Kit #1',
+                    'equipment' => 'Carabiner',
+                    'condition' => 'Not Good',
+                    'conditionRemarks' => '',
+                    'conditionPhotos' => [],
+                ]],
+            ],
+            'SCBA' => [
+                'incidentType' => 'SCBA Inspection',
+                'scbaFaceMaskChecks' => [[
+                    'location' => 'FRT',
+                    'brand' => 'Drager',
+                    'serialNo' => 'DRAFT-01',
+                    'leakTest' => 'Not Good',
+                    'leakTestRemarks' => '',
+                    'leakTestPhotos' => [],
+                ]],
+            ],
+            'custom SCBA' => [
+                'incidentType' => 'SCBA Inspection',
+                'scbaCustomSections' => [[
+                    'title' => 'Regulator',
+                    'fields' => [
+                        ['key' => 'purgeValve', 'label' => 'Purge Valve'],
+                    ],
+                    'rows' => [[
+                        'location' => 'FRT',
+                        'serialNo' => 'DRAFT-CUSTOM-01',
+                        'purgeValve' => 'Not Good',
+                        'purgeValveRemarks' => '',
+                        'purgeValvePhotos' => [],
+                    ]],
+                ]],
+            ],
+            'Hydraulic' => [
+                'incidentType' => 'Hydraulic Rescue Tools Inspection',
+                'hydraulicChecks' => [[
+                    'id' => 'draft-hydraulic-1',
+                    'equipment' => 'Hydraulic Pump',
+                    'physicalCondition' => 'Defect',
+                    'physicalConditionRemarks' => '',
+                    'physicalConditionPhotos' => [],
+                ]],
+            ],
+            'ER Aux' => [
+                'incidentType' => 'ER Aux Equipment Inspection',
+                'erAuxChecks' => [[
+                    'id' => 'draft-er-aux-1',
+                    'equipment' => 'Chainsaw',
+                    'quantity' => '',
+                    'condition' => 'Defect',
+                    'defectRemarks' => '',
+                    'defectPhotos' => [],
+                ]],
+            ],
+        ];
+
+        foreach ($payloads as $name => $payload) {
+            $response = $this->postJson('/api/reports/draft', [
+                'draft_id' => 'partial-'.Str::slug($name),
+                'report_type' => 'inspection',
+                'payload' => $payload,
+            ]);
+
+            $this->assertContains(
+                $response->status(),
+                [200, 201],
+                "{$name} partial draft was rejected: {$response->getContent()}",
+            );
+        }
     }
 
     public function test_inspection_checklist_summary_counts_and_filters_reports(): void
@@ -2342,6 +2645,29 @@ class InspectionPayloadGuardrailsTest extends TestCase
                 $oneOffChecks
             ),
         ];
+    }
+
+    private function createManagedInspectionPhoto(User $user, string $publicId): ReportMedia
+    {
+        return ReportMedia::query()->create([
+            'public_id' => $publicId,
+            'client_upload_id' => (string) Str::uuid(),
+            'user_id' => $user->id,
+            'module' => 'inspection',
+            'disk' => 'local',
+            'storage_path' => 'report-media/'.$publicId.'.jpg',
+            'thumbnail_path' => 'report-media/'.$publicId.'-thumb.jpg',
+            'original_name' => 'camera.jpg',
+            'mime_type' => 'image/jpeg',
+            'size_bytes' => 128 * 1024,
+            'thumbnail_size_bytes' => 16 * 1024,
+            'width' => 1200,
+            'height' => 900,
+            'thumbnail_width' => 320,
+            'thumbnail_height' => 240,
+            'checksum_sha256' => hash('sha256', $publicId),
+            'thumbnail_checksum_sha256' => hash('sha256', $publicId.'-thumb'),
+        ]);
     }
 
     private function grantInspectionPermission(User $user, string $roleName = 'Inspection Guardrail Tester'): void

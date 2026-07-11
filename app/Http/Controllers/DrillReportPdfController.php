@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Report;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\ReportMediaService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 
@@ -11,8 +12,8 @@ class DrillReportPdfController extends Controller
 {
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
-    ) {
-    }
+        private readonly ReportMediaService $reportMediaService,
+    ) {}
 
     public function download(Request $request)
     {
@@ -45,11 +46,18 @@ class DrillReportPdfController extends Controller
             ], 409);
         }
 
-        $record = is_array($report->payload) ? $report->payload : [];
+        $record = $this->reportMediaService->hydrateLinkedPayloadForPdf(
+            is_array($report->payload) ? $report->payload : [],
+            'report',
+            (string) $report->report_uid,
+            'drill',
+        );
         $record['id'] = $report->report_uid;
         $record['displayId'] = $report->display_id;
         $record['reportType'] = $report->report_type;
         $record['status'] = $report->status;
+        $record['version'] = (int) $report->version;
+        $record['revision'] = (int) $report->revision;
         $record['timeline'] = $report->timelineEntries->map(function ($entry) {
             return [
                 'id' => $entry->id,

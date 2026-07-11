@@ -13,8 +13,7 @@ class ErcoReportPdfController extends Controller
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly ReportMediaService $reportMediaService,
-    ) {
-    }
+    ) {}
 
     public function download(Request $request)
     {
@@ -47,7 +46,12 @@ class ErcoReportPdfController extends Controller
             ], 409);
         }
 
-        $record = $this->reportMediaService->hydratePayloadForPdf(is_array($report->payload) ? $report->payload : []);
+        $record = $this->reportMediaService->hydrateLinkedPayloadForPdf(
+            is_array($report->payload) ? $report->payload : [],
+            'report',
+            (string) $report->report_uid,
+            'erco',
+        );
         $record['id'] = $report->report_uid;
         $record['displayId'] = $report->display_id;
         $record['reportType'] = $report->report_type;

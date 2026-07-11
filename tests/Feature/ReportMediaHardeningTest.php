@@ -6,9 +6,12 @@ use App\Models\Report;
 use App\Models\ReportMedia;
 use App\Models\ReportMediaLink;
 use App\Models\User;
+use App\Services\ReportMediaLeaseService;
+use App\Services\ReportMediaService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Spatie\Permission\Models\Permission;
@@ -29,6 +32,7 @@ class ReportMediaHardeningTest extends TestCase
     public function test_upload_creates_private_thumbnail_and_integrity_metadata(): void
     {
         $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
         $this->actingAs($user);
         $response = $this->post('/api/report-media', [
             'file' => UploadedFile::fake()->image('camera.jpg', 1600, 900),
@@ -44,11 +48,17 @@ class ReportMediaHardeningTest extends TestCase
         Storage::disk('local')->assertExists($media->thumbnail_path);
         $this->assertLessThanOrEqual(480, max($media->thumbnail_width, $media->thumbnail_height));
         $this->assertSame(64, strlen((string) $media->checksum_sha256));
+        $this->assertNotEmpty($response->json('data.lease_id'));
+        $this->assertDatabaseHas('report_media_leases', [
+            'report_media_id' => $media->id,
+            'user_id' => $user->id,
+        ]);
     }
 
     public function test_mobile_camera_upload_between_old_and_new_source_limits_is_accepted(): void
     {
         $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
 
         $this->actingAs($user)->post('/api/report-media', [
             'file' => UploadedFile::fake()->image('large-camera.jpg', 1600, 900)->size(20 * 1024),
@@ -91,6 +101,7 @@ class ReportMediaHardeningTest extends TestCase
     public function test_processing_lock_rejects_concurrent_upload_for_same_user(): void
     {
         $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
         $this->actingAs($user);
         $lock = Cache::lock('photo-upload-processing:user:'.$user->id, 120);
         $this->assertTrue($lock->get());
@@ -106,6 +117,7 @@ class ReportMediaHardeningTest extends TestCase
     public function test_temporary_storage_quota_rejects_more_uploads(): void
     {
         $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
         $media = $this->createMedia($user);
         $media->update(['size_bytes' => 33 * 1024 * 1024]);
         config(['report_media.temporary_user_quota_bytes' => 32 * 1024 * 1024]);
@@ -130,6 +142,76 @@ class ReportMediaHardeningTest extends TestCase
         Storage::disk('local')->assertMissing('report-media/full.jpg');
         Storage::disk('local')->assertMissing('report-media/thumb.jpg');
         $this->assertDatabaseMissing('report_media', ['id' => $media->id]);
+    }
+
+    public function test_active_lease_protects_unlinked_media_beyond_prune_threshold(): void
+    {
+        $owner = User::factory()->create(['status' => 'active']);
+        $media = $this->createMedia($owner);
+        $media->forceFill(['created_at' => now()->subHours(48)])->save();
+        app(ReportMediaLeaseService::class)->createOrRenewForUpload($media, $owner->id, 'pending-operation');
+
+        $this->assertSame(0, app(ReportMediaService::class)->pruneUnlinked(24));
+        $this->assertDatabaseHas('report_media', ['id' => $media->id]);
+        Storage::disk('local')->assertExists($media->storage_path);
+    }
+
+    public function test_expired_lease_allows_unlinked_media_to_be_pruned(): void
+    {
+        $owner = User::factory()->create(['status' => 'active']);
+        $media = $this->createMedia($owner);
+        $media->forceFill(['created_at' => now()->subHours(48)])->save();
+        $lease = app(ReportMediaLeaseService::class)
+            ->createOrRenewForUpload($media, $owner->id, 'abandoned-operation');
+        $lease->forceFill([
+            'expires_at' => now()->subMinute(),
+            'absolute_expires_at' => now()->addDay(),
+        ])->save();
+
+        $this->assertSame(1, app(ReportMediaService::class)->pruneUnlinked(24));
+        $this->assertDatabaseMissing('report_media', ['id' => $media->id]);
+        Storage::disk('local')->assertMissing($media->storage_path);
+    }
+
+    public function test_durable_link_releases_lease_and_protects_media_from_deletion(): void
+    {
+        $owner = User::factory()->create(['status' => 'active']);
+        $media = $this->createMedia($owner);
+        app(ReportMediaLeaseService::class)->createOrRenewForUpload($media, $owner->id, 'draft-1');
+        DB::transaction(function () use ($media, $owner): void {
+            app(ReportMediaService::class)->syncPayloadLinks([
+                'photos' => [[
+                    'mediaId' => $media->public_id,
+                    'url' => '/api/report-media/'.$media->public_id,
+                ]],
+            ], 'report_draft', 'draft-1', $owner->id, 'inspection');
+        });
+
+        $this->assertDatabaseMissing('report_media_leases', ['report_media_id' => $media->id]);
+        $this->actingAs($owner)
+            ->deleteJson('/api/report-media/'.$media->public_id)
+            ->assertUnprocessable()
+            ->assertJsonPath('code', 'media_protected');
+        $this->assertDatabaseHas('report_media', ['id' => $media->id]);
+    }
+
+    public function test_only_lease_owner_can_renew_an_unlinked_media_lease(): void
+    {
+        $owner = User::factory()->create(['status' => 'active']);
+        $intruder = User::factory()->create(['status' => 'active']);
+        $media = $this->createMedia($owner);
+        $lease = app(ReportMediaLeaseService::class)
+            ->createOrRenewForUpload($media, $owner->id, 'pending-operation');
+
+        $this->actingAs($intruder)->postJson(
+            '/api/report-media/'.$media->public_id.'/lease/renew',
+            ['lease_id' => $lease->lease_uid],
+        )->assertUnprocessable();
+
+        $this->actingAs($owner)->postJson(
+            '/api/report-media/'.$media->public_id.'/lease/renew',
+            ['lease_id' => $lease->lease_uid, 'context_key' => 'operation-2'],
+        )->assertOk()->assertJsonPath('data.lease_id', $lease->lease_uid);
     }
 
     private function createMedia(User $owner): ReportMedia

@@ -259,8 +259,8 @@ class OvertimeManagementRecordsApiTest extends TestCase
     private function createStaffManager(): User
     {
         $permission = Permission::query()->firstOrCreate(
-            ['name' => 'staff.salary.manage', 'guard_name' => 'web'],
-            ['name' => 'staff.salary.manage', 'guard_name' => 'web'],
+            ['name' => 'staff.overtime.manage', 'guard_name' => 'web'],
+            ['name' => 'staff.overtime.manage', 'guard_name' => 'web'],
         );
         $role = Role::query()->firstOrCreate(
             ['name' => 'HR Test Role', 'guard_name' => 'web'],

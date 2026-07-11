@@ -165,10 +165,15 @@ class InspectionPayloadService
 
     public function normalize(array $payload): array
     {
-        return $this->normalizeInspectionPayload($payload);
+        return $this->normalizeInspectionPayload($payload, true);
     }
 
-    private function normalizeInspectionPayload(array $payload): array
+    public function normalizeForDraft(array $payload): array
+    {
+        return $this->normalizeInspectionPayload($payload, false);
+    }
+
+    private function normalizeInspectionPayload(array $payload, bool $validateCompleteness): array
     {
         if (! array_key_exists('checklist', $payload)) {
             $payload['checklist'] = [];
@@ -381,7 +386,8 @@ class InspectionPayloadService
         if (array_key_exists('scbaCustomSections', $payload) || array_key_exists('scba_custom_sections', $payload)) {
             $payload['scbaCustomSections'] = $this->normalizeInspectionScbaCustomSections(
                 $payload['scbaCustomSections'] ?? $payload['scba_custom_sections'],
-                'payload.scbaCustomSections'
+                'payload.scbaCustomSections',
+                $validateCompleteness
             );
             unset($payload['scba_custom_sections']);
         }
@@ -1046,16 +1052,10 @@ class InspectionPayloadService
                 }
                 if (strcasecmp(trim((string) ($row[$field] ?? '')), 'Not Good') === 0) {
                     $remarksKey = "{$field}Remarks";
-                    $photosKey = "{$field}Photos";
                     $remarks = trim((string) ($row[$remarksKey] ?? $row['remarks'] ?? ''));
                     if ($remarks === '') {
                         throw ValidationException::withMessages([
                             "{$fieldPath}.{$index}.{$remarksKey}" => ['SCBA remarks are required when this status is Not Good.'],
-                        ]);
-                    }
-                    if (count($this->normalizeInspectionPhotos($row[$photosKey] ?? [])) === 0) {
-                        throw ValidationException::withMessages([
-                            "{$fieldPath}.{$index}.{$photosKey}" => ['SCBA issue photo is required when this status is Not Good.'],
                         ]);
                     }
                 }
@@ -1063,7 +1063,11 @@ class InspectionPayloadService
         }
     }
 
-    private function normalizeInspectionScbaCustomSections(mixed $sections, string $fieldPath): array
+    private function normalizeInspectionScbaCustomSections(
+        mixed $sections,
+        string $fieldPath,
+        bool $validateCompleteness = true
+    ): array
     {
         if (! is_array($sections)) {
             throw ValidationException::withMessages([
@@ -1118,7 +1122,7 @@ class InspectionPayloadService
                 $fieldMap,
                 "{$fieldPath}.{$index}.rows"
             );
-            if (($section['removed'] ?? false) !== true) {
+            if ($validateCompleteness && ($section['removed'] ?? false) !== true) {
                 $this->validateInspectionScbaRowsAgainstFieldMap($sectionRows, "{$fieldPath}.{$index}.rows", $fieldMap);
             }
 
@@ -1263,14 +1267,6 @@ class InspectionPayloadService
                     "{$fieldPath}.{$index}.conditionRemarks" => ['High Angle remarks are required when condition is Not Good.'],
                 ]);
             }
-            if (
-                strcasecmp(trim((string) ($row['condition'] ?? '')), 'Not Good') === 0
-                && count($this->normalizeInspectionPhotos($row['conditionPhotos'] ?? [])) === 0
-            ) {
-                throw ValidationException::withMessages([
-                    "{$fieldPath}.{$index}.conditionPhotos" => ['High Angle issue photo is required when condition is Not Good.'],
-                ]);
-            }
         }
     }
 
@@ -1299,11 +1295,6 @@ class InspectionPayloadService
                 ]);
             }
 
-            if (count($this->normalizeInspectionPhotos($row['defectPhotos'] ?? [])) === 0) {
-                throw ValidationException::withMessages([
-                    "{$fieldPath}.{$index}.defectPhotos" => ['ER Aux defect photo is required when condition is Defect.'],
-                ]);
-            }
         }
     }
 
@@ -1324,20 +1315,10 @@ class InspectionPayloadService
 
                 $meta = self::INSPECTION_HYDRAULIC_CHECK_EVIDENCE_FIELDS[$field];
                 $remarksKey = $meta['remarks'];
-                $photosKey = $meta['photos'];
 
                 if (trim((string) ($row[$remarksKey] ?? '')) === '') {
                     throw ValidationException::withMessages([
                         "{$fieldPath}.{$index}.{$remarksKey}" => ['Hydraulic remarks are required for Defect or N/A statuses.'],
-                    ]);
-                }
-
-                if (
-                    strcasecmp($status, 'Defect') === 0
-                    && count($this->normalizeInspectionPhotos($row[$photosKey] ?? [])) === 0
-                ) {
-                    throw ValidationException::withMessages([
-                        "{$fieldPath}.{$index}.{$photosKey}" => ['Hydraulic defect photo is required when status is Defect.'],
                     ]);
                 }
             }
@@ -1390,12 +1371,6 @@ class InspectionPayloadService
                     ]);
                 }
 
-                $photos = $row[$meta['photos']] ?? [];
-                if (! is_array($photos) || collect($photos)->filter()->isEmpty()) {
-                    throw ValidationException::withMessages([
-                        "{$fieldPath}.{$index}.{$meta['photos']}" => ['Fire extinguisher defect photo is required for defect or failed statuses.'],
-                    ]);
-                }
             }
         }
     }
@@ -1527,14 +1502,6 @@ class InspectionPayloadService
                     "{$fieldPath}.{$index}.remarks" => ['FRT daily remarks are required when status is Issue.'],
                 ]);
             }
-            if (
-                strcasecmp(trim((string) ($row['status'] ?? '')), 'Issue') === 0
-                && count($this->normalizeInspectionPhotos($row['photos'] ?? [])) === 0
-            ) {
-                throw ValidationException::withMessages([
-                    "{$fieldPath}.{$index}.photos" => ['FRT daily issue photo is required when status is Issue.'],
-                ]);
-            }
         }
     }
 
@@ -1552,14 +1519,6 @@ class InspectionPayloadService
             ) {
                 throw ValidationException::withMessages([
                     "{$fieldPath}.{$index}.remarks" => ['FRT one-off remarks are required when condition is Not Good.'],
-                ]);
-            }
-            if (
-                strcasecmp(trim((string) ($row['condition'] ?? '')), 'Not Good') === 0
-                && count($this->normalizeInspectionPhotos($row['photos'] ?? [])) === 0
-            ) {
-                throw ValidationException::withMessages([
-                    "{$fieldPath}.{$index}.photos" => ['FRT one-off issue photo is required when condition is Not Good.'],
                 ]);
             }
         }
@@ -1932,12 +1891,24 @@ class InspectionPayloadService
             if ($url === '') {
                 continue;
             }
-            $rows[] = [
+            $normalized = [
                 'id' => trim((string) ($photo['id'] ?? '')),
                 'fileName' => trim((string) ($photo['fileName'] ?? $photo['file_name'] ?? '')),
                 'description' => (string) ($photo['description'] ?? ''),
                 'url' => $url,
             ];
+
+            $mediaId = trim((string) ($photo['mediaId'] ?? $photo['media_id'] ?? ''));
+            if ($mediaId !== '') {
+                $normalized['mediaId'] = $mediaId;
+                $normalized['thumbnailUrl'] = trim((string) ($photo['thumbnailUrl'] ?? $photo['thumbnail_url'] ?? ''));
+                $normalized['mimeType'] = trim((string) ($photo['mimeType'] ?? $photo['mime_type'] ?? ''));
+                $normalized['sizeBytes'] = max(0, (int) ($photo['sizeBytes'] ?? $photo['size_bytes'] ?? 0));
+                $normalized['width'] = max(0, (int) ($photo['width'] ?? 0));
+                $normalized['height'] = max(0, (int) ($photo['height'] ?? 0));
+            }
+
+            $rows[] = $normalized;
         }
 
         return $rows;
@@ -2061,16 +2032,9 @@ class InspectionPayloadService
                 ]);
             }
 
-            $mediaId = trim((string) ($photo['mediaId'] ?? $photo['media_id'] ?? ''));
-            if ($mediaId !== '') {
-                $media = ReportMedia::query()->where('public_id', $mediaId)->where('module', 'inspection')->first();
-                if (! $media) {
-                    throw ValidationException::withMessages(["{$fieldPath}.mediaId" => ['Invalid managed photo reference.']]);
-                }
-                if ((int) $media->size_bytes > self::INSPECTION_MAX_PHOTO_BYTES) {
-                    throw ValidationException::withMessages(["{$fieldPath}.mediaId" => ['Each photo must be 1.5 MB or smaller.']]);
-                }
-                $totalPhotoBytes += (int) $media->size_bytes;
+            $managedPhotoBytes = $this->managedInspectionPhotoBytes($photo, $fieldPath);
+            if ($managedPhotoBytes !== null) {
+                $totalPhotoBytes += $managedPhotoBytes;
                 continue;
             }
 
@@ -2134,26 +2098,29 @@ class InspectionPayloadService
             $this->normalizeInspectionErAuxChecks($payload['erAuxChecks'] ?? $payload['er_aux_checks']);
         }
 
+        if (array_key_exists('hydraulicChecks', $payload) || array_key_exists('hydraulic_checks', $payload)) {
+            $this->normalizeInspectionHydraulicChecks(
+                $payload['hydraulicChecks'] ?? $payload['hydraulic_checks']
+            );
+        }
+
         if (
             $this->isFrtDailyInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
             || $this->hasInspectionRows($payload, 'frtDailyChecks', 'frt_daily_checks')
             || $this->hasInspectionRows($payload, 'frtOneOffChecks', 'frt_one_off_checks')
         ) {
-            $dailyRows = $this->normalizeInspectionFrtDailyChecks(
+            $this->normalizeInspectionFrtDailyChecks(
                 $payload['frtDailyChecks'] ?? $payload['frt_daily_checks'] ?? []
             );
-            $oneOffRows = $this->normalizeInspectionFrtOneOffChecks(
+            $this->normalizeInspectionFrtOneOffChecks(
                 $payload['frtOneOffChecks'] ?? $payload['frt_one_off_checks'] ?? []
             );
-            $this->validateInspectionFrtDailyRows($dailyRows, 'payload.frtDailyChecks');
-            $this->validateInspectionFrtOneOffRows($oneOffRows, 'payload.frtOneOffChecks');
         }
 
         if ($this->hasInspectionRows($payload, 'highAngleChecks', 'high_angle_checks')) {
-            $rows = $this->normalizeInspectionHighAngleChecks(
+            $this->normalizeInspectionHighAngleChecks(
                 $payload['highAngleChecks'] ?? $payload['high_angle_checks']
             );
-            $this->validateInspectionHighAngleRemarks($rows, 'payload.highAngleChecks');
         }
 
         if ($this->hasInspectionRows($payload, 'fireExtinguisherChecks', 'fire_extinguisher_checks')) {
@@ -2163,36 +2130,34 @@ class InspectionPayloadService
         }
 
         if ($this->hasInspectionRows($payload, 'scbaBackPlateChecks', 'scba_back_plate_checks')) {
-            $rows = $this->normalizeInspectionScbaChecks(
+            $this->normalizeInspectionScbaChecks(
                 $payload['scbaBackPlateChecks'] ?? $payload['scba_back_plate_checks'],
                 'backPlate',
                 'payload.scbaBackPlateChecks'
             );
-            $this->validateInspectionScbaRemarks($rows, 'payload.scbaBackPlateChecks', 'backPlate');
         }
 
         if ($this->hasInspectionRows($payload, 'scbaCylinderChecks', 'scba_cylinder_checks')) {
-            $rows = $this->normalizeInspectionScbaChecks(
+            $this->normalizeInspectionScbaChecks(
                 $payload['scbaCylinderChecks'] ?? $payload['scba_cylinder_checks'],
                 'cylinder',
                 'payload.scbaCylinderChecks'
             );
-            $this->validateInspectionScbaRemarks($rows, 'payload.scbaCylinderChecks', 'cylinder');
         }
 
         if ($this->hasInspectionRows($payload, 'scbaFaceMaskChecks', 'scba_face_mask_checks')) {
-            $rows = $this->normalizeInspectionScbaChecks(
+            $this->normalizeInspectionScbaChecks(
                 $payload['scbaFaceMaskChecks'] ?? $payload['scba_face_mask_checks'],
                 'faceMask',
                 'payload.scbaFaceMaskChecks'
             );
-            $this->validateInspectionScbaRemarks($rows, 'payload.scbaFaceMaskChecks', 'faceMask');
         }
 
         if (array_key_exists('scbaCustomSections', $payload) || array_key_exists('scba_custom_sections', $payload)) {
             $this->normalizeInspectionScbaCustomSections(
                 $payload['scbaCustomSections'] ?? $payload['scba_custom_sections'],
-                'payload.scbaCustomSections'
+                'payload.scbaCustomSections',
+                false
             );
         }
 
@@ -2229,6 +2194,12 @@ class InspectionPayloadService
                 throw ValidationException::withMessages([
                     $fieldPath => ['Invalid photo payload.'],
                 ]);
+            }
+
+            $managedPhotoBytes = $this->managedInspectionPhotoBytes($photo, $fieldPath);
+            if ($managedPhotoBytes !== null) {
+                $totalPhotoBytes += $managedPhotoBytes;
+                continue;
             }
 
             $url = trim((string) ($photo['url'] ?? ''));
@@ -2277,6 +2248,31 @@ class InspectionPayloadService
                 'payload.photos' => ['Total photo size must be 12 MB or smaller.'],
             ]);
         }
+    }
+
+    private function managedInspectionPhotoBytes(array $photo, string $fieldPath): ?int
+    {
+        $mediaId = trim((string) ($photo['mediaId'] ?? $photo['media_id'] ?? ''));
+        if ($mediaId === '') {
+            return null;
+        }
+
+        $media = ReportMedia::query()
+            ->where('public_id', $mediaId)
+            ->where('module', 'inspection')
+            ->first();
+        if (! $media) {
+            throw ValidationException::withMessages([
+                "{$fieldPath}.mediaId" => ['Invalid managed photo reference.'],
+            ]);
+        }
+        if ((int) $media->size_bytes > self::INSPECTION_MAX_PHOTO_BYTES) {
+            throw ValidationException::withMessages([
+                "{$fieldPath}.mediaId" => ['Each photo must be 1.5 MB or smaller.'],
+            ]);
+        }
+
+        return (int) $media->size_bytes;
     }
 
     private function validateInspectionReportRemarks(array $payload): void

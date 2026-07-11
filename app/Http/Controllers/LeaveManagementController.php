@@ -51,7 +51,7 @@ class LeaveManagementController extends Controller
         $dir = $dir === 'asc' ? 'asc' : 'desc';
         $query->orderBy($col, $dir);
 
-        $rows = $query->get()->map(fn ($leave) => $this->formatLeaveWithOwner($leave));
+        $rows = $query->get()->map(fn ($leave) => $this->formatLeaveWithOwner($leave, $request->user()));
 
         return response()->json(['data' => $rows]);
     }
@@ -64,12 +64,12 @@ class LeaveManagementController extends Controller
             ->with(['user', 'attachment'])
             ->findOrFail($leaveId);
 
-        return response()->json(['data' => $this->formatLeaveWithOwner($leave)]);
+        return response()->json(['data' => $this->formatLeaveWithOwner($leave, $request->user())]);
     }
 
     // ── Format ────────────────────────────────────────────────────────────────
 
-    private function formatLeaveWithOwner(Leave $leave): array
+    private function formatLeaveWithOwner(Leave $leave, ?User $actor = null): array
     {
         $base = LeaveController::formatLeave($leave);
         $user = $leave->relationLoaded('user') ? $leave->user : null;
@@ -80,7 +80,42 @@ class LeaveManagementController extends Controller
         $base['owner_user_id'] = $leave->user_id;
         // record_key mirrors frontend convention: "userId::leaveId"
         $base['record_key']    = $leave->user_id . '::' . $leave->id;
+        $base['permitted_actions'] = $this->permittedActions($leave, $actor);
 
         return $base;
+    }
+
+    private function permittedActions(Leave $leave, ?User $actor): array
+    {
+        if (! $actor) {
+            return [];
+        }
+        $roles = $this->authorizationService->getActiveRoleNames($actor)->all();
+        if (in_array('System Administrator', $roles, true)) {
+            return match ($leave->status) {
+                'Pending' => ['review', 'recommend', 'approve', 'reject', 'request_correction', 'cancel'],
+                'Approved' => ['cancel'],
+                default => [],
+            };
+        }
+        if ($leave->status !== 'Pending') {
+            return [];
+        }
+        $expectedRole = trim((string) $leave->next_action_role);
+        if ($expectedRole === '' || ! in_array($expectedRole, $roles, true)) {
+            return [];
+        }
+
+        $primaryAction = match ($leave->workflow_stage) {
+            'review' => 'review',
+            'recommend' => 'recommend',
+            'approve' => 'approve',
+            default => null,
+        };
+        if (! $primaryAction) {
+            return [];
+        }
+
+        return [$primaryAction, 'reject', 'request_correction', 'cancel'];
     }
 }

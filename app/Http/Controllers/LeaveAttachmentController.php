@@ -132,7 +132,10 @@ class LeaveAttachmentController extends Controller
     public function destroy(Request $request, int $attachmentId): JsonResponse
     {
         $user = $request->user();
-        $attachment = $this->resolveAttachment($attachmentId, $user->id, $request);
+        $attachment = LeaveAttachment::with('leave')->findOrFail($attachmentId);
+        if ((int) $attachment->user_id !== (int) $user->id) {
+            abort(403, 'Only the leave owner can delete an attachment.');
+        }
 
         // Only allow deletion if the leave is still in draft/pending (not approved)
         if ($attachment->leave) {

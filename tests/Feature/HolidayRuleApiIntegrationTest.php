@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Holiday;
+use App\Models\LeaveAssignment;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Services\RoleCatalog;
@@ -31,7 +32,7 @@ class HolidayRuleApiIntegrationTest extends TestCase
         ]);
     }
 
-    public function test_leave_store_keeps_submitted_days_and_returns_holiday_guidance(): void
+    public function test_leave_store_uses_server_calculated_days_and_returns_holiday_guidance(): void
     {
         $user = User::factory()->create([
             'status' => 'Active',
@@ -48,6 +49,14 @@ class HolidayRuleApiIntegrationTest extends TestCase
             'is_default_national' => true,
             'fixed_holiday_key' => 'labour-day',
         ]);
+        LeaveAssignment::query()->create([
+            'user_id' => $user->id,
+            'year' => 2026,
+            'leave_type' => 'Annual Leave',
+            'entitlement' => 14,
+            'used' => 0,
+            'pending' => 0,
+        ]);
 
         $response = $this->postJson('/api/leave', [
             'leave_type' => 'Annual Leave',
@@ -63,7 +72,7 @@ class HolidayRuleApiIntegrationTest extends TestCase
         ]);
 
         $response->assertCreated();
-        $response->assertJsonPath('data.days', 4);
+        $response->assertJsonPath('data.days', 1);
         $response->assertJsonPath(
             'meta.day_adjusted_message',
             'Recommended leave days based on weekends/public holidays is 1.',

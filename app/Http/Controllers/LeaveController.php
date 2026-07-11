@@ -4,15 +4,19 @@ namespace App\Http\Controllers;
 
 use App\Models\Leave;
 use App\Models\LeaveAttachment;
+use App\Models\User;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\HolidayGuidanceFeatureGate;
 use App\Services\HolidayGuidanceTelemetry;
 use App\Services\HolidayResolver;
 use App\Services\LeaveNotificationService;
+use App\Services\LeaveClaimGuardService;
+use App\Services\LeaveRosterImpactService;
 use App\Services\LeaveWorkflowService;
 use App\Services\WorkingDayCalculator;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -22,6 +26,8 @@ class LeaveController extends Controller
 {
     public function __construct(
         private readonly LeaveWorkflowService        $workflowService,
+        private readonly LeaveClaimGuardService      $claimGuardService,
+        private readonly LeaveRosterImpactService    $rosterImpactService,
         private readonly LeaveNotificationService    $notificationService,
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly WorkingDayCalculator        $workingDayCalculator,
@@ -125,101 +131,86 @@ class LeaveController extends Controller
         ]);
     }
 
+    public function rosterImpact(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'start_date' => ['required', 'date'],
+            'end_date' => ['required', 'date', 'gte:start_date'],
+            'work_shift' => ['nullable', 'string', 'max:50'],
+            'start_time_slot' => ['nullable', 'string', 'max:50'],
+            'end_time_slot' => ['nullable', 'string', 'max:50'],
+        ]);
+        if (\Illuminate\Support\Carbon::parse($data['start_date'])->diffInDays(\Illuminate\Support\Carbon::parse($data['end_date'])) > 366) {
+            throw ValidationException::withMessages([
+                'end_date' => ['Roster duty guidance is limited to 366 days.'],
+            ]);
+        }
+
+        return response()->json([
+            'data' => $this->rosterImpactService->forLeave($request->user(), $data, true),
+        ]);
+    }
+
     // ── Submit a leave ────────────────────────────────────────────────────────
 
     public function store(Request $request): JsonResponse
     {
         $user = $request->user();
+        $payload = $this->validatePayload($request);
+        $submittedDays = $payload['days'] ?? null;
 
-        $data = $request->validate([
-            'leave_type'      => ['required', 'string'],
-            'start_date'      => ['required', 'date'],
-            'end_date'        => ['required', 'date', 'gte:start_date'],
-            'days'            => ['required', 'numeric', 'min:0.5'],
-            'work_shift'      => ['nullable', 'string'],
-            'start_time_slot' => ['nullable', 'string'],
-            'end_time_slot'   => ['nullable', 'string'],
-            'reason'          => ['required', 'string', 'max:2000'],
-            'cover_by'        => ['nullable', 'string', 'max:255'],
-            'attachment_id'   => ['nullable', 'integer', 'exists:leave_attachments,id'],
-        ]);
+        [$leave, $workflow] = DB::transaction(function () use ($user, $payload) {
+            $lockedUser = User::query()->lockForUpdate()->findOrFail($user->id);
+            $data = $this->claimGuardService->validate($payload, $lockedUser);
+            $actorRoles = $this->authorizationService->getActiveRoleNames($lockedUser)->all();
+            $workflow = $this->workflowService->buildWorkflowForSubmission($actorRoles);
+            $year = (int) date('Y', strtotime($data['start_date']));
+            $historyEntry = [
+                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'at' => now()->toIso8601String(),
+                'action' => 'Submitted',
+                'by' => $lockedUser->name,
+                'byUserId' => (string) $lockedUser->id,
+                'remarks' => '',
+            ];
 
-        $actorRoles = $this->authorizationService->getActiveRoleNames($user)->all();
-        $year       = (int) date('Y', strtotime($data['start_date']));
-        $displayId  = $this->workflowService->generateDisplayId($user->id, $data['leave_type'], $year);
-        $workflow   = $this->workflowService->buildWorkflowForSubmission($actorRoles);
-        try {
-            $computedDays = $this->workingDayCalculator->computeLeaveDays(
-                $user,
-                $data['start_date'],
-                $data['end_date'],
-                $data['start_time_slot'] ?? null,
-                $data['end_time_slot'] ?? null,
-            );
-        } catch (\Throwable $exception) {
-            $this->guidanceTelemetry->recordLookupFailure([
-                'module' => 'leave',
-                'endpoint' => 'store',
-                'user_id' => $user?->id,
-                'error' => $exception->getMessage(),
-            ]);
-            $computedDays = (float) ($data['days'] ?? 0);
-        }
-
-        $historyEntry = [
-            'id'       => (string) \Illuminate\Support\Str::uuid(),
-            'at'       => now()->toIso8601String(),
-            'action'   => 'Submitted',
-            'by'       => $user->name,
-            'byUserId' => (string) $user->id,
-            'remarks'  => '',
-        ];
-
-        $leave = DB::transaction(function () use ($user, $data, $displayId, $workflow, $historyEntry, $computedDays) {
-            $leave = Leave::create([
-                'user_id'          => $user->id,
-                'display_id'       => $displayId,
-                'leave_type'       => $data['leave_type'],
-                'status'           => 'Pending',
-                'start_date'       => $data['start_date'],
-                'end_date'         => $data['end_date'],
-                'days'             => $data['days'],
-                'work_shift'       => $data['work_shift'],
-                'start_time_slot'  => $data['start_time_slot'] ?? null,
-                'end_time_slot'    => $data['end_time_slot'] ?? null,
-                'reason'           => $data['reason'],
-                'cover_by'         => $data['cover_by'] ?? null,
-                'applied_at'       => now(),
-                'workflow_stage'   => $workflow['workflowStage'],
-                'workflow_snapshot'=> $workflow['workflowSnapshot'],
+            $rosterImpactSnapshot = $this->rosterImpactService->snapshotForLeave($lockedUser, $data);
+            $leave = Leave::query()->create([
+                'user_id' => $lockedUser->id,
+                'display_id' => $this->workflowService->generateDisplayId($lockedUser->id, $data['leave_type'], $year),
+                'leave_type' => $data['leave_type'],
+                'status' => 'Pending',
+                'start_date' => $data['start_date'],
+                'end_date' => $data['end_date'],
+                'days' => $data['days'],
+                'work_shift' => $data['work_shift'],
+                'start_time_slot' => $data['start_time_slot'],
+                'end_time_slot' => $data['end_time_slot'],
+                'reason' => $data['reason'],
+                'cover_by' => $data['cover_by'] ?? null,
+                'applied_at' => now(),
+                'workflow_stage' => $workflow['workflowStage'],
+                'workflow_snapshot' => $workflow['workflowSnapshot'],
                 'next_action_role' => $workflow['nextActionRole'],
-                'applicant_roles'  => $workflow['applicantRoles'],
+                'applicant_roles' => $workflow['applicantRoles'],
                 'approval_history' => [$historyEntry],
-                'submitted_by'     => $user->name,
+                'roster_impact_snapshot' => $rosterImpactSnapshot,
+                'submitted_by' => $lockedUser->name,
+                'version' => 1,
             ]);
-
-            // Link uploaded attachment if provided
-            if (!empty($data['attachment_id'])) {
-                LeaveAttachment::where('id', $data['attachment_id'])
-                    ->where('user_id', $user->id)
-                    ->whereNull('leave_id')
-                    ->update(['leave_id' => $leave->id]);
+            if (! empty($data['attachment_id'])) {
+                LeaveAttachment::query()->whereKey($data['attachment_id'])->update(['leave_id' => $leave->id]);
             }
+            $this->workflowService->onLeaveSubmitted($leave);
 
-            return $leave;
+            return [$leave->fresh(['attachment']), $workflow];
         });
 
-        // Update pending balance
-        $this->workflowService->onLeaveSubmitted($leave);
-
-        // Emit notification to reviewer role
-        $snapshot     = $workflow['workflowSnapshot'];
-        $reviewerRole = $snapshot['reviewRole'] ?? null;
-        $this->notificationService->emit(
+        $this->emitNotificationSafely(
             'submitted',
             $leave,
             ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            $reviewerRole ? [$reviewerRole] : [],
+            $workflow['nextActionRole'] ? [$workflow['nextActionRole']] : [],
             [],
             true,
         );
@@ -230,8 +221,7 @@ class LeaveController extends Controller
             'leave_type' => $leave->leave_type,
         ]);
 
-        $leave->load('attachment');
-        $meta = $this->buildComputationMeta($user, $computedDays, $data['days'] ?? null, 'store');
+        $meta = $this->buildComputationMeta($user, (float) $leave->days, $submittedDays, 'store');
 
         return response()->json(['data' => $this->formatLeave($leave), 'meta' => $meta], 201);
     }
@@ -240,107 +230,10 @@ class LeaveController extends Controller
 
     public function update(Request $request, int $id): JsonResponse
     {
-        $user  = $request->user();
-        $leave = Leave::where('user_id', $user->id)->with('attachment')->findOrFail($id);
+        return $this->updateVersionedLeave($request, $id);
 
-        if (!in_array($leave->status, ['Pending', 'Draft'], true)) {
-            throw ValidationException::withMessages([
-                'status' => ['Only pending or draft leaves can be edited.'],
-            ]);
-        }
-
-        $data = $request->validate([
-            'leave_type'      => ['required', 'string'],
-            'start_date'      => ['required', 'date'],
-            'end_date'        => ['required', 'date', 'gte:start_date'],
-            'days'            => ['required', 'numeric', 'min:0.5'],
-            'work_shift'      => ['nullable', 'string'],
-            'start_time_slot' => ['nullable', 'string'],
-            'end_time_slot'   => ['nullable', 'string'],
-            'reason'          => ['required', 'string', 'max:2000'],
-            'cover_by'        => ['nullable', 'string', 'max:255'],
-            'attachment_id'   => ['nullable', 'integer', 'exists:leave_attachments,id'],
-        ]);
-
-        $actorRoles = $this->authorizationService->getActiveRoleNames($user)->all();
-        $workflow   = $this->workflowService->buildWorkflowForSubmission($actorRoles);
-        try {
-            $computedDays = $this->workingDayCalculator->computeLeaveDays(
-                $user,
-                $data['start_date'],
-                $data['end_date'],
-                $data['start_time_slot'] ?? null,
-                $data['end_time_slot'] ?? null,
-            );
-        } catch (\Throwable $exception) {
-            $this->guidanceTelemetry->recordLookupFailure([
-                'module' => 'leave',
-                'endpoint' => 'update',
-                'user_id' => $user?->id,
-                'error' => $exception->getMessage(),
-            ]);
-            $computedDays = (float) ($data['days'] ?? 0);
-        }
-
-        $editHistoryEntry = [
-            'id'       => (string) \Illuminate\Support\Str::uuid(),
-            'at'       => now()->toIso8601String(),
-            'action'   => 'Edited',
-            'by'       => $user->name,
-            'byUserId' => (string) $user->id,
-            'remarks'  => 'Leave request updated.',
-        ];
-
-        $prevDays   = (float) $leave->days;
-        $prevStatus = $leave->status;
-
-        DB::transaction(function () use ($user, $data, $leave, $workflow, $editHistoryEntry) {
-            $baseHistory = is_array($leave->approval_history) ? $leave->approval_history : [];
-
-            $leave->update([
-                'leave_type'       => $data['leave_type'],
-                'start_date'       => $data['start_date'],
-                'end_date'         => $data['end_date'],
-                'days'             => $data['days'],
-                'work_shift'       => $data['work_shift'] ?? $leave->work_shift,
-                'start_time_slot'  => $data['start_time_slot'] ?? null,
-                'end_time_slot'    => $data['end_time_slot'] ?? null,
-                'reason'           => $data['reason'],
-                'cover_by'         => $data['cover_by'] ?? null,
-                'workflow_stage'   => $workflow['workflowStage'],
-                'workflow_snapshot'=> $workflow['workflowSnapshot'],
-                'next_action_role' => $workflow['nextActionRole'],
-                'applicant_roles'  => $workflow['applicantRoles'],
-                'approval_history' => array_slice(array_merge([$editHistoryEntry], $baseHistory), 0, 20),
-            ]);
-
-            // Update attachment link
-            if (!empty($data['attachment_id'])) {
-                // Detach old attachment if different
-                if ($leave->attachment && $leave->attachment->id !== (int) $data['attachment_id']) {
-                    $leave->attachment->update(['leave_id' => null]);
-                }
-                LeaveAttachment::where('id', $data['attachment_id'])
-                    ->where('user_id', $user->id)
-                    ->update(['leave_id' => $leave->id]);
-            } elseif (array_key_exists('attachment_id', $data) && $data['attachment_id'] === null) {
-                // Detach any existing attachment
-                LeaveAttachment::where('leave_id', $leave->id)
-                    ->where('user_id', $user->id)
-                    ->update(['leave_id' => null]);
-            }
-        });
-
-        // Adjust pending balance: remove old days allocation, add updated days
-        if ($prevStatus === 'Pending') {
-            // Use a temporary object to represent the old days for the deduction
-            $oldLeave = clone $leave;
-            $oldLeave->days = $prevDays;
-            $this->workflowService->onLeaveDeclined($oldLeave);
-            $leave->refresh();
-            $this->workflowService->onLeaveSubmitted($leave);
-        }
-
+        /* Legacy update path retained only for source-history compatibility. */
+        /*
         // Notify the reviewer that the leave has changed and needs re-review
         $freshLeave = $leave->fresh(['attachment']);
         $nextRole   = $freshLeave->next_action_role;
@@ -362,27 +255,116 @@ class LeaveController extends Controller
         ]);
         $meta = $this->buildComputationMeta($user, $computedDays, $data['days'] ?? null, 'update');
         return response()->json(['data' => $this->formatLeave($freshLeave), 'meta' => $meta]);
+        */
+    }
+
+    private function updateVersionedLeave(Request $request, int $id): JsonResponse
+    {
+        $user = $request->user();
+        $payload = $this->validatePayload($request, true);
+        $submittedDays = $payload['days'] ?? null;
+
+        [$leave, $workflow, $eventType] = DB::transaction(function () use ($user, $id, $payload) {
+            $lockedUser = User::query()->lockForUpdate()->findOrFail($user->id);
+            $leave = Leave::query()->where('user_id', $lockedUser->id)->with('attachment')->lockForUpdate()->findOrFail($id);
+            if (! $this->canApplicantEdit($leave)) {
+                throw ValidationException::withMessages([
+                    'status' => ['Editing is locked after the first manager workflow action. Request correction to amend this leave.'],
+                ]);
+            }
+            $this->assertExpectedVersion($leave, $payload['expected_version'] ?? null);
+            $data = $this->claimGuardService->validate($payload, $lockedUser, $leave);
+            $workflow = $this->workflowService->buildWorkflowForSubmission(
+                $this->authorizationService->getActiveRoleNames($lockedUser)->all(),
+            );
+            $isResubmission = $leave->status === 'Needs Correction';
+            $history = is_array($leave->approval_history) ? $leave->approval_history : [];
+            $history[] = [
+                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'at' => now()->toIso8601String(),
+                'action' => $isResubmission ? 'Resubmitted' : 'Edited',
+                'by' => $lockedUser->name,
+                'byUserId' => (string) $lockedUser->id,
+                'remarks' => $isResubmission ? 'Leave request corrected and resubmitted.' : 'Leave request updated before review.',
+            ];
+            $oldLeave = clone $leave;
+
+            $leave->update([
+                'leave_type' => $data['leave_type'],
+                'status' => 'Pending',
+                'start_date' => $data['start_date'],
+                'end_date' => $data['end_date'],
+                'days' => $data['days'],
+                'work_shift' => $data['work_shift'],
+                'start_time_slot' => $data['start_time_slot'],
+                'end_time_slot' => $data['end_time_slot'],
+                'reason' => $data['reason'],
+                'cover_by' => $data['cover_by'] ?? null,
+                'workflow_stage' => $workflow['workflowStage'],
+                'workflow_snapshot' => $workflow['workflowSnapshot'],
+                'next_action_role' => $workflow['nextActionRole'],
+                'applicant_roles' => $workflow['applicantRoles'],
+                'approval_history' => array_slice($history, -20),
+                'roster_impact_snapshot' => $this->rosterImpactService->snapshotForLeave($lockedUser, $data),
+                'version' => ((int) $leave->version) + 1,
+            ]);
+
+            if ($leave->attachment && $leave->attachment->id !== (int) ($data['attachment_id'] ?? 0)) {
+                $leave->attachment->update(['leave_id' => null]);
+            }
+            if (! empty($data['attachment_id'])) {
+                LeaveAttachment::query()->whereKey($data['attachment_id'])->update(['leave_id' => $leave->id]);
+            }
+
+            $this->workflowService->onLeaveDeclined($oldLeave);
+            $this->workflowService->onLeaveSubmitted($leave->fresh());
+
+            return [$leave->fresh(['attachment']), $workflow, $isResubmission ? 'resubmitted' : 'edited'];
+        });
+
+        $this->emitNotificationSafely(
+            $eventType,
+            $leave,
+            ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
+            $workflow['nextActionRole'] ? [$workflow['nextActionRole']] : [],
+            [],
+            (bool) $workflow['nextActionRole'],
+            null,
+            [],
+            true,
+        );
+
+        AuditLogger::log($request, 'leave_edited', $user, [
+            'leave_id' => $leave->id,
+            'display_id' => $leave->display_id,
+        ]);
+
+        return response()->json([
+            'data' => $this->formatLeave($leave),
+            'meta' => $this->buildComputationMeta($user, (float) $leave->days, $submittedDays, 'update'),
+        ]);
     }
 
     // ── Delete (draft only) ───────────────────────────────────────────────────
 
     public function destroy(Request $request, int $id): JsonResponse
     {
-        $user  = $request->user();
-        $leave = Leave::where('user_id', $user->id)->findOrFail($id);
-
-        if ($leave->status !== 'Draft') {
-            throw ValidationException::withMessages([
-                'status' => ['Only draft leaves can be deleted.'],
-            ]);
-        }
-
-        $leave->delete();
-
-        AuditLogger::log($request, 'leave_deleted', $user, [
-            'leave_id'   => $leave->id,
-            'display_id' => $leave->display_id,
+        $payload = $request->validate([
+            'expected_version' => ['nullable', 'integer', 'min:1'],
         ]);
+        $user = $request->user();
+        DB::transaction(function () use ($user, $id, $payload) {
+            $leave = Leave::query()->where('user_id', $user->id)->lockForUpdate()->findOrFail($id);
+            if ($leave->status !== 'Draft') {
+                throw ValidationException::withMessages([
+                    'status' => ['Only draft leaves can be deleted.'],
+                ]);
+            }
+            $this->assertExpectedVersion($leave, $payload['expected_version'] ?? null);
+            $leave->delete();
+        });
+
+        AuditLogger::log($request, 'leave_deleted', $user, ['leave_id' => $id]);
 
         return response()->json(null, 204);
     }
@@ -391,33 +373,10 @@ class LeaveController extends Controller
 
     public function cancel(Request $request, int $id): JsonResponse
     {
-        $user  = $request->user();
-        $leave = Leave::where('user_id', $user->id)->findOrFail($id);
+        return $this->cancelVersionedLeave($request, $id);
 
-        if (!in_array($leave->status, ['Pending'], true)) {
-            throw ValidationException::withMessages([
-                'status' => ['Only pending leaves can be cancelled by the applicant.'],
-            ]);
-        }
-
-        $data = $request->validate([
-            'remarks' => ['nullable', 'string', 'max:1000'],
-        ]);
-
+        /*
         // Capture the current reviewer before the workflow advances (it will become null after cancel)
-        $nextRole = $leave->next_action_role;
-
-        $updates = $this->workflowService->advanceWorkflow(
-            $leave,
-            'cancel',
-            $user->id,
-            $user->name,
-            $data['remarks'] ?? null,
-        );
-
-        $leave->update($updates);
-
-        $this->workflowService->onLeaveDeclined($leave);
 
         // Notify whoever was about to act on this leave (not the employee — they cancelled it)
         $this->notificationService->emit(
@@ -438,6 +397,58 @@ class LeaveController extends Controller
         ]);
 
         $leave->load('attachment');
+
+        return response()->json(['data' => $this->formatLeave($leave)]);
+        */
+    }
+
+    private function cancelVersionedLeave(Request $request, int $id): JsonResponse
+    {
+        $user = $request->user();
+        $payload = $request->validate([
+            'remarks' => ['nullable', 'string', 'max:1000'],
+            'expected_version' => ['nullable', 'integer', 'min:1'],
+        ]);
+
+        [$leave, $nextRole] = DB::transaction(function () use ($user, $id, $payload) {
+            User::query()->lockForUpdate()->findOrFail($user->id);
+            $leave = Leave::query()->where('user_id', $user->id)->with('attachment')->lockForUpdate()->findOrFail($id);
+            if ($leave->status !== 'Pending') {
+                throw ValidationException::withMessages([
+                    'status' => ['Only pending leaves can be cancelled by the applicant.'],
+                ]);
+            }
+            $this->assertExpectedVersion($leave, $payload['expected_version'] ?? null);
+            $nextRole = $leave->next_action_role;
+            $updates = $this->workflowService->advanceWorkflow(
+                $leave,
+                'cancel',
+                (int) $user->id,
+                (string) $user->name,
+                $payload['remarks'] ?? null,
+            );
+            $updates['version'] = ((int) $leave->version) + 1;
+            $leave->update($updates);
+            $this->workflowService->onLeaveDeclined($leave->fresh());
+
+            return [$leave->fresh(['attachment']), $nextRole];
+        });
+
+        $this->emitNotificationSafely(
+            'cancelled',
+            $leave,
+            ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
+            $nextRole ? [$nextRole] : [],
+            [],
+            false,
+            $payload['remarks'] ?? null,
+            [],
+            true,
+        );
+        AuditLogger::log($request, 'leave_cancelled', $user, [
+            'leave_id' => $leave->id,
+            'display_id' => $leave->display_id,
+        ]);
 
         return response()->json(['data' => $this->formatLeave($leave)]);
     }
@@ -468,7 +479,9 @@ class LeaveController extends Controller
             'next_action_role' => $leave->next_action_role,
             'applicant_roles'  => $leave->applicant_roles ?? [],
             'approval_history' => $leave->approval_history ?? [],
+            'roster_impact_snapshot' => $leave->roster_impact_snapshot,
             'submitted_by'     => $leave->submitted_by,
+            'version'          => (int) $leave->version,
             'attachment'       => $attachment ? [
                 'id'            => $attachment->id,
                 'original_name' => $attachment->original_name,
@@ -480,6 +493,91 @@ class LeaveController extends Controller
             'created_at'       => optional($leave->created_at)->toIso8601String(),
             'updated_at'       => optional($leave->updated_at)->toIso8601String(),
         ];
+    }
+
+    private function validatePayload(Request $request, bool $includeVersion = false): array
+    {
+        $rules = [
+            'leave_type' => ['required', 'string', 'max:100'],
+            'start_date' => ['required', 'date'],
+            'end_date' => ['required', 'date', 'gte:start_date'],
+            'days' => ['nullable', 'numeric', 'min:0'],
+            'work_shift' => ['nullable', 'string', 'max:50'],
+            'start_time_slot' => ['nullable', 'string', 'max:50'],
+            'end_time_slot' => ['nullable', 'string', 'max:50'],
+            'reason' => ['required', 'string', 'max:2000'],
+            'cover_by' => ['nullable', 'string', 'max:255'],
+            'attachment_id' => ['nullable', 'integer'],
+        ];
+        if ($includeVersion) {
+            $rules['expected_version'] = ['nullable', 'integer', 'min:1'];
+        }
+
+        return $request->validate($rules);
+    }
+
+    private function canApplicantEdit(Leave $leave): bool
+    {
+        if (in_array($leave->status, ['Draft', 'Needs Correction'], true)) {
+            return true;
+        }
+        if ($leave->status !== 'Pending' || $leave->workflow_stage !== 'review') {
+            return false;
+        }
+
+        $history = is_array($leave->approval_history) ? $leave->approval_history : [];
+        return ! collect($history)->contains(function ($entry) {
+            return in_array((string) ($entry['action'] ?? ''), ['Reviewed', 'Recommended', 'Approved'], true);
+        });
+    }
+
+    private function assertExpectedVersion(Leave $leave, ?int $expectedVersion): void
+    {
+        if ($expectedVersion !== null && $expectedVersion !== (int) $leave->version) {
+            $this->throwVersionConflict($leave);
+        }
+    }
+
+    private function throwVersionConflict(Leave $leave): never
+    {
+        throw new HttpResponseException(response()->json([
+            'code' => 'LEAVE_VERSION_CONFLICT',
+            'message' => 'This leave request changed. Reload the latest record before trying again.',
+            'currentVersion' => (int) $leave->version,
+            'currentRecord' => self::formatLeave($leave),
+        ], 409));
+    }
+
+    private function emitNotificationSafely(
+        string $eventType,
+        Leave $leave,
+        array $actor,
+        array $targetRoles = [],
+        array $targetUserIds = [],
+        bool $actionRequired = false,
+        ?string $remarks = null,
+        array $metadata = [],
+        bool $excludeOwner = false,
+    ): void {
+        try {
+            $this->notificationService->emit(
+                $eventType,
+                $leave,
+                $actor,
+                $targetRoles,
+                $targetUserIds,
+                $actionRequired,
+                $remarks,
+                $metadata,
+                $excludeOwner,
+            );
+        } catch (\Throwable $exception) {
+            Log::warning('Leave notification could not be sent after a committed mutation.', [
+                'leave_id' => $leave->id,
+                'event_type' => $eventType,
+                'error' => $exception->getMessage(),
+            ]);
+        }
     }
 
     private function buildComputationMeta($user, float $computedDays, mixed $clientDays, string $endpoint): array

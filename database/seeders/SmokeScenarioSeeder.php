@@ -8,6 +8,7 @@ use App\Models\InspectionEquipment;
 use App\Models\InspectionFireExtinguisher;
 use App\Models\InspectionLocation;
 use App\Models\Leave;
+use App\Models\LeaveAssignment;
 use App\Models\OvertimeRecord;
 use App\Models\PayrollClaim;
 use App\Models\Report;
@@ -39,6 +40,7 @@ class SmokeScenarioSeeder extends Seeder
         $siteBeta = Team::where('name', 'Smoke Site Beta')->first();
 
         $this->seedRoster($sysadmin, $siteAlpha, $siteBeta);
+        $this->seedLeaveAssignment($trt);
         $this->seedLeaveRecords($trt);
         $this->seedOvertimeRecords($trt);
         $this->seedPayrollClaims($trt, $finance);
@@ -100,8 +102,10 @@ class SmokeScenarioSeeder extends Seeder
                     'work_shift' => 'day',
                     'reason' => "Smoke {$status} leave record",
                     'applied_at' => now()->subDays(2),
-                    'workflow_stage' => $status === 'Pending' ? 'pending_review' : strtolower($status),
-                    'workflow_snapshot' => ['smoke' => true],
+                    'workflow_stage' => $status === 'Pending' ? 'review' : strtolower($status),
+                    'workflow_snapshot' => $status === 'Pending'
+                        ? ['reviewRole' => 'Human Resource', 'requireRecommendation' => false]
+                        : ['smoke' => true],
                     'next_action_role' => $status === 'Pending' ? 'Human Resource' : null,
                     'applicant_roles' => ['Tactical Response Team'],
                     'approval_history' => [],
@@ -109,6 +113,18 @@ class SmokeScenarioSeeder extends Seeder
                 ],
             );
         }
+    }
+
+    private function seedLeaveAssignment(User $owner): void
+    {
+        LeaveAssignment::updateOrCreate(
+            [
+                'user_id' => $owner->id,
+                'year' => now()->year,
+                'leave_type' => 'Annual Leave',
+            ],
+            ['entitlement' => 30, 'used' => 0, 'pending' => 1],
+        );
     }
 
     private function seedOvertimeRecords(User $owner): void
@@ -135,6 +151,34 @@ class SmokeScenarioSeeder extends Seeder
                 ],
             );
         }
+
+        OvertimeRecord::updateOrCreate(
+            ['user_id' => $owner->id, 'display_id' => 'SMK-OT-WORKFLOW'],
+            [
+                'overtime_type' => 'weekday',
+                'claim_date' => now()->subDays(3)->toDateString(),
+                'start_time' => '18:00',
+                'end_time' => '20:00',
+                'is_overnight' => false,
+                'duration_minutes' => 120,
+                'reason' => 'Smoke overtime workflow record for correction and resubmission.',
+                'status' => 'Pending',
+                'applied_at' => now()->subDay(),
+                'workflow_stage' => 'review',
+                'workflow_snapshot' => [
+                    'reviewRole' => 'Contract Manager',
+                    'recommendRole' => 'Human Resource',
+                    'approveRole' => 'Client Contract Manager',
+                    'requireRecommendation' => true,
+                    'enforceDistinctApprovers' => true,
+                ],
+                'next_action_role' => 'Contract Manager',
+                'applicant_roles' => ['Tactical Response Team'],
+                'approval_history' => [],
+                'submitted_by' => $owner->name,
+                'version' => 1,
+            ],
+        );
     }
 
     private function seedPayrollClaims(User $owner, User $finance): void

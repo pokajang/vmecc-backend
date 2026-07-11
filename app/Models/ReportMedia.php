@@ -34,4 +34,9 @@ class ReportMedia extends Model
     {
         return $this->hasMany(ReportMediaLink::class);
     }
+
+    public function leases(): HasMany
+    {
+        return $this->hasMany(ReportMediaLease::class);
+    }
 }

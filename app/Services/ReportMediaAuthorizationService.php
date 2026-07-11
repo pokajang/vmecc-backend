@@ -11,12 +11,18 @@ use App\Models\User;
 
 class ReportMediaAuthorizationService
 {
-    private const REPORT_PERMISSIONS = [
-        'inspection' => 'reports.inspection.view',
-        'erco' => 'reports.erco.view',
-    ];
+    public function __construct(
+        private readonly AssignmentAuthorizationService $authorizationService,
+        private readonly ReportMediaModulePolicy $modulePolicy,
+    ) {}
 
-    public function __construct(private readonly AssignmentAuthorizationService $authorizationService) {}
+    public function canUseModule(User $user, string $module): bool
+    {
+        $permission = $this->modulePolicy->permissionFor($module);
+
+        return $permission !== null
+            && $this->authorizationService->hasPermission($user, "reports.manage|{$permission}");
+    }
 
     public function canView(User $user, ReportMedia $media): bool
     {
@@ -43,7 +49,7 @@ class ReportMediaAuthorizationService
             if ((int) $report->owner_user_id === (int) $user->id) {
                 return true;
             }
-            $permission = self::REPORT_PERMISSIONS[strtolower((string) $report->report_type)] ?? null;
+            $permission = $this->modulePolicy->permissionFor($report->report_type);
 
             return $permission !== null
                 && $this->authorizationService->hasPermission($user, "reports.manage|{$permission}");

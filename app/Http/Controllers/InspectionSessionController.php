@@ -8,13 +8,17 @@ use App\Models\InspectionSession;
 use App\Models\InspectionSessionEvent;
 use App\Models\Report;
 use App\Models\ReportTimelineEntry;
+use App\Models\User;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\InspectionCheckRowSyncService;
+use App\Services\InspectionExtinguisherOperationService;
 use App\Services\InspectionFireExtinguisherSessionProgressService;
+use App\Services\InspectionSessionResolverService;
 use App\Services\InspectionWorkflowService;
 use App\Services\ReportMediaService;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Database\QueryException;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -52,6 +56,8 @@ class InspectionSessionController extends Controller
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly InspectionCheckRowSyncService $inspectionCheckRowSyncService,
         private readonly InspectionFireExtinguisherSessionProgressService $sessionProgressService,
+        private readonly InspectionSessionResolverService $sessionResolverService,
+        private readonly InspectionExtinguisherOperationService $extinguisherOperationService,
         private readonly InspectionWorkflowService $inspectionWorkflowService,
         private readonly WorkflowNotificationService $workflowNotificationService,
         private readonly ReportMediaService $reportMediaService,
@@ -63,10 +69,10 @@ class InspectionSessionController extends Controller
         $this->ensureInspectionPermission($request);
 
         $scope = $this->scopeFromRequest($request);
-        $session = $this->findActiveSession($scope);
+        $session = $this->sessionResolverService->findActive($scope, $request->user());
 
         return response()->json([
-            'data' => $session ? $this->formatSession($session) : null,
+            'data' => $session ? $this->formatSessionForActor($session, $request) : null,
         ]);
     }
 
@@ -83,40 +89,64 @@ class InspectionSessionController extends Controller
             'main_location' => ['nullable', 'string', 'max:190'],
             'subLocation' => ['nullable', 'string', 'max:190'],
             'sub_location' => ['nullable', 'string', 'max:190'],
+            'scopeVersion' => ['nullable', 'string', 'in:v2'],
+            'scope_version' => ['nullable', 'string', 'in:v2'],
+            'siteKey' => ['nullable', 'string', 'max:190'],
+            'site_key' => ['nullable', 'string', 'max:190'],
+            'inspectionDate' => ['nullable', 'date_format:Y-m-d'],
+            'inspection_date' => ['nullable', 'date_format:Y-m-d'],
+            'shiftKey' => ['nullable', 'string', 'max:80'],
+            'shift_key' => ['nullable', 'string', 'max:80'],
+            'batchKey' => ['nullable', 'string', 'max:190'],
+            'batch_key' => ['nullable', 'string', 'max:190'],
+            'teamId' => ['nullable', 'integer', 'min:1'],
+            'team_id' => ['nullable', 'integer', 'min:1'],
             'forceNew' => ['nullable', 'boolean'],
             'force_new' => ['nullable', 'boolean'],
         ]);
         $scope = $this->scopeFromArray($data);
         $forceNew = (bool) ($data['forceNew'] ?? $data['force_new'] ?? false);
-        $sessionScope = $this->sessionScope($scope);
+        $sessionScope = $this->sessionResolverService->resolveScope($scope, $request->user());
 
         if (! $forceNew) {
-            $existing = $this->findActiveSession($sessionScope);
+            $existing = $this->sessionResolverService->findActive($sessionScope);
             if ($existing) {
+                $this->sessionResolverService->logOutcome($existing, 'resumed');
                 $this->sessionProgressService->sync($existing, $request->user()?->id);
 
                 return response()->json([
-                    'data' => $this->formatHydratedSession($existing->refresh(), $scope),
+                    'data' => $this->formatHydratedSessionForActor($existing->refresh(), $scope, $request),
                     'created' => false,
                 ]);
             }
         }
 
-        $session = InspectionSession::query()->create([
-            'session_uid' => 'inspection-session-'.Str::uuid()->toString(),
-            'inspection_type' => self::FIRE_EXTINGUISHER_TYPE,
-            'inspection_type_key' => self::FIRE_EXTINGUISHER_TYPE_KEY,
-            'status' => self::ACTIVE_STATUS,
-            'scope_zone' => $sessionScope['zone'],
-            'scope_main_location' => $sessionScope['mainLocation'],
-            'scope' => $sessionScope,
-            'started_by_user_id' => $request->user()->id,
-        ]);
+        try {
+            $session = $this->sessionResolverService->create($sessionScope, (int) $request->user()->id);
+        } catch (QueryException $exception) {
+            if (($exception->errorInfo[0] ?? null) !== '23000') {
+                throw $exception;
+            }
+            $existing = $sessionScope['scopeVersion'] === 'v2'
+                ? $this->sessionResolverService->findActive($sessionScope)
+                : null;
+            if (! $existing) {
+                throw $exception;
+            }
+            $this->sessionResolverService->logOutcome($existing, 'concurrent-resume');
+            $this->sessionProgressService->sync($existing, $request->user()?->id);
+
+            return response()->json([
+                'data' => $this->formatHydratedSessionForActor($existing->refresh(), $scope, $request),
+                'created' => false,
+            ]);
+        }
+        $this->sessionResolverService->logOutcome($session, 'created');
         $this->recordEvent($session, null, 'session.created', $request, ['scope' => $sessionScope]);
         $this->sessionProgressService->sync($session, $request->user()?->id);
 
         return response()->json([
-            'data' => $this->formatHydratedSession($session->refresh(), $scope),
+            'data' => $this->formatHydratedSessionForActor($session->refresh(), $scope, $request),
             'created' => true,
         ], Response::HTTP_CREATED);
     }
@@ -129,7 +159,7 @@ class InspectionSessionController extends Controller
         $this->sessionProgressService->sync($session, $request->user()?->id);
 
         return response()->json([
-            'data' => $this->formatSession($session->refresh()),
+            'data' => $this->formatSessionForActor($session->refresh(), $request),
         ]);
     }
 
@@ -214,6 +244,8 @@ class InspectionSessionController extends Controller
             'check_payload' => ['nullable', 'array'],
             'clientResultId' => ['nullable', 'string', 'max:190'],
             'client_result_id' => ['nullable', 'string', 'max:190'],
+            'operationId' => ['nullable', 'string', 'max:190'],
+            'operation_id' => ['nullable', 'string', 'max:190'],
             'baseVersion' => ['nullable', 'integer', 'min:0'],
             'base_version' => ['nullable', 'integer', 'min:0'],
             'forceRecheck' => ['nullable', 'boolean'],
@@ -222,23 +254,70 @@ class InspectionSessionController extends Controller
         $payload = $this->resultPayloadFromRequest($request);
         $asset = $this->resolveAsset($extinguisherId, $payload);
         $clientResultId = $this->text($data['clientResultId'] ?? $data['client_result_id'] ?? '');
+        $operationId = $this->text($data['operationId'] ?? $data['operation_id'] ?? '');
         $baseVersion = (int) ($data['baseVersion'] ?? $data['base_version'] ?? 0);
         $forceRecheck = (bool) ($data['forceRecheck'] ?? $data['force_recheck'] ?? false);
         $this->validateCompletedFireExtinguisherPayload($asset['checkPayload']);
 
         try {
-            $result = DB::transaction(function () use ($session, $asset, $clientResultId, $baseVersion, $forceRecheck, $request): InspectionExtinguisherResult {
+            $outcome = DB::transaction(function () use ($session, $asset, $clientResultId, $operationId, $baseVersion, $forceRecheck, $request): array {
+                $operation = null;
+                if ($operationId !== '') {
+                    $operationStart = $this->extinguisherOperationService->begin(
+                        operationUid: $operationId,
+                        session: $session,
+                        assetKey: $asset['canonicalAssetKey'],
+                        operationType: 'complete',
+                        actorUserId: (int) $request->user()->id,
+                        baseVersion: $baseVersion,
+                        payload: $asset['checkPayload'],
+                    );
+                    $operation = $operationStart['operation'];
+                    if ($operationStart['idReused']) {
+                        return [
+                            'kind' => 'conflict',
+                            'code' => 'inspection_operation_id_reused',
+                            'message' => 'This inspection operation ID was already used for different work.',
+                            'data' => null,
+                            'operationId' => $operationId,
+                        ];
+                    }
+                    if ($operationStart['replayed']) {
+                        return [
+                            'kind' => $operation->status === 'succeeded' ? 'replay' : 'conflict',
+                            'code' => $operation->status === 'succeeded'
+                                ? 'inspection_operation_replayed'
+                                : (string) $operation->outcome_code,
+                            'message' => $operation->status === 'succeeded'
+                                ? 'Inspection operation already applied.'
+                                : 'Inspection operation previously conflicted.',
+                            'data' => $operation->response_payload,
+                            'operationId' => $operationId,
+                            'resultVersion' => $operation->result_version,
+                        ];
+                    }
+                }
+
                 $existing = $session->extinguisherResults()
                     ->lockForUpdate()
                     ->where('canonical_asset_key', $asset['canonicalAssetKey'])
                     ->first();
 
-                if ($existing && $clientResultId !== '' && $existing->client_result_id === $clientResultId) {
+                $isExactLegacyReplay = $operationId === ''
+                    && $existing
+                    && $clientResultId !== ''
+                    && $existing->client_result_id === $clientResultId
+                    && $baseVersion === 0;
+                if ($isExactLegacyReplay) {
                     if ($existing->status === 'completed') {
                         $this->sessionProgressService->sync($session, $request->user()?->id, $asset);
                     }
 
-                    return $existing;
+                    return [
+                        'kind' => 'legacy_replay',
+                        'data' => $this->formatResult($existing->load('checkedBy')),
+                        'resultVersion' => (int) $existing->version,
+                    ];
                 }
 
                 $isCompletedByAnotherUser = $existing
@@ -247,16 +326,44 @@ class InspectionSessionController extends Controller
 
                 if ($isCompletedByAnotherUser && ! $forceRecheck) {
                     $existing->load('checkedBy');
-                    throw ValidationException::withMessages([
-                        'extinguisher' => 'This fire extinguisher has already been inspected in this session.',
-                    ])->status(Response::HTTP_CONFLICT);
+                    $data = $this->formatResult($existing);
+                    if ($operation) {
+                        $this->extinguisherOperationService->conflict(
+                            $operation,
+                            'inspection_result_completed_by_other_user',
+                            (int) $existing->version,
+                            $data,
+                        );
+                    }
+
+                    return [
+                        'kind' => 'conflict',
+                        'code' => 'inspection_result_completed_by_other_user',
+                        'message' => 'This fire extinguisher was already inspected by another user.',
+                        'data' => $data,
+                        'operationId' => $operationId,
+                    ];
                 }
 
                 if ($existing && $baseVersion > 0 && (int) $existing->version !== $baseVersion) {
                     $existing->load('checkedBy');
-                    throw ValidationException::withMessages([
-                        'version' => 'This fire extinguisher result changed since it was loaded.',
-                    ])->status(Response::HTTP_CONFLICT);
+                    $data = $this->formatResult($existing);
+                    if ($operation) {
+                        $this->extinguisherOperationService->conflict(
+                            $operation,
+                            'inspection_result_version_conflict',
+                            (int) $existing->version,
+                            $data,
+                        );
+                    }
+
+                    return [
+                        'kind' => 'conflict',
+                        'code' => 'inspection_result_version_conflict',
+                        'message' => 'This fire extinguisher result changed since it was loaded.',
+                        'data' => $data,
+                        'operationId' => $operationId,
+                    ];
                 }
 
                 if ($existing) {
@@ -278,8 +385,24 @@ class InspectionSessionController extends Controller
                     ])->save();
                     $this->recordEvent($session, $existing, $forceRecheck ? 'extinguisher.rechecked' : 'extinguisher.completed', $request);
                     $this->sessionProgressService->sync($session, $request->user()?->id, $asset);
+                    $this->reportMediaService->syncPayloadLinks((array) $existing->check_payload, 'inspection_result', (string) $existing->id, (int) $request->user()->id, 'inspection');
 
-                    return $existing;
+                    $data = $this->formatResult($existing->load('checkedBy'));
+                    if ($operation) {
+                        $this->extinguisherOperationService->succeed(
+                            $operation,
+                            (int) $existing->version,
+                            $data,
+                        );
+                    }
+                    $session->increment('version');
+
+                    return [
+                        'kind' => 'applied',
+                        'data' => $data,
+                        'resultVersion' => (int) $existing->version,
+                        'operationId' => $operationId,
+                    ];
                 }
 
                 $created = $session->extinguisherResults()->create([
@@ -298,8 +421,25 @@ class InspectionSessionController extends Controller
                 ]);
                 $this->recordEvent($session, $created, 'extinguisher.completed', $request);
                 $this->sessionProgressService->sync($session, $request->user()?->id, $asset);
+                $this->reportMediaService->syncPayloadLinks((array) $created->check_payload, 'inspection_result', (string) $created->id, (int) $request->user()->id, 'inspection');
 
-                return $created;
+                $created->refresh()->load('checkedBy');
+                $data = $this->formatResult($created);
+                if ($operation) {
+                    $this->extinguisherOperationService->succeed(
+                        $operation,
+                        (int) $created->version,
+                        $data,
+                    );
+                }
+                $session->increment('version');
+
+                return [
+                    'kind' => 'applied',
+                    'data' => $data,
+                    'resultVersion' => (int) $created->version,
+                    'operationId' => $operationId,
+                ];
             });
         } catch (ValidationException $exception) {
             $existing = $session->extinguisherResults()
@@ -308,30 +448,46 @@ class InspectionSessionController extends Controller
                 ->first();
 
             return response()->json([
-                'message' => $exception->getMessage() ?: 'Inspection result conflict.',
-                'code' => 'inspection_extinguisher_result_conflict',
+                'message' => $exception->getMessage() ?: 'The inspection result is invalid.',
+                'code' => 'inspection_payload_invalid',
                 'errors' => $exception->errors(),
                 'data' => $existing ? $this->formatResult($existing) : null,
-            ], Response::HTTP_CONFLICT);
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (QueryException $exception) {
+            Log::warning('inspection_extinguisher_result_write_conflict', [
+                'session_uid' => $session->session_uid,
+                'asset_key' => $asset['canonicalAssetKey'],
+                'operation_id' => $operationId ?: null,
+                'exception' => $exception->getCode(),
+            ]);
             $existing = $session->extinguisherResults()
                 ->with('checkedBy')
                 ->where('canonical_asset_key', $asset['canonicalAssetKey'])
                 ->first();
 
             return response()->json([
-                'message' => 'This fire extinguisher has already been inspected in this session.',
-                'code' => 'inspection_extinguisher_result_duplicate',
+                'message' => 'The inspection result could not be written because it changed concurrently.',
+                'code' => 'inspection_result_write_conflict',
                 'data' => $existing ? $this->formatResult($existing) : null,
             ], Response::HTTP_CONFLICT);
         }
 
-        $session->increment('version');
-        $this->reportMediaService->syncPayloadLinks((array) $result->check_payload, 'inspection_result', (string) $result->id, (int) $request->user()->id, 'inspection');
+        if (($outcome['kind'] ?? '') === 'conflict') {
+            return response()->json([
+                'message' => $outcome['message'] ?? 'Inspection result conflict.',
+                'code' => $outcome['code'] ?? 'inspection_extinguisher_result_conflict',
+                'data' => $outcome['data'] ?? null,
+                'operation' => $this->operationMeta($outcome, false),
+            ], Response::HTTP_CONFLICT);
+        }
 
         return response()->json([
-            'data' => $this->formatResult($result->refresh()->load('checkedBy')),
+            'data' => $outcome['data'] ?? null,
             'meta' => $this->sessionProgressService->progress($session->refresh()),
+            'operation' => $this->operationMeta(
+                $outcome,
+                ($outcome['kind'] ?? '') === 'replay',
+            ),
         ]);
     }
 
@@ -340,15 +496,58 @@ class InspectionSessionController extends Controller
         $this->ensureEnabled();
         $this->ensureInspectionPermission($request);
         $session = $this->findWritableSession($request, $sessionUid);
-        $request->validate([
+        $data = $request->validate([
             'checkPayload' => ['nullable', 'array'],
             'check_payload' => ['nullable', 'array'],
+            'operationId' => ['nullable', 'string', 'max:190'],
+            'operation_id' => ['nullable', 'string', 'max:190'],
+            'baseVersion' => ['nullable', 'integer', 'min:0'],
+            'base_version' => ['nullable', 'integer', 'min:0'],
         ]);
         $payload = $this->resultPayloadFromRequest($request);
         $asset = $this->resolveAsset($extinguisherId, $payload);
+        $operationId = $this->text($data['operationId'] ?? $data['operation_id'] ?? '');
+        $baseVersion = (int) ($data['baseVersion'] ?? $data['base_version'] ?? 0);
 
         try {
-            $result = DB::transaction(function () use ($session, $asset, $request): ?InspectionExtinguisherResult {
+            $outcome = DB::transaction(function () use ($session, $asset, $operationId, $baseVersion, $request): array {
+                $operation = null;
+                if ($operationId !== '') {
+                    $operationStart = $this->extinguisherOperationService->begin(
+                        operationUid: $operationId,
+                        session: $session,
+                        assetKey: $asset['canonicalAssetKey'],
+                        operationType: 'reset',
+                        actorUserId: (int) $request->user()->id,
+                        baseVersion: $baseVersion,
+                        payload: $asset['checkPayload'],
+                    );
+                    $operation = $operationStart['operation'];
+                    if ($operationStart['idReused']) {
+                        return [
+                            'kind' => 'conflict',
+                            'code' => 'inspection_operation_id_reused',
+                            'message' => 'This inspection operation ID was already used for different work.',
+                            'data' => null,
+                            'operationId' => $operationId,
+                        ];
+                    }
+                    if ($operationStart['replayed']) {
+                        return [
+                            'kind' => $operation->status === 'succeeded' ? 'replay' : 'conflict',
+                            'code' => $operation->status === 'succeeded'
+                                ? 'inspection_operation_replayed'
+                                : (string) $operation->outcome_code,
+                            'message' => $operation->status === 'succeeded'
+                                ? 'Inspection operation already applied.'
+                                : 'Inspection operation previously conflicted.',
+                            'data' => $operation->response_payload,
+                            'operationId' => $operationId,
+                            'resultVersion' => $operation->result_version,
+                        ];
+                    }
+                }
+
                 $existing = $session->extinguisherResults()
                     ->lockForUpdate()
                     ->where('canonical_asset_key', $asset['canonicalAssetKey'])
@@ -356,8 +555,37 @@ class InspectionSessionController extends Controller
 
                 if (! $existing) {
                     $this->sessionProgressService->sync($session, $request->user()?->id, $asset);
+                    if ($operation) {
+                        $this->extinguisherOperationService->succeed($operation, null, null);
+                    }
+                    $session->increment('version');
 
-                    return null;
+                    return [
+                        'kind' => 'applied',
+                        'data' => null,
+                        'resultVersion' => null,
+                        'operationId' => $operationId,
+                    ];
+                }
+
+                if ($baseVersion > 0 && (int) $existing->version !== $baseVersion) {
+                    $data = $this->formatResult($existing->load('checkedBy'));
+                    if ($operation) {
+                        $this->extinguisherOperationService->conflict(
+                            $operation,
+                            'inspection_result_version_conflict',
+                            (int) $existing->version,
+                            $data,
+                        );
+                    }
+
+                    return [
+                        'kind' => 'conflict',
+                        'code' => 'inspection_result_version_conflict',
+                        'message' => 'This fire extinguisher result changed since it was loaded.',
+                        'data' => $data,
+                        'operationId' => $operationId,
+                    ];
                 }
 
                 $existing->fill([
@@ -379,8 +607,30 @@ class InspectionSessionController extends Controller
 
                 $this->recordEvent($session, $existing, 'extinguisher.reset', $request);
                 $this->sessionProgressService->sync($session, $request->user()?->id, $asset);
+                $this->reportMediaService->syncPayloadLinks(
+                    (array) $existing->check_payload,
+                    'inspection_result',
+                    (string) $existing->id,
+                    (int) $request->user()->id,
+                    'inspection',
+                );
 
-                return $existing;
+                $data = $this->formatResult($existing->load('checkedBy'));
+                if ($operation) {
+                    $this->extinguisherOperationService->succeed(
+                        $operation,
+                        (int) $existing->version,
+                        $data,
+                    );
+                }
+                $session->increment('version');
+
+                return [
+                    'kind' => 'applied',
+                    'data' => $data,
+                    'resultVersion' => (int) $existing->version,
+                    'operationId' => $operationId,
+                ];
             });
         } catch (ValidationException $exception) {
             $existing = $session->extinguisherResults()
@@ -389,18 +639,29 @@ class InspectionSessionController extends Controller
                 ->first();
 
             return response()->json([
-                'message' => $exception->getMessage() ?: 'Inspection result conflict.',
-                'code' => 'inspection_extinguisher_result_conflict',
+                'message' => $exception->getMessage() ?: 'The inspection reset is invalid.',
+                'code' => 'inspection_payload_invalid',
                 'errors' => $exception->errors(),
                 'data' => $existing ? $this->formatResult($existing) : null,
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if (($outcome['kind'] ?? '') === 'conflict') {
+            return response()->json([
+                'message' => $outcome['message'] ?? 'Inspection result conflict.',
+                'code' => $outcome['code'] ?? 'inspection_extinguisher_result_conflict',
+                'data' => $outcome['data'] ?? null,
+                'operation' => $this->operationMeta($outcome, false),
             ], Response::HTTP_CONFLICT);
         }
 
-        $session->increment('version');
-
         return response()->json([
-            'data' => $result ? $this->formatResult($result->refresh()->load('checkedBy')) : null,
+            'data' => $outcome['data'] ?? null,
             'meta' => $this->sessionProgressService->progress($session->refresh()),
+            'operation' => $this->operationMeta(
+                $outcome,
+                ($outcome['kind'] ?? '') === 'replay',
+            ),
         ]);
     }
 
@@ -410,6 +671,11 @@ class InspectionSessionController extends Controller
         $this->ensureInspectionPermission($request);
         $session = $this->findReadableSession($request, $sessionUid);
         $user = $request->user();
+        $data = $request->validate([
+            'session_version' => ['nullable', 'integer', 'min:1'],
+            'sessionVersion' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $expectedSessionVersion = (int) ($data['session_version'] ?? $data['sessionVersion'] ?? 0);
         $submissionKey = $this->text($request->input('submission_key', ''));
         $submittedAt = $this->submittedAtFromRequest($request);
 
@@ -430,30 +696,55 @@ class InspectionSessionController extends Controller
             }
         }
 
-        if ($session->status !== self::ACTIVE_STATUS) {
-            abort(Response::HTTP_CONFLICT, 'Only active inspection sessions can be submitted.');
-        }
-
         if (($blockReason = $this->inspectionWorkflowService->submissionBlockReason($user)) !== null) {
             throw ValidationException::withMessages(['workflow' => [$blockReason]]);
         }
+        $this->ensureCanSubmitSession($request, $session);
 
-        $completedResults = $session->extinguisherResults()
-            ->where('status', 'completed')
-            ->orderBy('zone')
-            ->orderBy('main_location')
-            ->orderBy('sub_location')
-            ->orderBy('id_loc_no')
-            ->get();
+        $submission = DB::transaction(function () use ($session, $expectedSessionVersion, $submissionKey, $request, $user, $submittedAt): array {
+            $lockedSession = InspectionSession::query()->lockForUpdate()->findOrFail($session->id);
+            if ($submissionKey !== '') {
+                $existing = Report::query()
+                    ->where('owner_user_id', $user->id)
+                    ->where('submission_key', $submissionKey)
+                    ->first();
+                if ($existing) {
+                    return ['report' => $existing, 'replayed' => true];
+                }
+            }
+            if ($lockedSession->status !== self::ACTIVE_STATUS) {
+                throw new HttpResponseException(response()->json([
+                    'message' => 'Only active inspection sessions can be submitted.',
+                    'code' => 'inspection_session_not_active',
+                ], Response::HTTP_CONFLICT));
+            }
+            if ($expectedSessionVersion > 0 && (int) $lockedSession->version !== $expectedSessionVersion) {
+                throw new HttpResponseException(response()->json([
+                    'message' => 'The inspection session changed before submission. Refresh and review the latest results.',
+                    'code' => 'inspection_session_version_conflict',
+                    'currentVersion' => (int) $lockedSession->version,
+                ], Response::HTTP_CONFLICT));
+            }
+            if ($lockedSession->extinguisherOperations()->where('status', 'pending')->exists()) {
+                throw new HttpResponseException(response()->json([
+                    'message' => 'Inspection changes are still being processed. Retry sync before submitting.',
+                    'code' => 'inspection_session_operations_pending',
+                ], Response::HTTP_CONFLICT));
+            }
+            $completedResults = $lockedSession->extinguisherResults()
+                ->where('status', 'completed')
+                ->orderBy('zone')
+                ->orderBy('main_location')
+                ->orderBy('sub_location')
+                ->orderBy('id_loc_no')
+                ->get();
+            if ($completedResults->isEmpty()) {
+                throw ValidationException::withMessages([
+                    'session' => ['At least one completed fire extinguisher result is required before submitting.'],
+                ]);
+            }
 
-        if ($completedResults->isEmpty()) {
-            throw ValidationException::withMessages([
-                'session' => ['At least one completed fire extinguisher result is required before submitting.'],
-            ]);
-        }
-
-        $report = DB::transaction(function () use ($session, $completedResults, $request, $user, $submittedAt): Report {
-            $payload = $this->compileSessionReportPayload($session, $completedResults, $submittedAt);
+            $payload = $this->compileSessionReportPayload($lockedSession, $completedResults, $submittedAt);
             $storedSubmittedAt = $submittedAt->copy()->setTimezone(config('app.timezone', 'UTC'));
             $workflowFields = $this->inspectionWorkflowService->appendSubmissionHistory(
                 $this->inspectionWorkflowService->buildWorkflowForSubmission($user),
@@ -466,6 +757,9 @@ class InspectionSessionController extends Controller
                 'display_id' => $this->text($request->input('display_id', '')) ?: 'INS-FE-'.now()->format('Ymd-His'),
                 'submission_key' => $this->text($request->input('submission_key', '')) ?: null,
                 'owner_user_id' => $user->id,
+                ...(($lockedSession->scope_version ?: 'legacy') === 'v2'
+                    ? ['scope_team_id' => ((int) data_get($lockedSession->scope, 'teamId', 0)) ?: null]
+                    : []),
                 'report_type' => 'inspection',
                 'status' => 'Submitted',
                 'version' => 1,
@@ -486,60 +780,66 @@ class InspectionSessionController extends Controller
                 'by_user_id' => $user->id,
                 'by_name_snapshot' => (string) $user->name,
                 'remarks' => $this->text($request->input('remarks', '')),
-                'meta' => ['inspectionSessionUid' => $session->session_uid],
+                'meta' => ['inspectionSessionUid' => $lockedSession->session_uid],
             ]);
 
-            $session->update([
+            $lockedSession->update([
                 'status' => 'submitted',
                 'submitted_by_user_id' => $user->id,
                 'submitted_report_uid' => $report->report_uid,
                 'submitted_at' => $storedSubmittedAt,
-                'version' => ((int) $session->version) + 1,
+                'version' => ((int) $lockedSession->version) + 1,
             ]);
-            $this->recordEvent($session, null, 'session.submitted', $request, [
+            $lockedSession->scopeClaim()->delete();
+            $this->recordEvent($lockedSession, null, 'session.submitted', $request, [
                 'reportUid' => $report->report_uid,
             ]);
 
             $this->inspectionCheckRowSyncService->syncForReport($report->refresh(), (int) $user->id);
             $this->reportMediaService->syncPayloadLinks($payload, 'report', (string) $report->report_uid, (int) $user->id, 'inspection');
 
-            return $report->load('timelineEntries');
+            return ['report' => $report->load('timelineEntries'), 'replayed' => false];
         });
+        /** @var Report $report */
+        $report = $submission['report'];
+        $idempotentReplay = $submission['replayed'] === true;
 
-        try {
-            $this->workflowNotificationService->emit(
-                module: 'report',
-                eventType: 'submitted',
-                recordType: 'report',
-                recordId: (int) $report->id,
-                recordDisplayId: (string) $report->display_id,
-                ownerUserId: (int) $report->owner_user_id,
-                actor: [
-                    'userId' => $user->id,
-                    'name' => $user->name,
-                    'email' => $user->email ?? '',
-                ],
-                targetUserIds: $this->inspectionWorkflowService->recipientUserIdsForNextAction($report),
-                actionRequired: true,
-                remarks: $this->text($request->input('remarks', '')),
-                metadata: [
-                    'module' => 'report',
-                    'status' => $report->status,
-                    'workflowStage' => $report->workflow_stage,
-                    'nextActionRole' => $report->next_action_role,
-                    'scopeTeamId' => $report->scope_team_id,
-                    'reportType' => $report->report_type,
-                    'reportUid' => $report->report_uid,
-                    'detailRouteKey' => $report->report_uid,
-                ],
-                excludeOwner: true,
-            );
-        } catch (\Throwable $exception) {
-            Log::warning('Inspection session workflow notification dispatch failed.', [
-                'session_uid' => $session->session_uid,
-                'report_uid' => $report->report_uid,
-                'error' => $exception->getMessage(),
-            ]);
+        if (! $idempotentReplay) {
+            try {
+                $this->workflowNotificationService->emit(
+                    module: 'report',
+                    eventType: 'submitted',
+                    recordType: 'report',
+                    recordId: (int) $report->id,
+                    recordDisplayId: (string) $report->display_id,
+                    ownerUserId: (int) $report->owner_user_id,
+                    actor: [
+                        'userId' => $user->id,
+                        'name' => $user->name,
+                        'email' => $user->email ?? '',
+                    ],
+                    targetUserIds: $this->inspectionWorkflowService->recipientUserIdsForNextAction($report),
+                    actionRequired: true,
+                    remarks: $this->text($request->input('remarks', '')),
+                    metadata: [
+                        'module' => 'report',
+                        'status' => $report->status,
+                        'workflowStage' => $report->workflow_stage,
+                        'nextActionRole' => $report->next_action_role,
+                        'scopeTeamId' => $report->scope_team_id,
+                        'reportType' => $report->report_type,
+                        'reportUid' => $report->report_uid,
+                        'detailRouteKey' => $report->report_uid,
+                    ],
+                    excludeOwner: true,
+                );
+            } catch (\Throwable $exception) {
+                Log::warning('Inspection session workflow notification dispatch failed.', [
+                    'session_uid' => $session->session_uid,
+                    'report_uid' => $report->report_uid,
+                    'error' => $exception->getMessage(),
+                ]);
+            }
         }
 
         return response()->json([
@@ -547,33 +847,56 @@ class InspectionSessionController extends Controller
                 'reportUid' => $report->report_uid,
                 'displayId' => $report->display_id,
                 'sessionUid' => $session->session_uid,
+                'idempotentReplay' => $idempotentReplay,
             ],
-        ], Response::HTTP_CREATED);
-    }
-
-    private function findActiveSession(array $scope): ?InspectionSession
-    {
-        $sessionScope = $this->sessionScope($scope);
-
-        return InspectionSession::query()
-            ->where('inspection_type_key', self::FIRE_EXTINGUISHER_TYPE_KEY)
-            ->where('status', self::ACTIVE_STATUS)
-            ->where('scope_zone', $sessionScope['zone'])
-            ->where('scope_main_location', $sessionScope['mainLocation'])
-            ->orderByDesc('updated_at')
-            ->first();
+        ], $idempotentReplay ? Response::HTTP_OK : Response::HTTP_CREATED);
     }
 
     private function findReadableSession(Request $request, string $sessionUid): InspectionSession
     {
-        return InspectionSession::query()->where('session_uid', $sessionUid)->firstOrFail();
+        $session = InspectionSession::query()->where('session_uid', $sessionUid)->firstOrFail();
+        if (($session->scope_version ?: 'legacy') !== 'v2') {
+            return $session;
+        }
+        $user = $request->user();
+        if (
+            $user
+            && (
+                (int) $session->started_by_user_id === (int) $user->id
+                || $this->isSessionSupervisor($user)
+                || $this->sessionResolverService->userBelongsToScope($user, $session)
+            )
+        ) {
+            return $session;
+        }
+
+        throw new HttpResponseException(response()->json([
+            'message' => 'This inspection session belongs to another team.',
+            'code' => 'inspection_session_team_forbidden',
+        ], Response::HTTP_FORBIDDEN));
     }
 
     private function findWritableSession(Request $request, string $sessionUid): InspectionSession
     {
         $session = $this->findReadableSession($request, $sessionUid);
         if ($session->status !== self::ACTIVE_STATUS) {
-            abort(Response::HTTP_CONFLICT, 'Only active inspection sessions can be changed.');
+            throw new HttpResponseException(response()->json([
+                'message' => 'Only active inspection sessions can be changed.',
+                'code' => 'inspection_session_closed',
+                'data' => $this->formatSession($session),
+            ], Response::HTTP_CONFLICT));
+        }
+        $user = $request->user();
+        if (
+            ($session->scope_version ?: 'legacy') === 'v2'
+            && $user
+            && (int) $session->started_by_user_id !== (int) $user->id
+            && ! $this->sessionResolverService->userBelongsToScope($user, $session)
+        ) {
+            throw new HttpResponseException(response()->json([
+                'message' => 'Only inspectors assigned to this session team can change results.',
+                'code' => 'inspection_session_write_forbidden',
+            ], Response::HTTP_FORBIDDEN));
         }
 
         return $session;
@@ -584,6 +907,23 @@ class InspectionSessionController extends Controller
         $payload = $request->input('checkPayload', $request->input('check_payload', []));
 
         return is_array($payload) ? $payload : [];
+    }
+
+    private function operationMeta(array $outcome, bool $replayed): ?array
+    {
+        $operationId = $this->text($outcome['operationId'] ?? '');
+        if ($operationId === '') {
+            return null;
+        }
+
+        return [
+            'operationId' => $operationId,
+            'code' => $outcome['code'] ?? ($replayed
+                ? 'inspection_operation_replayed'
+                : 'inspection_operation_applied'),
+            'replayed' => $replayed,
+            'resultVersion' => $outcome['resultVersion'] ?? null,
+        ];
     }
 
     private function resolveAsset(string $extinguisherId, array $payload): array
@@ -685,15 +1025,9 @@ class InspectionSessionController extends Controller
 
             $meta = self::FIRE_EXTINGUISHER_EVIDENCE_FIELDS[$field];
             $remarks = $this->text($payload[$meta['remarks']] ?? $payload[Str::snake($meta['remarks'])] ?? '');
-            $photos = $payload[$meta['photos']] ?? $payload[Str::snake($meta['photos'])] ?? [];
             if ($remarks === '') {
                 throw ValidationException::withMessages([
                     "checkPayload.{$meta['remarks']}" => ['Fire extinguisher remarks are required for defect or failed statuses.'],
-                ]);
-            }
-            if (! is_array($photos) || collect($photos)->filter()->isEmpty()) {
-                throw ValidationException::withMessages([
-                    "checkPayload.{$meta['photos']}" => ['Fire extinguisher defect photo is required for defect or failed statuses.'],
                 ]);
             }
         }
@@ -834,6 +1168,43 @@ class InspectionSessionController extends Controller
         ]);
     }
 
+    private function formatHydratedSessionForActor(
+        InspectionSession $session,
+        array $scope,
+        Request $request,
+    ): array {
+        return array_merge(
+            $this->formatHydratedSession($session, $scope),
+            ['permissions' => $this->sessionPermissions($session, $request->user())],
+        );
+    }
+
+    private function formatSessionForActor(InspectionSession $session, Request $request): array
+    {
+        return array_merge(
+            $this->formatSession($session),
+            ['permissions' => $this->sessionPermissions($session, $request->user())],
+        );
+    }
+
+    private function sessionPermissions(InspectionSession $session, ?User $user): array
+    {
+        if (! $user) {
+            return ['canWrite' => false, 'canSubmit' => false];
+        }
+        if (($session->scope_version ?: 'legacy') !== 'v2') {
+            return ['canWrite' => true, 'canSubmit' => true];
+        }
+        $isStarter = (int) $session->started_by_user_id === (int) $user->id;
+        $isSupervisor = $this->isSessionSupervisor($user);
+        $isTeamMember = $this->sessionResolverService->userBelongsToScope($user, $session);
+
+        return [
+            'canWrite' => $isStarter || $isTeamMember,
+            'canSubmit' => $isStarter || $isSupervisor,
+        ];
+    }
+
     private function formatResultsForLocation(
         InspectionSession $session,
         string $zone,
@@ -863,6 +1234,8 @@ class InspectionSessionController extends Controller
             'inspectionType' => $session->inspection_type,
             'inspectionTypeKey' => $session->inspection_type_key,
             'status' => $session->status,
+            'scopeVersion' => $session->scope_version ?: 'legacy',
+            'scopeKey' => $session->scope_key,
             'scope' => $session->scope ?: [],
             'scopeZone' => $session->scope_zone,
             'scopeMainLocation' => $session->scope_main_location,
@@ -937,16 +1310,12 @@ class InspectionSessionController extends Controller
             'zone' => $this->text($data['zone'] ?? ''),
             'mainLocation' => $this->text($data['mainLocation'] ?? $data['main_location'] ?? ''),
             'subLocation' => $this->text($data['subLocation'] ?? $data['sub_location'] ?? ''),
-        ];
-    }
-
-    private function sessionScope(array $scope): array
-    {
-        return [
-            'inspectionType' => self::FIRE_EXTINGUISHER_TYPE,
-            'zone' => '',
-            'mainLocation' => '',
-            'subLocation' => '',
+            'scopeVersion' => strtolower($this->text($data['scopeVersion'] ?? $data['scope_version'] ?? 'legacy')),
+            'siteKey' => $this->text($data['siteKey'] ?? $data['site_key'] ?? ''),
+            'inspectionDate' => $this->text($data['inspectionDate'] ?? $data['inspection_date'] ?? ''),
+            'shiftKey' => $this->text($data['shiftKey'] ?? $data['shift_key'] ?? ''),
+            'batchKey' => $this->text($data['batchKey'] ?? $data['batch_key'] ?? ''),
+            'teamId' => (int) ($data['teamId'] ?? $data['team_id'] ?? 0),
         ];
     }
 
@@ -958,9 +1327,41 @@ class InspectionSessionController extends Controller
         }
     }
 
+    private function ensureCanSubmitSession(Request $request, InspectionSession $session): void
+    {
+        if (($session->scope_version ?: 'legacy') !== 'v2') {
+            return;
+        }
+        $user = $request->user();
+        if ($user && ((int) $session->started_by_user_id === (int) $user->id || $this->isSessionSupervisor($user))) {
+            return;
+        }
+
+        throw new HttpResponseException(response()->json([
+            'message' => 'Only the session starter or a supervisor can submit this inspection.',
+            'code' => 'inspection_session_submit_forbidden',
+        ], Response::HTTP_FORBIDDEN));
+    }
+
+    private function isSessionSupervisor(User $user): bool
+    {
+        $supervisorRoles = [
+            'system administrator',
+            'system admin',
+            'admin',
+            'contract manager',
+            'incident commander',
+            'assistant incident commander',
+        ];
+
+        return $this->authorizationService->getActiveRoleNames($user)
+            ->map(fn ($role): string => strtolower(trim((string) $role)))
+            ->contains(fn (string $role): bool => in_array($role, $supervisorRoles, true));
+    }
+
     private function ensureEnabled(): void
     {
-        if (! filter_var(env('INSPECTION_SESSION_FIRE_EXTINGUISHER_ENABLED', true), FILTER_VALIDATE_BOOLEAN)) {
+        if (! config('inspection.session_fire_extinguisher_enabled', true)) {
             abort(404);
         }
     }

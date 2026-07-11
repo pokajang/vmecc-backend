@@ -241,6 +241,7 @@ class OvertimeWorkflowService
                 'recommendRole' => trim((string) ($rule['recommendRole'] ?? '')),
                 'approveRole' => trim((string) ($rule['approveRole'] ?? '')),
                 'requireRecommendation' => $requireRecommendation,
+                'enforceDistinctApprovers' => ($options['enforceDistinctApprovers'] ?? false) === true,
             ],
             'workflowStage' => 'review',
             'nextActionRole' => trim((string) ($rule['reviewRole'] ?? '')) ?: null,
@@ -285,6 +286,15 @@ class OvertimeWorkflowService
             return [
                 'status' => 'Cancelled',
                 'workflow_stage' => 'done',
+                'next_action_role' => null,
+                'approval_history' => $history,
+            ];
+        }
+
+        if ($action === 'request_correction') {
+            return [
+                'status' => 'Needs Correction',
+                'workflow_stage' => 'correction',
                 'next_action_role' => null,
                 'approval_history' => $history,
             ];
@@ -351,6 +361,8 @@ class OvertimeWorkflowService
             'approve' => 'Approved',
             'reject' => 'Rejected',
             'cancel' => 'Cancelled',
+            'request_correction' => 'Correction Requested',
+            'resubmit' => 'Resubmitted',
             'edit' => 'Edited',
             default => ucfirst($action),
         };

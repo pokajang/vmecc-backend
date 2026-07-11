@@ -425,10 +425,6 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         ]);
 
         $payload['fireExtinguisherChecks'][0]['operationalConditionRemarks'] = 'Pressure indicator failed.';
-        $payload['fireExtinguisherChecks'][0]['operationalConditionPhotos'] = [[
-            'id' => 'photo-1',
-            'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
-        ]];
         $response = $this->postJson('/api/reports', [
             'display_id' => 'INS-FE-002',
             'report_type' => 'inspection',
@@ -437,6 +433,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         ]);
 
         $response->assertCreated();
+        $response->assertJsonPath('data.fireExtinguisherChecks.0.operationalConditionPhotos', []);
         $report = Report::query()->where('display_id', 'INS-FE-002')->firstOrFail();
         $this->assertSame(5, InspectionCheckRow::query()->where('report_id', $report->id)->count());
         $this->assertDatabaseHas('inspection_check_rows', [

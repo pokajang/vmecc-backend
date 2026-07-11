@@ -12,16 +12,11 @@ class LeaveWorkflowService
 {
     private const APPROVAL_RULES_KEY = 'leave_approval_rules';
 
-    private const LEAVE_TYPE_CODES = [
-        'Annual Leave'       => 'AL',
-        'Medical Leave'      => 'ML',
-        'Emergency Leave'    => 'EL',
-        'Compassionate Leave'=> 'CL',
-        'Unpaid Leave'       => 'UL',
-        'Other Leave'        => 'OL',
-    ];
+    private const WORKFLOW_STAGES = ['review', 'recommend', 'approve', 'correction', 'done'];
 
-    private const WORKFLOW_STAGES = ['review', 'recommend', 'approve', 'done'];
+    public function __construct(private readonly LeavePolicyService $policyService)
+    {
+    }
 
     // ── Approval Rules ────────────────────────────────────────────────────────
 
@@ -127,6 +122,7 @@ class LeaveWorkflowService
                 'recommendRole'         => $recommendRole,
                 'approveRole'           => $approveRole,
                 'requireRecommendation' => $requireRecommendation,
+                'enforceDistinctApprovers' => ($policy['options']['enforceDistinctApprovers'] ?? false) === true,
             ],
             'workflowStage'  => 'review',
             'nextActionRole' => $reviewRole ?: null,
@@ -164,6 +160,15 @@ class LeaveWorkflowService
                 'workflow_stage'    => 'done',
                 'next_action_role'  => null,
                 'approval_history'  => $history,
+            ];
+        }
+
+        if ($action === 'request_correction') {
+            return [
+                'status' => 'Needs Correction',
+                'workflow_stage' => 'correction',
+                'next_action_role' => null,
+                'approval_history' => $history,
             ];
         }
 
@@ -267,7 +272,7 @@ class LeaveWorkflowService
      */
     public function generateDisplayId(int $userId, string $leaveType, int $year): string
     {
-        $code = self::LEAVE_TYPE_CODES[$leaveType] ?? 'OL';
+        $code = $this->policyService->codeFor($leaveType);
         $prefix = "LV-{$code}-{$year}-";
 
         $last = Leave::withTrashed()
@@ -289,10 +294,25 @@ class LeaveWorkflowService
 
     private function adjustBalance(int $userId, string $leaveType, int $year, array $deltas): void
     {
-        $assignment = LeaveAssignment::firstOrCreate(
-            ['user_id' => $userId, 'year' => $year, 'leave_type' => $leaveType],
-            ['entitlement' => 0, 'used' => 0, 'pending' => 0]
-        );
+        $assignment = LeaveAssignment::query()
+            ->where('user_id', $userId)
+            ->where('year', $year)
+            ->where('leave_type', $leaveType)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $assignment) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'leave_type' => ['No leave entitlement assignment exists for this leave type and year.'],
+            ]);
+        }
+
+        $available = (float) $assignment->entitlement - (float) $assignment->used - (float) $assignment->pending;
+        if (($deltas['pending'] ?? 0) > 0 && $available + 0.0001 < (float) $deltas['pending']) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'days' => ['Requested leave days exceed the available leave balance.'],
+            ]);
+        }
 
         if (isset($deltas['pending'])) {
             $assignment->pending = max(0, (float) $assignment->pending + (float) $deltas['pending']);
@@ -313,6 +333,7 @@ class LeaveWorkflowService
             'approve'   => 'Approved',
             'reject'    => 'Rejected',
             'cancel'    => 'Cancelled',
+            'request_correction' => 'Correction Requested',
             'edit'      => 'Edited',
             default     => ucfirst($action),
         };

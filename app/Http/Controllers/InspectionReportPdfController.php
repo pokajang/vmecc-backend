@@ -13,8 +13,7 @@ class InspectionReportPdfController extends Controller
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly ReportMediaService $reportMediaService,
-    ) {
-    }
+    ) {}
 
     public function download(Request $request)
     {
@@ -46,7 +45,12 @@ class InspectionReportPdfController extends Controller
             ], 409);
         }
 
-        $payload = $this->reportMediaService->hydratePayloadForPdf(is_array($report->payload) ? $report->payload : []);
+        $payload = $this->reportMediaService->hydrateLinkedPayloadForPdf(
+            is_array($report->payload) ? $report->payload : [],
+            'report',
+            (string) $report->report_uid,
+            'inspection',
+        );
         $payload['id'] = $report->report_uid;
         $payload['displayId'] = $report->display_id;
         $payload['reportType'] = $report->report_type;

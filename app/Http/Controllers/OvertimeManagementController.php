@@ -8,6 +8,7 @@ use App\Models\UserRoleAssignment;
 use App\Services\HolidayGuidanceFeatureGate;
 use App\Services\HolidayResolver;
 use App\Services\OvertimeDateClassifier;
+use App\Services\OvertimeManagementScopeService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,6 +22,7 @@ class OvertimeManagementController extends Controller
         private readonly OvertimeDateClassifier $overtimeDateClassifier,
         private readonly HolidayResolver $holidayResolver,
         private readonly HolidayGuidanceFeatureGate $guidanceGate,
+        private readonly OvertimeManagementScopeService $scopeService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -40,8 +42,8 @@ class OvertimeManagementController extends Controller
         }
         $perPage = min($perPage, 100);
 
-        $baseQuery = $this->baseQuery();
-        $filteredQuery = $this->baseQuery();
+        $baseQuery = $this->baseQuery($request->user());
+        $filteredQuery = $this->baseQuery($request->user());
         $this->applyFilters($filteredQuery, [
             'search' => $search,
             'status' => $status,
@@ -63,8 +65,8 @@ class OvertimeManagementController extends Controller
                 ->all(),
         );
 
-        $rows = $pageRows->map(fn (OvertimeRecord $row) => $this->formatManagementRecord($row, $teamByUserId));
-        $filterOptions = $this->buildFilterOptions();
+        $rows = $pageRows->map(fn (OvertimeRecord $row) => $this->formatManagementRecord($row, $teamByUserId, $request->user()));
+        $filterOptions = $this->buildFilterOptions($baseQuery);
 
         return response()->json([
             'data' => $rows->values()->all(),
@@ -98,9 +100,12 @@ class OvertimeManagementController extends Controller
             ->where('user_id', $ownerId)
             ->with(['user', 'attachment'])
             ->findOrFail($recordId);
+        if (! $this->scopeService->canManageRecord($request->user(), $row)) {
+            abort(403, 'You are not allowed to access this overtime record.');
+        }
 
         $teamByUserId = $this->resolveCanonicalTeamByUserId([(int) $row->user_id]);
-        $base = $this->formatManagementRecord($row, $teamByUserId);
+        $base = $this->formatManagementRecord($row, $teamByUserId, $request->user());
         if ($this->guidanceGate->staffVisibilityEnabledForUser($request->user())) {
             $derivedType = $this->overtimeDateClassifier->classify($row->user, (string) $row->claim_date);
             $effectiveState = $this->holidayResolver->resolveEmployeeState($row->user);
@@ -117,11 +122,13 @@ class OvertimeManagementController extends Controller
         return response()->json(['data' => $base]);
     }
 
-    private function baseQuery(): Builder
+    private function baseQuery($actor): Builder
     {
-        return OvertimeRecord::query()
-            ->with(['user', 'attachment'])
+        $query = OvertimeRecord::query()
+            ->with(['user.roleAssignments', 'attachment'])
             ->where('status', '!=', 'Draft');
+
+        return $this->scopeService->scopeVisibleRecords($query, $actor);
     }
 
     private function applyFilters(Builder $query, array $filters): void
@@ -332,7 +339,7 @@ class OvertimeManagementController extends Controller
         return $resolved;
     }
 
-    private function formatManagementRecord(OvertimeRecord $row, array $teamByUserId): array
+    private function formatManagementRecord(OvertimeRecord $row, array $teamByUserId, $actor): array
     {
         $base = OvertimeController::formatRecord($row);
         $ownerId = (int) ($row->user_id ?? 0);
@@ -342,13 +349,33 @@ class OvertimeManagementController extends Controller
         $base['avatar_url'] = $this->resolveProfileImageUrl($row->user?->profile_image_url);
         $base['team'] = $teamByUserId[$ownerId] ?? 'Unassigned';
         $base['record_key'] = $ownerId . '::' . $row->id;
+        $base['permitted_actions'] = $this->resolvePermittedActions($row, $actor);
 
         return $base;
     }
 
-    private function buildFilterOptions(): array
+    private function resolvePermittedActions(OvertimeRecord $row, $actor): array
     {
-        $baseQuery = $this->baseQuery();
+        $isSystemAdmin = $this->scopeService->isSystemAdministrator($actor);
+        $status = trim((string) $row->status);
+        $stage = trim((string) ($row->workflow_stage ?? ''));
+        $requiredRole = trim((string) ($row->next_action_role ?? ''));
+        $canProcess = $status === 'Pending' && ($isSystemAdmin || (
+            $requiredRole !== '' && $this->scopeService->canPerformWorkflowRole($actor, $row, $requiredRole)
+        ));
+
+        return [
+            'review' => $canProcess && $stage === 'review',
+            'recommend' => $canProcess && $stage === 'recommend',
+            'approve' => $canProcess && $stage === 'approve',
+            'reject' => $canProcess,
+            'request_correction' => $canProcess,
+            'cancel' => ($status === 'Pending' || $status === 'Approved') && $isSystemAdmin,
+        ];
+    }
+
+    private function buildFilterOptions(Builder $baseQuery): array
+    {
         $statusValues = (clone $baseQuery)
             ->select('status')
             ->distinct()

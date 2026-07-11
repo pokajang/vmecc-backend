@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class ReportDraftApiTest extends TestCase
@@ -13,6 +15,7 @@ class ReportDraftApiTest extends TestCase
     public function test_report_draft_crud_flow(): void
     {
         $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.erco.view');
         $this->actingAs($user);
 
         $this->getJson('/api/reports/draft?report_type=erco')
@@ -30,6 +33,7 @@ class ReportDraftApiTest extends TestCase
         $save->assertCreated();
         $save->assertJsonPath('data.report_type', 'erco');
         $save->assertJsonPath('data.payload.incidentType', 'Special Assistance');
+        $save->assertJsonPath('data.version', 1);
 
         $this->getJson('/api/reports/draft?report_type=erco')
             ->assertOk()
@@ -48,6 +52,7 @@ class ReportDraftApiTest extends TestCase
     {
         $owner = User::factory()->create(['status' => 'active']);
         $other = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($owner, 'reports.drill.view');
 
         $this->actingAs($owner)->postJson('/api/reports/draft', [
             'report_type' => 'drill',
@@ -67,6 +72,7 @@ class ReportDraftApiTest extends TestCase
             'name' => 'Draft Inspector',
             'status' => 'active',
         ]);
+        $this->grantPermission($user, 'reports.inspection.view');
         $this->actingAs($user);
 
         $response = $this->postJson('/api/reports/draft', [
@@ -99,5 +105,72 @@ class ReportDraftApiTest extends TestCase
         $response->assertJsonPath('data.report_type', 'inspection');
         $response->assertJsonPath('data.payload.fireExtinguisherChecks.0.idLocNo', 'MSL1-005');
         $response->assertJsonPath('data.payload.fireExtinguisherChecks.0.signageCondition', '');
+    }
+
+    public function test_exact_draft_updates_use_optimistic_versioning(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
+        $this->actingAs($user);
+        $created = $this->postJson('/api/reports/drafts', [
+            'report_type' => 'inspection',
+            'payload' => ['incidentType' => 'General Inspection', 'description' => 'Initial'],
+        ])->assertCreated();
+        $draftId = (string) $created->json('data.draft_id');
+
+        $updated = $this->putJson('/api/reports/drafts/'.$draftId, [
+            'base_version' => 1,
+            'payload' => ['incidentType' => 'General Inspection', 'description' => 'Newer tab'],
+        ]);
+        $updated->assertOk();
+        $updated->assertJsonPath('data.version', 2);
+        $updated->assertJsonPath('data.payload.description', 'Newer tab');
+
+        $stale = $this->putJson('/api/reports/drafts/'.$draftId, [
+            'base_version' => 1,
+            'payload' => ['incidentType' => 'General Inspection', 'description' => 'Stale tab'],
+        ]);
+        $stale->assertConflict();
+        $stale->assertJsonPath('code', 'report_draft_version_conflict');
+        $stale->assertJsonPath('currentDraft.version', 2);
+        $stale->assertJsonPath('currentDraft.payload.description', 'Newer tab');
+
+        $this->getJson('/api/reports/drafts/'.$draftId)
+            ->assertOk()
+            ->assertJsonPath('data.payload.description', 'Newer tab')
+            ->assertJsonPath('data.version', 2);
+    }
+
+    public function test_draft_conflict_data_is_not_exposed_to_another_user(): void
+    {
+        $owner = User::factory()->create(['status' => 'active']);
+        $other = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($owner, 'reports.inspection.view');
+        $created = $this->actingAs($owner)->postJson('/api/reports/drafts', [
+            'report_type' => 'inspection',
+            'payload' => ['incidentType' => 'General Inspection', 'description' => 'Owner only'],
+        ])->assertCreated();
+        $draftId = (string) $created->json('data.draft_id');
+
+        $this->actingAs($other)->putJson('/api/reports/drafts/'.$draftId, [
+            'base_version' => 1,
+            'payload' => ['incidentType' => 'General Inspection', 'description' => 'Intruder'],
+        ])->assertNotFound()->assertJsonMissingPath('currentDraft');
+    }
+
+    private function grantPermission(User $user, string $permissionName): void
+    {
+        $permission = Permission::query()->firstOrCreate([
+            'name' => $permissionName,
+            'guard_name' => 'web',
+        ]);
+        $role = Role::query()->firstOrCreate([
+            'name' => 'Report draft test '.$permissionName,
+            'guard_name' => 'web',
+        ]);
+        if (! $role->hasPermissionTo($permission)) {
+            $role->givePermissionTo($permission);
+        }
+        $user->assignRole($role);
     }
 }

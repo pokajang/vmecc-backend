@@ -222,6 +222,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::get('report-media/health', [ReportMediaController::class, 'health']);
     Route::post('report-media', [ReportMediaController::class, 'store'])->middleware(['throttle:photo-uploads', LimitPhotoUploadConcurrency::class]);
     Route::get('report-media/{mediaId}', [ReportMediaController::class, 'show']);
+    Route::post('report-media/{mediaId}/lease/renew', [ReportMediaController::class, 'renewLease']);
     Route::delete('report-media/{mediaId}', [ReportMediaController::class, 'destroy']);
     Route::get('inspection/location-options', [InspectionLocationController::class, 'index']);
     Route::post('inspection/locations', [InspectionLocationController::class, 'store']);
@@ -289,11 +290,11 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
         Route::delete('leave/draft', [LeaveDraftController::class, 'destroy']);
 
         Route::post('leave/attachments', [LeaveAttachmentController::class, 'store'])->middleware(['throttle:photo-uploads', LimitPhotoUploadConcurrency::class]);
-        Route::get('leave/attachments/{attachmentId}', [LeaveAttachmentController::class, 'show']);
         Route::delete('leave/attachments/{attachmentId}', [LeaveAttachmentController::class, 'destroy']);
 
         Route::get('leave/balance', [LeaveAssignmentController::class, 'indexForUser']);
         Route::get('leave/compute-days', [LeaveController::class, 'computeDays']);
+        Route::get('leave/roster-impact', [LeaveController::class, 'rosterImpact']);
 
         Route::get('leave/notifications', [LeaveNotificationController::class, 'index']);
         Route::get('leave/notifications/unread-count', [LeaveNotificationController::class, 'unreadCount']);
@@ -308,6 +309,9 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
         Route::post('leave/{id}/cancel', [LeaveController::class, 'cancel']);
     });
 
+    Route::get('leave/attachments/{attachmentId}', [LeaveAttachmentController::class, 'show'])
+        ->middleware('permission.assignment:self.leave|staff.leave.manage');
+
     // Overtime (employee - own records)
     Route::middleware('permission.assignment:self.overtime')->group(function () {
         Route::get('overtime/draft', [OvertimeDraftController::class, 'show']);
@@ -320,7 +324,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
         Route::get('overtime/{id}', [OvertimeController::class, 'show']);
         Route::put('overtime/{id}', [OvertimeController::class, 'update']);
         Route::delete('overtime/{id}', [OvertimeController::class, 'destroy']);
-        Route::post('overtime/{id}/cancel', [OvertimeController::class, 'cancel']);
+    Route::post('overtime/{id}/cancel', [OvertimeController::class, 'cancel']);
     });
 
     // Payroll claims (employee - own records)
@@ -365,6 +369,8 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
         ->middleware('permission.assignment:staff.leave.manage');
     Route::post('staff/leave/records/{userId}/{leaveId}/cancel', [LeaveWorkflowController::class, 'adminCancel'])
         ->middleware('permission.assignment:staff.leave.manage');
+    Route::post('staff/leave/records/{userId}/{leaveId}/request-correction', [LeaveWorkflowController::class, 'requestCorrection'])
+        ->middleware('permission.assignment:staff.leave.manage');
 
     Route::get('staff/leave/assignments', [LeaveAssignmentController::class, 'index'])
         ->middleware('permission.assignment:staff.leave.manage');
@@ -377,20 +383,22 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
 
     // Staff overtime management
     Route::get('staff/overtime/records', [OvertimeManagementController::class, 'index'])
-        ->middleware('permission.assignment:staff.salary.manage');
+        ->middleware('permission.assignment:staff.overtime.manage');
     Route::get('staff/overtime/records/{userId}/{recordId}', [OvertimeManagementController::class, 'show'])
-        ->middleware('permission.assignment:staff.salary.manage');
+        ->middleware('permission.assignment:staff.overtime.manage');
 
     Route::post('staff/overtime/records/{userId}/{recordId}/review', [OvertimeWorkflowController::class, 'review'])
-        ->middleware('permission.assignment:staff.salary.manage');
+        ->middleware('permission.assignment:staff.overtime.manage');
     Route::post('staff/overtime/records/{userId}/{recordId}/recommend', [OvertimeWorkflowController::class, 'recommend'])
-        ->middleware('permission.assignment:staff.salary.manage');
+        ->middleware('permission.assignment:staff.overtime.manage');
     Route::post('staff/overtime/records/{userId}/{recordId}/approve', [OvertimeWorkflowController::class, 'approve'])
-        ->middleware('permission.assignment:staff.salary.manage');
+        ->middleware('permission.assignment:staff.overtime.manage');
     Route::post('staff/overtime/records/{userId}/{recordId}/reject', [OvertimeWorkflowController::class, 'reject'])
-        ->middleware('permission.assignment:staff.salary.manage');
+        ->middleware('permission.assignment:staff.overtime.manage');
     Route::post('staff/overtime/records/{userId}/{recordId}/cancel', [OvertimeWorkflowController::class, 'cancel'])
-        ->middleware('permission.assignment:staff.salary.manage');
+        ->middleware('permission.assignment:staff.overtime.manage');
+    Route::post('staff/overtime/records/{userId}/{recordId}/request-correction', [OvertimeWorkflowController::class, 'requestCorrection'])
+        ->middleware('permission.assignment:staff.overtime.manage');
 
     // Staff payroll claims management
     Route::get('staff/salary-claims/records', [PayrollClaimManagementController::class, 'index'])

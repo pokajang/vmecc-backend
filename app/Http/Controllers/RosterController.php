@@ -7,6 +7,7 @@ use App\Models\Roster;
 use App\Models\Team;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
+use App\Services\LeaveRosterImpactService;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,6 +24,7 @@ class RosterController extends Controller
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly WorkflowNotificationService $workflowNotifications,
+        private readonly LeaveRosterImpactService $rosterImpactService,
     ) {
     }
 
@@ -107,10 +109,12 @@ class RosterController extends Controller
             });
         }
 
-        $rosters = $query->get()->groupBy(function ($item) {
+        $rosterRows = $query->get();
+        $markersByRosterId = $this->rosterImpactService->markersForRosters($rosterRows, $canManageRosters);
+        $rosters = $rosterRows->groupBy(function ($item) {
             if ($item->date instanceof Carbon) return $item->date->toDateString();
             return substr((string) $item->date, 0, 10);
-        })->map(function ($items, $date) {
+        })->map(function ($items, $date) use ($markersByRosterId) {
             // Build a keyed map of all shifts present for this date
             $shiftsMap = [];
             foreach ($items as $row) {
@@ -118,6 +122,11 @@ class RosterController extends Controller
                     'team_id' => $row->team_id,
                     'team'    => $row->team?->name,
                     'status'  => $row->status,
+                    'leave_marker' => $markersByRosterId[$row->id] ?? [
+                        'requested_count' => 0,
+                        'approved_count' => 0,
+                        'people' => [],
+                    ],
                 ];
             }
 

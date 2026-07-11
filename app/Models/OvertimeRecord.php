@@ -31,12 +31,14 @@ class OvertimeRecord extends Model
         'approval_history',
         'submitted_by',
         'attachment_id',
+        'version',
     ];
 
     protected $casts = [
         'claim_date' => 'date',
         'is_overnight' => 'boolean',
         'duration_minutes' => 'integer',
+        'version' => 'integer',
         'applied_at' => 'datetime',
         'workflow_snapshot' => 'array',
         'applicant_roles' => 'array',

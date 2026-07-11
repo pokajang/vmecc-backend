@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class InspectionSession extends Model
 {
@@ -13,6 +14,8 @@ class InspectionSession extends Model
         'inspection_type',
         'inspection_type_key',
         'status',
+        'scope_version',
+        'scope_key',
         'scope_zone',
         'scope_main_location',
         'scope',
@@ -44,6 +47,11 @@ class InspectionSession extends Model
         return $this->hasMany(InspectionExtinguisherResult::class);
     }
 
+    public function extinguisherOperations(): HasMany
+    {
+        return $this->hasMany(InspectionExtinguisherOperation::class);
+    }
+
     public function events(): HasMany
     {
         return $this->hasMany(InspectionSessionEvent::class);
@@ -52,5 +60,10 @@ class InspectionSession extends Model
     public function locationProgress(): HasMany
     {
         return $this->hasMany(InspectionSessionLocationProgress::class);
+    }
+
+    public function scopeClaim(): HasOne
+    {
+        return $this->hasOne(InspectionSessionScopeClaim::class);
     }
 }
