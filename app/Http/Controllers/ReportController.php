@@ -8,7 +8,10 @@ use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\DrillPayloadService;
 use App\Services\InspectionCheckRowSyncService;
+use App\Services\InspectionDutyConfirmationService;
+use App\Services\InspectionDutyContextResolver;
 use App\Services\InspectionPayloadService;
+use App\Services\InspectionPolicy;
 use App\Services\ReportingWorkflowService;
 use App\Services\ReportMediaService;
 use App\Services\RoleCatalog;
@@ -32,6 +35,9 @@ class ReportController extends Controller
         private readonly InspectionPayloadService $inspectionPayloadService,
         private readonly ReportMediaService $reportMediaService,
         private readonly DrillPayloadService $drillPayloadService,
+        private readonly InspectionDutyConfirmationService $dutyConfirmations,
+        private readonly InspectionDutyContextResolver $dutyContextResolver,
+        private readonly InspectionPolicy $inspectionPolicy,
     ) {}
 
     private const STATUS_DRAFT = 'Draft';
@@ -256,8 +262,14 @@ class ReportController extends Controller
             : ['ids' => [], 'labels' => [], 'hasChecklist' => false];
         $workflowFields = [];
         if ($isManagedWorkflow) {
-            if ($status === self::STATUS_SUBMITTED && ($blockReason = $this->reportingWorkflowService->submissionBlockReason($user, $reportType)) !== null) {
-                throw ValidationException::withMessages(['workflow' => [$blockReason]]);
+            if ($status === self::STATUS_SUBMITTED) {
+                $submissionDecision = $isInspection ? $this->inspectionPolicy->canSubmit($user) : null;
+                $blockReason = $submissionDecision !== null
+                    ? ($submissionDecision->allowed ? null : $submissionDecision->message)
+                    : $this->reportingWorkflowService->submissionBlockReason($user, $reportType);
+                if ($blockReason !== null) {
+                    throw ValidationException::withMessages(['workflow' => [$blockReason]]);
+                }
             }
             $workflowFields = $status === self::STATUS_SUBMITTED
                 ? $this->reportingWorkflowService->appendSubmissionHistory(
@@ -284,14 +296,21 @@ class ReportController extends Controller
             }
         }
 
+        $reportUid = trim((string) ($data['report_uid'] ?? '')) ?: Str::uuid()->toString();
+        $dutyContext = $isInspection
+            ? ($status === self::STATUS_SUBMITTED
+                ? $this->dutyConfirmations->consume($request, 'submit', $reportUid, $this->inspectionFormId($data['payload']))
+                : $this->dutyContextResolver->resolve($user))
+            : null;
+
         $submittedAt = $status === self::STATUS_SUBMITTED
             ? $this->submittedAtForReportPayload($data, $isInspection)
             : null;
 
         try {
-            $report = DB::transaction(function () use ($data, $status, $action, $submissionKey, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType) {
+            $report = DB::transaction(function () use ($data, $status, $action, $submissionKey, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType, $reportUid, $dutyContext) {
                 $report = Report::create([
-                    'report_uid' => trim((string) ($data['report_uid'] ?? Str::uuid()->toString())),
+                    'report_uid' => $reportUid,
                     'display_id' => trim((string) $data['display_id']),
                     'submission_key' => $submissionKey !== '' ? $submissionKey : null,
                     'owner_user_id' => $user->id,
@@ -304,6 +323,7 @@ class ReportController extends Controller
                     'inspection_checklist_item_labels' => $checklistIndex['labels'],
                     'inspection_has_checklist' => $checklistIndex['hasChecklist'],
                     'submitted_at' => $submittedAt,
+                    ...$this->dutyContextFields($dutyContext),
                 ] + $workflowFields);
 
                 $this->appendTimeline(
@@ -348,6 +368,7 @@ class ReportController extends Controller
             'display_id' => $report->display_id,
             'report_type' => $report->report_type,
             'status' => $report->status,
+            'duty_confirmation_token_id' => data_get($report->duty_context_snapshot, 'confirmationTokenId'),
         ]);
         $this->emitWorkflowNotificationSafely(
             eventType: $status === self::STATUS_DRAFT ? 'edited' : 'submitted',
@@ -425,8 +446,14 @@ class ReportController extends Controller
             : ['ids' => [], 'labels' => [], 'hasChecklist' => false];
         $workflowFields = [];
         if ($isManagedWorkflow) {
-            if ($targetStatus === self::STATUS_SUBMITTED && ($blockReason = $this->reportingWorkflowService->submissionBlockReason($user, $reportType)) !== null) {
-                throw ValidationException::withMessages(['workflow' => [$blockReason]]);
+            if ($targetStatus === self::STATUS_SUBMITTED) {
+                $submissionDecision = $isInspection ? $this->inspectionPolicy->canSubmit($user) : null;
+                $blockReason = $submissionDecision !== null
+                    ? ($submissionDecision->allowed ? null : $submissionDecision->message)
+                    : $this->reportingWorkflowService->submissionBlockReason($user, $reportType);
+                if ($blockReason !== null) {
+                    throw ValidationException::withMessages(['workflow' => [$blockReason]]);
+                }
             }
             $workflowFields = $targetStatus === self::STATUS_SUBMITTED
                 ? $this->reportingWorkflowService->appendSubmissionHistory(
@@ -442,7 +469,13 @@ class ReportController extends Controller
             ? $this->submittedAtForReportPayload($data, $isInspection)
             : $report->submitted_at;
 
-        DB::transaction(function () use ($report, $data, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType) {
+        $dutyContext = $isInspection
+            ? ($targetStatus === self::STATUS_SUBMITTED
+                ? $this->dutyConfirmations->consume($request, 'submit', $report->report_uid, $this->inspectionFormId($data['payload']))
+                : $this->dutyContextResolver->resolve($user))
+            : null;
+
+        DB::transaction(function () use ($report, $data, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType, $dutyContext) {
             $fromStatus = $report->status;
             $report->update([
                 'payload' => $data['payload'],
@@ -456,6 +489,7 @@ class ReportController extends Controller
                 'reviewed_at' => null,
                 'approved_at' => null,
                 'rejected_at' => null,
+                ...$this->dutyContextFields($dutyContext),
             ] + $workflowFields);
 
             $action = $targetStatus === self::STATUS_DRAFT ? 'DraftSaved' : 'Resubmitted';
@@ -485,6 +519,7 @@ class ReportController extends Controller
             'status' => $report->status,
             'version' => $report->version,
             'revision' => $report->revision,
+            'duty_confirmation_token_id' => data_get($report->duty_context_snapshot, 'confirmationTokenId'),
         ]);
         $this->emitWorkflowNotificationSafely(
             eventType: $targetStatus === self::STATUS_SUBMITTED ? 'submitted' : 'edited',
@@ -501,6 +536,15 @@ class ReportController extends Controller
     {
         $user = $request->user();
         $report = $this->findDeletableReport($request, $reportUid);
+        $dutyContext = null;
+        if ($this->isInspectionReport($report) && $report->status !== self::STATUS_DRAFT) {
+            $dutyContext = $this->dutyConfirmations->consume(
+                $request,
+                'delete',
+                $report->report_uid,
+                $this->inspectionFormId((array) $report->payload),
+            );
+        }
 
         DB::transaction(function () use ($report, $user) {
             $this->appendTimeline(
@@ -520,6 +564,7 @@ class ReportController extends Controller
         AuditLogger::log($request, 'report_deleted', $user, [
             'report_uid' => $report->report_uid,
             'display_id' => $report->display_id,
+            'duty_confirmation_token_id' => data_get($dutyContext, 'confirmationTokenId'),
         ]);
         $this->emitWorkflowNotificationSafely(
             eventType: 'cancelled',
@@ -630,21 +675,41 @@ class ReportController extends Controller
                 self::STATUS_REJECTED => 'reject',
                 default => '',
             };
-            $authorizationError = $this->reportingWorkflowService->authorizeAction($report, $user, $workflowAction);
+            $decision = $isInspection
+                ? $this->inspectionPolicy->canTransition($report, $user, $workflowAction)
+                : null;
+            $authorizationError = $decision !== null
+                ? ($decision->allowed ? null : $decision->message)
+                : $this->reportingWorkflowService->authorizeAction($report, $user, $workflowAction);
             if ($authorizationError !== null) {
                 return response()->json([
                     'message' => $authorizationError,
-                    'code' => 'REPORTING_WORKFLOW_FORBIDDEN',
+                    'code' => $decision?->reasonCode ?? 'REPORTING_WORKFLOW_FORBIDDEN',
                 ], 403);
             }
         }
 
-        DB::transaction(function () use ($report, $toStatus, $action, $payload, $user, $isInspection, $isManagedWorkflow) {
+        $dutyContext = $isInspection
+            ? $this->dutyConfirmations->consume(
+                $request,
+                match ($toStatus) {
+                    self::STATUS_REVIEWED => 'review',
+                    self::STATUS_APPROVED => 'approve',
+                    self::STATUS_REJECTED => 'reject',
+                    default => '',
+                },
+                $report->report_uid,
+                $this->inspectionFormId((array) $report->payload),
+            )
+            : null;
+
+        DB::transaction(function () use ($report, $toStatus, $action, $payload, $user, $isInspection, $isManagedWorkflow, $dutyContext) {
             $fromStatus = $report->status;
             $nextVersion = (int) $report->version + 1;
             $update = [
                 'status' => $toStatus,
                 'version' => $nextVersion,
+                ...$this->dutyContextFields($dutyContext),
             ];
             if ($isManagedWorkflow) {
                 $workflowAction = match ($toStatus) {
@@ -698,6 +763,7 @@ class ReportController extends Controller
             'action' => $action,
             'status' => $report->status,
             'version' => $report->version,
+            'duty_confirmation_token_id' => data_get($report->duty_context_snapshot, 'confirmationTokenId'),
         ]);
         $this->emitWorkflowNotificationSafely(
             eventType: strtolower($action),
@@ -722,7 +788,8 @@ class ReportController extends Controller
             $this->ensureReportingModulePermission($request, $reportType);
         }
         if ($reportType === 'inspection') {
-            if ((int) $report->owner_user_id === (int) $user->id || $this->isSystemAdministrator($user)) {
+            $decision = $this->inspectionPolicy->canEdit($report, $user, $this->isSystemAdministrator($user));
+            if ($decision->allowed) {
                 return $report;
             }
             abort(404);
@@ -747,7 +814,8 @@ class ReportController extends Controller
             $this->ensureReportingModulePermission($request, $reportType);
         }
         if ($reportType === 'inspection') {
-            if ((int) $report->owner_user_id === (int) $user->id || $this->isSystemAdministrator($user)) {
+            $decision = $this->inspectionPolicy->canDelete($report, $user, $this->isSystemAdministrator($user));
+            if ($decision->allowed) {
                 return $report;
             }
             abort(404);
@@ -857,6 +925,9 @@ class ReportController extends Controller
             'workflowSnapshot' => $this->formatWorkflowSnapshot($report),
             'nextActionRole' => $this->formatNextActionRole($report),
             'scopeTeamId' => $this->formatScopeTeamId($report),
+            'dutyContextStatus' => $report->duty_context_status,
+            'dutyContextVersion' => $report->duty_context_version,
+            'dutySourceVersion' => $report->duty_source_version,
             'approvalHistory' => is_array($report->approval_history) ? $report->approval_history : [],
             'canReview' => $this->formatCanReview($report),
             'canApprove' => $this->formatCanApprove($report),
@@ -908,7 +979,9 @@ class ReportController extends Controller
         return $this->isManagedReportingWorkflowType($report->report_type ?? '')
             && $user
             && $this->hasReportingModulePermission($user, (string) $report->report_type)
-            ? $this->reportingWorkflowService->canReview($report, $user)
+            ? ($this->isInspectionReport($report)
+                ? $this->inspectionPolicy->canTransition($report, $user, 'review')->allowed
+                : $this->reportingWorkflowService->canReview($report, $user))
             : false;
     }
 
@@ -919,7 +992,9 @@ class ReportController extends Controller
         return $this->isManagedReportingWorkflowType($report->report_type ?? '')
             && $user
             && $this->hasReportingModulePermission($user, (string) $report->report_type)
-            ? $this->reportingWorkflowService->canApprove($report, $user)
+            ? ($this->isInspectionReport($report)
+                ? $this->inspectionPolicy->canTransition($report, $user, 'approve')->allowed
+                : $this->reportingWorkflowService->canApprove($report, $user))
             : false;
     }
 
@@ -930,7 +1005,9 @@ class ReportController extends Controller
         return $this->isManagedReportingWorkflowType($report->report_type ?? '')
             && $user
             && $this->hasReportingModulePermission($user, (string) $report->report_type)
-            ? $this->reportingWorkflowService->canReject($report, $user)
+            ? ($this->isInspectionReport($report)
+                ? $this->inspectionPolicy->canTransition($report, $user, 'reject')->allowed
+                : $this->reportingWorkflowService->canReject($report, $user))
             : false;
     }
 
@@ -1172,6 +1249,27 @@ class ReportController extends Controller
         $timestamp = $report->submitted_at ?: ($report->updated_at ?: $report->created_at);
 
         return $timestamp instanceof Carbon ? $timestamp->toIso8601String() : null;
+    }
+
+    private function inspectionFormId(array $payload): ?string
+    {
+        $type = trim((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''));
+
+        return $type === '' ? null : Str::slug($type);
+    }
+
+    private function dutyContextFields(?array $context): array
+    {
+        if ($context === null) {
+            return [];
+        }
+
+        return [
+            'duty_context_status' => $context['status'] ?? 'unmatched',
+            'duty_context_version' => $context['contextVersion'] ?? null,
+            'duty_source_version' => $context['sourceVersion'] ?? null,
+            'duty_context_snapshot' => $context,
+        ];
     }
 
     private function submittedAtForReportPayload(array $data, bool $isInspection): Carbon

@@ -16,6 +16,10 @@ class InspectionSession extends Model
         'status',
         'scope_version',
         'scope_key',
+        'duty_context_status',
+        'duty_context_version',
+        'duty_source_version',
+        'duty_context_snapshot',
         'scope_zone',
         'scope_main_location',
         'scope',
@@ -28,6 +32,7 @@ class InspectionSession extends Model
 
     protected $casts = [
         'scope' => 'array',
+        'duty_context_snapshot' => 'array',
         'submitted_at' => 'datetime',
         'version' => 'integer',
     ];

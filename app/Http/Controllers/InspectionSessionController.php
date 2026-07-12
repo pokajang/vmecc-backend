@@ -11,8 +11,11 @@ use App\Models\ReportTimelineEntry;
 use App\Models\User;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\InspectionCheckRowSyncService;
+use App\Services\InspectionDutyConfirmationService;
+use App\Services\InspectionDutyContextResolver;
 use App\Services\InspectionExtinguisherOperationService;
 use App\Services\InspectionFireExtinguisherSessionProgressService;
+use App\Services\InspectionPolicy;
 use App\Services\InspectionSessionResolverService;
 use App\Services\InspectionWorkflowService;
 use App\Services\ReportMediaService;
@@ -61,6 +64,9 @@ class InspectionSessionController extends Controller
         private readonly InspectionWorkflowService $inspectionWorkflowService,
         private readonly WorkflowNotificationService $workflowNotificationService,
         private readonly ReportMediaService $reportMediaService,
+        private readonly InspectionDutyConfirmationService $dutyConfirmations,
+        private readonly InspectionDutyContextResolver $dutyContextResolver,
+        private readonly InspectionPolicy $inspectionPolicy,
     ) {}
 
     public function active(Request $request): JsonResponse
@@ -107,6 +113,7 @@ class InspectionSessionController extends Controller
         $scope = $this->scopeFromArray($data);
         $forceNew = (bool) ($data['forceNew'] ?? $data['force_new'] ?? false);
         $sessionScope = $this->sessionResolverService->resolveScope($scope, $request->user());
+        $dutyContext = $this->dutyContextResolver->resolve($request->user());
 
         if (! $forceNew) {
             $existing = $this->sessionResolverService->findActive($sessionScope);
@@ -122,7 +129,7 @@ class InspectionSessionController extends Controller
         }
 
         try {
-            $session = $this->sessionResolverService->create($sessionScope, (int) $request->user()->id);
+            $session = $this->sessionResolverService->create($sessionScope, (int) $request->user()->id, $dutyContext);
         } catch (QueryException $exception) {
             if (($exception->errorInfo[0] ?? null) !== '23000') {
                 throw $exception;
@@ -190,6 +197,7 @@ class InspectionSessionController extends Controller
         $this->ensureEnabled();
         $this->ensureInspectionPermission($request);
         $session = $this->findWritableSession($request, $sessionUid);
+        $this->dutyConfirmations->consume($request, 'session-write', $session->session_uid, self::FIRE_EXTINGUISHER_TYPE_KEY);
         $payload = $this->resultPayloadFromRequest($request);
         $asset = $this->resolveAsset($extinguisherId, $payload);
         $existing = $session->extinguisherResults()
@@ -239,6 +247,7 @@ class InspectionSessionController extends Controller
         $this->ensureEnabled();
         $this->ensureInspectionPermission($request);
         $session = $this->findWritableSession($request, $sessionUid);
+        $this->dutyConfirmations->consume($request, 'session-write', $session->session_uid, self::FIRE_EXTINGUISHER_TYPE_KEY);
         $data = $request->validate([
             'checkPayload' => ['nullable', 'array'],
             'check_payload' => ['nullable', 'array'],
@@ -496,6 +505,7 @@ class InspectionSessionController extends Controller
         $this->ensureEnabled();
         $this->ensureInspectionPermission($request);
         $session = $this->findWritableSession($request, $sessionUid);
+        $this->dutyConfirmations->consume($request, 'session-write', $session->session_uid, self::FIRE_EXTINGUISHER_TYPE_KEY);
         $data = $request->validate([
             'checkPayload' => ['nullable', 'array'],
             'check_payload' => ['nullable', 'array'],
@@ -696,13 +706,26 @@ class InspectionSessionController extends Controller
             }
         }
 
-        if (($blockReason = $this->inspectionWorkflowService->submissionBlockReason($user)) !== null) {
-            throw ValidationException::withMessages(['workflow' => [$blockReason]]);
+        $submissionDecision = $this->inspectionPolicy->canSubmit($user);
+        if (! $submissionDecision->allowed) {
+            throw ValidationException::withMessages(['workflow' => [$submissionDecision->message]]);
         }
         $this->ensureCanSubmitSession($request, $session);
+        $dutyContext = $this->dutyConfirmations->consume(
+            $request,
+            'session-submit',
+            $session->session_uid,
+            self::FIRE_EXTINGUISHER_TYPE_KEY,
+        );
 
-        $submission = DB::transaction(function () use ($session, $expectedSessionVersion, $submissionKey, $request, $user, $submittedAt): array {
+        $submission = DB::transaction(function () use ($session, $expectedSessionVersion, $submissionKey, $request, $user, $submittedAt, $dutyContext): array {
             $lockedSession = InspectionSession::query()->lockForUpdate()->findOrFail($session->id);
+            $lockedSession->fill([
+                'duty_context_status' => $dutyContext['status'] ?? null,
+                'duty_context_version' => $dutyContext['contextVersion'] ?? null,
+                'duty_source_version' => $dutyContext['sourceVersion'] ?? null,
+                'duty_context_snapshot' => $dutyContext,
+            ]);
             if ($submissionKey !== '') {
                 $existing = Report::query()
                     ->where('owner_user_id', $user->id)
@@ -769,6 +792,10 @@ class InspectionSessionController extends Controller
                 'inspection_checklist_item_labels' => [],
                 'inspection_has_checklist' => true,
                 'submitted_at' => $storedSubmittedAt,
+                'duty_context_status' => $dutyContext['status'] ?? null,
+                'duty_context_version' => $dutyContext['contextVersion'] ?? null,
+                'duty_source_version' => $dutyContext['sourceVersion'] ?? null,
+                'duty_context_snapshot' => $dutyContext,
             ] + $workflowFields);
 
             ReportTimelineEntry::query()->create([
@@ -789,6 +816,10 @@ class InspectionSessionController extends Controller
                 'submitted_report_uid' => $report->report_uid,
                 'submitted_at' => $storedSubmittedAt,
                 'version' => ((int) $lockedSession->version) + 1,
+                'duty_context_status' => $dutyContext['status'] ?? null,
+                'duty_context_version' => $dutyContext['contextVersion'] ?? null,
+                'duty_source_version' => $dutyContext['sourceVersion'] ?? null,
+                'duty_context_snapshot' => $dutyContext,
             ]);
             $lockedSession->scopeClaim()->delete();
             $this->recordEvent($lockedSession, null, 'session.submitted', $request, [
@@ -855,47 +886,34 @@ class InspectionSessionController extends Controller
     private function findReadableSession(Request $request, string $sessionUid): InspectionSession
     {
         $session = InspectionSession::query()->where('session_uid', $sessionUid)->firstOrFail();
-        if (($session->scope_version ?: 'legacy') !== 'v2') {
-            return $session;
-        }
         $user = $request->user();
-        if (
-            $user
-            && (
-                (int) $session->started_by_user_id === (int) $user->id
-                || $this->isSessionSupervisor($user)
-                || $this->sessionResolverService->userBelongsToScope($user, $session)
-            )
-        ) {
+        $decision = $user ? $this->inspectionPolicy->canReadSession($session, $user) : null;
+        if ($decision?->allowed) {
             return $session;
         }
 
         throw new HttpResponseException(response()->json([
-            'message' => 'This inspection session belongs to another team.',
-            'code' => 'inspection_session_team_forbidden',
+            'message' => $decision?->message ?? 'This inspection session is not available.',
+            'code' => $decision?->reasonCode ?? 'inspection_session_team_forbidden',
         ], Response::HTTP_FORBIDDEN));
     }
 
     private function findWritableSession(Request $request, string $sessionUid): InspectionSession
     {
         $session = $this->findReadableSession($request, $sessionUid);
-        if ($session->status !== self::ACTIVE_STATUS) {
+        $user = $request->user();
+        $decision = $user ? $this->inspectionPolicy->canWriteSession($session, $user) : null;
+        if ($decision?->reasonCode === 'inspection_session_closed') {
             throw new HttpResponseException(response()->json([
-                'message' => 'Only active inspection sessions can be changed.',
-                'code' => 'inspection_session_closed',
+                'message' => $decision->message,
+                'code' => $decision->reasonCode,
                 'data' => $this->formatSession($session),
             ], Response::HTTP_CONFLICT));
         }
-        $user = $request->user();
-        if (
-            ($session->scope_version ?: 'legacy') === 'v2'
-            && $user
-            && (int) $session->started_by_user_id !== (int) $user->id
-            && ! $this->sessionResolverService->userBelongsToScope($user, $session)
-        ) {
+        if (! $decision?->allowed) {
             throw new HttpResponseException(response()->json([
-                'message' => 'Only inspectors assigned to this session team can change results.',
-                'code' => 'inspection_session_write_forbidden',
+                'message' => $decision?->message ?? 'This inspection session cannot be changed.',
+                'code' => $decision?->reasonCode ?? 'inspection_session_write_forbidden',
             ], Response::HTTP_FORBIDDEN));
         }
 
@@ -1192,16 +1210,10 @@ class InspectionSessionController extends Controller
         if (! $user) {
             return ['canWrite' => false, 'canSubmit' => false];
         }
-        if (($session->scope_version ?: 'legacy') !== 'v2') {
-            return ['canWrite' => true, 'canSubmit' => true];
-        }
-        $isStarter = (int) $session->started_by_user_id === (int) $user->id;
-        $isSupervisor = $this->isSessionSupervisor($user);
-        $isTeamMember = $this->sessionResolverService->userBelongsToScope($user, $session);
 
         return [
-            'canWrite' => $isStarter || $isTeamMember,
-            'canSubmit' => $isStarter || $isSupervisor,
+            'canWrite' => $this->inspectionPolicy->canWriteSession($session, $user)->allowed,
+            'canSubmit' => $this->inspectionPolicy->canSubmitSession($session, $user)->allowed,
         ];
     }
 
@@ -1329,34 +1341,16 @@ class InspectionSessionController extends Controller
 
     private function ensureCanSubmitSession(Request $request, InspectionSession $session): void
     {
-        if (($session->scope_version ?: 'legacy') !== 'v2') {
-            return;
-        }
         $user = $request->user();
-        if ($user && ((int) $session->started_by_user_id === (int) $user->id || $this->isSessionSupervisor($user))) {
+        $decision = $user ? $this->inspectionPolicy->canSubmitSession($session, $user) : null;
+        if ($decision?->allowed) {
             return;
         }
 
         throw new HttpResponseException(response()->json([
-            'message' => 'Only the session starter or a supervisor can submit this inspection.',
-            'code' => 'inspection_session_submit_forbidden',
+            'message' => $decision?->message ?? 'This inspection session cannot be submitted.',
+            'code' => $decision?->reasonCode ?? 'inspection_session_submit_forbidden',
         ], Response::HTTP_FORBIDDEN));
-    }
-
-    private function isSessionSupervisor(User $user): bool
-    {
-        $supervisorRoles = [
-            'system administrator',
-            'system admin',
-            'admin',
-            'contract manager',
-            'incident commander',
-            'assistant incident commander',
-        ];
-
-        return $this->authorizationService->getActiveRoleNames($user)
-            ->map(fn ($role): string => strtolower(trim((string) $role)))
-            ->contains(fn (string $role): bool => in_array($role, $supervisorRoles, true));
     }
 
     private function ensureEnabled(): void

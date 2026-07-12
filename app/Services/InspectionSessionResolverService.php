@@ -93,9 +93,9 @@ class InspectionSessionResolverService
         return $query->orderByDesc('updated_at')->first();
     }
 
-    public function create(array $scope, int $userId): InspectionSession
+    public function create(array $scope, int $userId, ?array $dutyContext = null): InspectionSession
     {
-        return DB::transaction(function () use ($scope, $userId): InspectionSession {
+        return DB::transaction(function () use ($scope, $userId, $dutyContext): InspectionSession {
             $session = InspectionSession::query()->create([
                 'session_uid' => 'inspection-session-'.Str::uuid()->toString(),
                 'inspection_type' => $this->inspectionType,
@@ -107,6 +107,10 @@ class InspectionSessionResolverService
                 'scope_main_location' => $scope['mainLocation'],
                 'scope' => $scope,
                 'started_by_user_id' => $userId,
+                'duty_context_status' => $dutyContext['status'] ?? null,
+                'duty_context_version' => $dutyContext['contextVersion'] ?? null,
+                'duty_source_version' => $dutyContext['sourceVersion'] ?? null,
+                'duty_context_snapshot' => $dutyContext,
             ]);
             if ($scope['scopeVersion'] === 'v2') {
                 InspectionSessionScopeClaim::query()->create([

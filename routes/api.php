@@ -8,6 +8,7 @@ use App\Http\Controllers\DrillReportPdfController;
 use App\Http\Controllers\ErcoReportPdfController;
 use App\Http\Controllers\FeedbackReportController;
 use App\Http\Controllers\HolidayController;
+use App\Http\Controllers\InspectionDutyContextController;
 use App\Http\Controllers\InspectionEquipmentController;
 use App\Http\Controllers\InspectionFireExtinguisherController;
 use App\Http\Controllers\InspectionFireTruckController;
@@ -224,6 +225,9 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::get('report-media/{mediaId}', [ReportMediaController::class, 'show']);
     Route::post('report-media/{mediaId}/lease/renew', [ReportMediaController::class, 'renewLease']);
     Route::delete('report-media/{mediaId}', [ReportMediaController::class, 'destroy']);
+    Route::get('inspection/duty-context', [InspectionDutyContextController::class, 'show']);
+    Route::post('inspection/duty-context/confirm', [InspectionDutyContextController::class, 'confirm'])
+        ->middleware('throttle:inspection-duty-confirmations');
     Route::get('inspection/location-options', [InspectionLocationController::class, 'index']);
     Route::post('inspection/locations', [InspectionLocationController::class, 'store']);
     Route::patch('inspection/locations/{locationId}', [InspectionLocationController::class, 'update']);
@@ -324,7 +328,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
         Route::get('overtime/{id}', [OvertimeController::class, 'show']);
         Route::put('overtime/{id}', [OvertimeController::class, 'update']);
         Route::delete('overtime/{id}', [OvertimeController::class, 'destroy']);
-    Route::post('overtime/{id}/cancel', [OvertimeController::class, 'cancel']);
+        Route::post('overtime/{id}/cancel', [OvertimeController::class, 'cancel']);
     });
 
     // Payroll claims (employee - own records)

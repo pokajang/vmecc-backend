@@ -25,6 +25,12 @@ class InspectionSessionApiTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+        parent::tearDown();
+    }
+
     public function test_fire_extinguisher_session_is_reused_for_type_level_context(): void
     {
         $firstUser = $this->inspectionUser('Inspector A');
@@ -1014,6 +1020,67 @@ class InspectionSessionApiTest extends TestCase
         $this->assertSame(0, Report::query()->where('submission_key', 'session-submit-pending-operation')->count());
     }
 
+    public function test_enforced_session_write_and_submit_require_operation_scoped_confirmations(): void
+    {
+        Carbon::setTestNow('2026-07-12 02:00:00 UTC');
+        $user = $this->inspectionUser('Enforced Session Inspector');
+        $team = Team::query()->create(['name' => 'Enforced Session Team', 'status' => 'On Duty']);
+        $this->assignTeam($user, $team, true);
+        Roster::query()->create([
+            'date' => '2026-07-12',
+            'shift' => 'day',
+            'team_id' => $team->id,
+            'status' => 'published',
+            'created_by' => $user->id,
+            'published_by' => $user->id,
+            'published_at' => now(),
+        ]);
+        $extinguisher = $this->extinguisher();
+        $sessionUid = $this->createSession($user);
+        config()->set('inspection_duty.enforcement_enabled', true);
+        $completePayload = [
+            'checkPayload' => $this->checkPayload($extinguisher),
+            'clientResultId' => 'enforced-result-1',
+            'operationId' => 'enforced-complete-1',
+        ];
+
+        $this->actingAs($user)->postJson(
+            "/api/inspection/sessions/{$sessionUid}/extinguishers/{$extinguisher->id}/complete",
+            $completePayload,
+        )->assertStatus(428)->assertJsonPath('code', 'duty_confirmation_required');
+
+        $writeToken = $this->sessionDutyToken($user, 'session-write', $sessionUid, 'enforced-complete-1');
+        $this->actingAs($user)
+            ->withHeader('X-Duty-Confirmation', $writeToken)
+            ->postJson(
+                "/api/inspection/sessions/{$sessionUid}/extinguishers/{$extinguisher->id}/complete",
+                $completePayload,
+            )->assertOk();
+
+        $submitPayload = ['submission_key' => 'enforced-session-submit-1'];
+        $this->actingAs($user)
+            ->withHeader('X-Duty-Confirmation', '')
+            ->postJson("/api/inspection/sessions/{$sessionUid}/submit", $submitPayload)
+            ->assertStatus(428)
+            ->assertJsonPath('code', 'duty_confirmation_required');
+
+        $submitToken = $this->sessionDutyToken($user, 'session-submit', $sessionUid, 'enforced-session-submit-1');
+        $this->actingAs($user)
+            ->withHeader('X-Duty-Confirmation', $submitToken)
+            ->postJson("/api/inspection/sessions/{$sessionUid}/submit", $submitPayload)
+            ->assertCreated();
+
+        $this->assertDatabaseHas('inspection_sessions', [
+            'session_uid' => $sessionUid,
+            'status' => 'submitted',
+            'duty_context_status' => 'assigned',
+        ]);
+        $this->assertDatabaseHas('reports', [
+            'submission_key' => 'enforced-session-submit-1',
+            'duty_context_status' => 'assigned',
+        ]);
+    }
+
     private function createSession(User $user, array $scope = []): string
     {
         return $this->actingAs($user)->postJson('/api/inspection/sessions', [
@@ -1021,6 +1088,21 @@ class InspectionSessionApiTest extends TestCase
             'zone' => $scope['zone'] ?? '1',
             'mainLocation' => $scope['mainLocation'] ?? 'Manjung Hub',
         ])->assertCreated()->json('data.sessionUid');
+    }
+
+    private function sessionDutyToken(User $user, string $operation, string $sessionUid, string $idempotencyKey): string
+    {
+        $contextVersion = $this->actingAs($user)->getJson('/api/inspection/duty-context')
+            ->assertOk()
+            ->json('data.contextVersion');
+
+        return (string) $this->actingAs($user)->postJson('/api/inspection/duty-context/confirm', [
+            'operation' => $operation,
+            'contextVersion' => $contextVersion,
+            'formId' => 'fire-extinguisher-inspection',
+            'recordId' => $sessionUid,
+            'idempotencyKey' => $idempotencyKey,
+        ])->assertCreated()->json('data.dutyConfirmationToken');
     }
 
     private function extinguisher(array $overrides = []): InspectionFireExtinguisher
