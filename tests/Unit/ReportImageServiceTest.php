@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Exceptions\ReportImageException;
 use App\Services\ReportImageService;
 use Illuminate\Http\UploadedFile;
 use Symfony\Component\Process\ExecutableFinder;
@@ -35,6 +36,19 @@ class ReportImageServiceTest extends TestCase
         } finally {
             @unlink($basePath);
             @unlink($path);
+        }
+    }
+
+    public function test_it_rejects_a_file_that_claims_to_be_an_image_but_has_invalid_content(): void
+    {
+        $file = UploadedFile::fake()->createWithContent('spoofed.jpg', 'not an image');
+
+        try {
+            app(ReportImageService::class)->normalize($file);
+            $this->fail('Invalid image content should be rejected.');
+        } catch (ReportImageException $exception) {
+            $this->assertSame('unsupported_file_type', $exception->errorCode);
+            $this->assertSame(422, $exception->httpStatus);
         }
     }
 

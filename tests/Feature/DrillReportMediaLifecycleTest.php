@@ -332,16 +332,7 @@ class DrillReportMediaLifecycleTest extends TestCase
             'display_id' => 'ERCO-MEDIA-001',
             'report_type' => 'erco',
             'status' => 'Submitted',
-            'payload' => [
-                'incidentType' => 'Fire',
-                'location' => 'Workshop',
-                'postIncidentAnalysis' => [
-                    'photos' => [[
-                        'mediaId' => $mediaId,
-                        'url' => '/api/report-media/'.$mediaId,
-                    ]],
-                ],
-            ],
+            'payload' => $this->ercoPayloadWithPhoto($mediaId),
         ])->assertCreated();
 
         $this->assertDatabaseHas('report_media_links', [
@@ -444,6 +435,31 @@ class DrillReportMediaLifecycleTest extends TestCase
                     'url' => '/api/report-media/'.$mediaId,
                     'description' => 'Initial response position',
                 ]] : [],
+            ],
+        ];
+    }
+
+    private function ercoPayloadWithPhoto(string $mediaId): array
+    {
+        return [
+            'schemaVersion' => 1,
+            'incidentDate' => '2026-07-11',
+            'incidentTime' => '09:00',
+            'weather' => 'Clear',
+            'incidentType' => 'Fire',
+            'location' => 'Workshop',
+            'details' => 'Emergency response media lifecycle test.',
+            'summary' => 'Emergency response media persisted successfully.',
+            'respondingTeam' => [
+                'attendance' => [['memberId' => 'member-1', 'name' => 'Responder One']],
+            ],
+            'chronology' => [['time' => '09:00', 'action' => 'Response started.']],
+            'postIncidentAnalysis' => [
+                'strengths' => ['Prompt mobilisation'],
+                'photos' => [[
+                    'mediaId' => $mediaId,
+                    'url' => '/api/report-media/'.$mediaId,
+                ]],
             ],
         ];
     }

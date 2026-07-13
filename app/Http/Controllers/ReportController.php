@@ -7,11 +7,14 @@ use App\Models\ReportTimelineEntry;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\DrillPayloadService;
+use App\Services\ErcoPayloadService;
+use App\Services\FitnessTestPayloadService;
 use App\Services\InspectionCheckRowSyncService;
 use App\Services\InspectionDutyConfirmationService;
 use App\Services\InspectionDutyContextResolver;
 use App\Services\InspectionPayloadService;
 use App\Services\InspectionPolicy;
+use App\Services\InspectionSessionReportPayloadBuilder;
 use App\Services\ReportingWorkflowService;
 use App\Services\ReportMediaService;
 use App\Services\RoleCatalog;
@@ -33,8 +36,11 @@ class ReportController extends Controller
         private readonly InspectionCheckRowSyncService $inspectionCheckRowSyncService,
         private readonly ReportingWorkflowService $reportingWorkflowService,
         private readonly InspectionPayloadService $inspectionPayloadService,
+        private readonly InspectionSessionReportPayloadBuilder $inspectionSessionReportPayloadBuilder,
         private readonly ReportMediaService $reportMediaService,
         private readonly DrillPayloadService $drillPayloadService,
+        private readonly ErcoPayloadService $ercoPayloadService,
+        private readonly FitnessTestPayloadService $fitnessTestPayloadService,
         private readonly InspectionDutyConfirmationService $dutyConfirmations,
         private readonly InspectionDutyContextResolver $dutyContextResolver,
         private readonly InspectionPolicy $inspectionPolicy,
@@ -247,6 +253,20 @@ class ReportController extends Controller
                 $this->drillPayloadService->validateForSubmit((array) $data['payload']);
             }
         }
+        if ($reportType === 'erco') {
+            if ($status === self::STATUS_DRAFT) {
+                $this->ercoPayloadService->validateForDraft((array) $data['payload']);
+            } else {
+                $this->ercoPayloadService->validateForSubmit((array) $data['payload']);
+            }
+        }
+        if ($reportType === 'fitness-test') {
+            if ($status === self::STATUS_DRAFT) {
+                $this->fitnessTestPayloadService->validateForDraft((array) $data['payload']);
+            } else {
+                $this->fitnessTestPayloadService->validateForSubmit((array) $data['payload']);
+            }
+        }
         if ($isInspection) {
             $data['payload'] = $this->applyInspectionSessionInspector(
                 (array) $data['payload'],
@@ -421,14 +441,56 @@ class ReportController extends Controller
                 $this->drillPayloadService->validateForSubmit((array) $data['payload']);
             }
         }
+        if ($reportType === 'erco') {
+            if ($targetStatus === self::STATUS_DRAFT) {
+                $this->ercoPayloadService->validateForDraft((array) $data['payload']);
+            } else {
+                $this->ercoPayloadService->validateForSubmit((array) $data['payload']);
+            }
+        }
+        if ($reportType === 'fitness-test') {
+            if ($targetStatus === self::STATUS_DRAFT) {
+                $this->fitnessTestPayloadService->validateForDraft((array) $data['payload']);
+            } else {
+                $this->fitnessTestPayloadService->validateForSubmit((array) $data['payload']);
+            }
+        }
         if ($isInspection) {
             $this->ensureInspectionPermission($request);
+            $existingPayload = is_array($report->payload) ? $report->payload : [];
+            $isSessionFireExtinguisher = $this->inspectionSessionReportPayloadBuilder
+                ->isSessionFireExtinguisherPayload($existingPayload);
             $data['payload'] = $this->applyInspectionSessionInspector(
                 (array) $data['payload'],
                 $request
             );
+            if ($isSessionFireExtinguisher) {
+                $inspectionType = (string) (
+                    $existingPayload['incidentType']
+                    ?? $existingPayload['inspectionType']
+                    ?? 'Fire Extinguisher Inspection'
+                );
+                $data['payload']['incidentType'] = $inspectionType;
+                $data['payload']['inspectionType'] = $inspectionType;
+                $data['payload']['inspectionSessionUid'] = (string) (
+                    $existingPayload['inspectionSessionUid']
+                    ?? $existingPayload['inspection_session_uid']
+                    ?? ''
+                );
+            }
             $this->inspectionPayloadService->validateForSubmit((array) $data['payload']);
             $data['payload'] = $this->inspectionPayloadService->normalize((array) $data['payload']);
+            if ($isSessionFireExtinguisher) {
+                $data['payload']['incidentType'] = $inspectionType;
+                $data['payload']['inspectionType'] = $inspectionType;
+                $data['payload']['inspectionSessionUid'] = (string) (
+                    $existingPayload['inspectionSessionUid']
+                    ?? $existingPayload['inspection_session_uid']
+                    ?? ''
+                );
+                $data['payload'] = $this->inspectionSessionReportPayloadBuilder
+                    ->normalizeDerivedFields((array) $data['payload']);
+            }
         }
         if (
             ! ($isInspection && $isSystemAdministrator)

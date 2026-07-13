@@ -3,10 +3,11 @@
 namespace Tests\Feature;
 
 use App\Models\User;
-use Barryvdh\DomPDF\Facade\Pdf;
-use Barryvdh\DomPDF\PDF as DomPdfWrapper;
+use App\Services\InspectionReports\InspectionReportPdfRenderer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Mockery;
+use Smalot\PdfParser\Parser;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -14,6 +15,130 @@ use Tests\TestCase;
 class InspectionReportPdfTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_shared_evidence_gallery_renders_two_photos_in_one_row_and_filters_invalid_urls(): void
+    {
+        $validPhoto = fn (string $description): array => [
+            'description' => $description,
+            'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+        ];
+
+        $html = view('pdf.inspection-report.partials.evidence-gallery', [
+            'evidenceGroups' => [
+                [
+                    'kind' => 'Defect',
+                    'title' => 'Defect Evidence: Fire Jacket',
+                    'remarks' => 'Damaged seam.',
+                    'photos' => [$validPhoto('Defect photo')],
+                ],
+                [
+                    'kind' => 'Additional',
+                    'title' => 'Additional Evidence: Fire Jacket',
+                    'remarks' => 'Replacement requested.',
+                    'photos' => [
+                        $validPhoto('Additional photo'),
+                        ['description' => 'Remote photo', 'url' => 'https://example.com/photo.jpg'],
+                    ],
+                ],
+            ],
+        ])->render();
+
+        $this->assertSame(1, substr_count($html, '<tr>'));
+        $this->assertSame(2, substr_count($html, 'class="evidence-card"'));
+        $this->assertStringContainsString('Defect Evidence: Fire Jacket', $html);
+        $this->assertStringContainsString('Additional Evidence: Fire Jacket', $html);
+        $this->assertStringNotContainsString('https://example.com/photo.jpg', $html);
+    }
+
+    public function test_long_er_aux_pdf_starts_the_roster_on_page_one_and_uses_at_most_two_pages(): void
+    {
+        $checks = [];
+        for ($index = 1; $index <= 25; $index++) {
+            $checks[] = [
+                'equipment' => 'Equipment '.$index,
+                'location' => 'Store',
+                'quantity' => (string) $index,
+                'condition' => $index === 25 ? 'Defect' : 'OK',
+                'remarks' => '',
+            ];
+        }
+
+        $photo = [
+            'description' => 'Evidence photo.',
+            'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+        ];
+        $checks[24]['defectRemarks'] = 'Damaged during inspection.';
+        $checks[24]['defectPhotos'] = [$photo];
+        $checks[24]['additionalNotes'] = 'Replacement requested.';
+        $checks[24]['photos'] = [$photo];
+
+        $pdf = app(InspectionReportPdfRenderer::class)->render([
+            'displayId' => 'INS-ER-AUX-LAYOUT',
+            'status' => 'Submitted',
+            'incidentType' => 'ER Aux Equipment Inspection',
+            'location' => 'Store',
+            'submittedBy' => 'Layout Tester',
+            'submittedAt' => '2026-07-13T00:56:00+08:00',
+            'erAuxInspectedBy' => 'Layout Tester',
+            'erAuxInspectionDate' => '2026-07-13',
+            'erAuxChecks' => $checks,
+            'photos' => [],
+        ]);
+
+        $pages = (new Parser)->parseContent($pdf)->getPages();
+
+        $this->assertLessThanOrEqual(2, count($pages));
+        $this->assertStringContainsString('ER AUX EQUIPMENT CHECKS', strtoupper($pages[0]->getText()));
+        $this->assertStringContainsString('DEFECT EVIDENCE: EQUIPMENT 25', strtoupper(collect($pages)->map->getText()->implode("\n")));
+        $this->assertStringContainsString('ADDITIONAL EVIDENCE: EQUIPMENT 25', strtoupper(collect($pages)->map->getText()->implode("\n")));
+        $this->assertStringContainsString('Page 1 of '.count($pages), $pages[0]->getText());
+        $this->assertStringContainsString('Page '.count($pages).' of '.count($pages), $pages[array_key_last($pages)]->getText());
+    }
+
+    public function test_actual_renderer_handles_unicode_long_footer_and_unavailable_report_image(): void
+    {
+        Log::shouldReceive('info')
+            ->once()
+            ->withArgs(function (string $message, array $context): bool {
+                return $message === 'inspection_report_pdf_rendered'
+                    && $context['inspection_type'] === 'general'
+                    && $context['page_count'] === 1
+                    && $context['image_count'] === 0
+                    && $context['unavailable_image_count'] === 1
+                    && $context['omitted_image_count'] === 0
+                    && ! array_key_exists('display_id', $context)
+                    && ! array_key_exists('remarks', $context);
+            });
+        $pdf = app(InspectionReportPdfRenderer::class)->render([
+            'displayId' => 'INS-'.str_repeat('VERY-LONG-IDENTIFIER-', 12),
+            'status' => 'Submitted',
+            'incidentType' => 'General Inspection',
+            'location' => 'Kawasan pemeriksaan',
+            'submittedBy' => 'Élodie François',
+            'description' => 'Pemeriksaan selesai - façade, tekanan 50%, keadaan selamat.',
+            'reportRemarks' => 'Catatan keseluruhan untuk pemeriksaan.',
+            'checklist' => [[
+                'label' => 'Peralatan diperiksa',
+                'inspectionType' => 'General Inspection',
+            ]],
+            'photos' => [[
+                'description' => 'Retained caption for unavailable image.',
+                'url' => 'https://example.com/remote-image.jpg',
+            ]],
+        ]);
+
+        $pages = (new Parser)->parseContent($pdf)->getPages();
+        $text = collect($pages)->map->getText()->implode("\n");
+
+        $this->assertCount(1, $pages);
+        $this->assertStringContainsString('Élodie François', $text);
+        $this->assertStringContainsString('façade', $text);
+        $this->assertStringContainsString('Image unavailable', $text);
+        $this->assertStringContainsString('Retained caption for unavailable image.', $text);
+        $this->assertStringContainsString('Page 1 of 1', $text);
+        $this->assertStringContainsString('... | Page 1 of 1', $text);
+        $this->assertStringNotContainsString('example.com', $text);
+    }
 
     public function test_pdf_download_uses_live_timeline_entries_for_signoffs(): void
     {
@@ -67,19 +192,16 @@ class InspectionReportPdfTest extends TestCase
         $this->actingAs($user);
 
         $capturedRecord = null;
-        $document = Mockery::mock(DomPdfWrapper::class);
-        $document->shouldReceive('setPaper')->once()->andReturnSelf();
-        $document->shouldReceive('setOption')->once()->andReturnSelf();
-        $document->shouldReceive('output')->once()->andReturn('%PDF-1.4 mocked');
-
-        Pdf::shouldReceive('loadView')
+        $renderer = Mockery::mock(InspectionReportPdfRenderer::class);
+        $renderer->shouldReceive('render')
             ->once()
-            ->withArgs(function (string $view, array $data) use (&$capturedRecord): bool {
-                $capturedRecord = $data['record'] ?? null;
+            ->withArgs(function (array $record) use (&$capturedRecord): bool {
+                $capturedRecord = $record;
 
-                return $view === 'pdf.inspection_report';
+                return true;
             })
-            ->andReturn($document);
+            ->andReturn('%PDF-1.4 mocked');
+        $this->app->instance(InspectionReportPdfRenderer::class, $renderer);
 
         $response = $this->postJson('/api/reports/inspection/pdf', [
             'report_uid' => $reportUid,
@@ -142,6 +264,40 @@ class InspectionReportPdfTest extends TestCase
         $response = $this->postJson('/api/reports/inspection/pdf', []);
         $response->assertStatus(422);
         $response->assertJsonValidationErrors(['report_uid']);
+    }
+
+    public function test_pdf_download_endpoint_returns_a_real_rendered_pdf(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $create = $this->postJson('/api/reports', [
+            'display_id' => 'INS-REAL-PDF-ENDPOINT',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'General Inspection',
+                'location' => 'Main Yard',
+                'description' => 'Real endpoint renderer verification.',
+                'reportRemarks' => 'Endpoint report-level remarks.',
+            ],
+        ]);
+        $create->assertCreated();
+
+        $response = $this->postJson('/api/reports/inspection/pdf', [
+            'report_uid' => $create->json('data.id'),
+            'version' => $create->json('data.version'),
+        ]);
+
+        $response->assertOk();
+        $response->assertHeader('Content-Type', 'application/pdf');
+        $response->assertHeader('X-Content-Type-Options', 'nosniff');
+        $this->assertStringStartsWith('%PDF-', $response->getContent());
+        $text = (new Parser)->parseContent($response->getContent())->getText();
+        $this->assertStringContainsString('Real endpoint renderer verification.', $text);
+        $this->assertStringContainsString('Endpoint report-level remarks.', $text);
+        $this->assertStringContainsString('Page 1 of 1', $text);
     }
 
     public function test_pdf_template_renders_required_inspection_fields(): void
@@ -280,6 +436,117 @@ class InspectionReportPdfTest extends TestCase
 
         $this->assertStringContainsString('Routine inspection summary.', $html);
         $this->assertStringNotContainsString('Additional report remarks', $html);
+        $this->assertStringNotContainsString('Additional report evidence', $html);
+        $this->assertStringNotContainsString('No photos uploaded.', $html);
+    }
+
+    public function test_report_level_evidence_follows_item_checks_for_every_inspection_type(): void
+    {
+        $photo = [
+            'description' => 'Whole-report evidence photo.',
+            'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+        ];
+        $records = [
+            'general' => [
+                'incidentType' => 'General Inspection',
+                'checklist' => [[
+                    'label' => 'General item marker',
+                    'inspectionType' => 'General Inspection',
+                ]],
+                'marker' => 'General item marker',
+            ],
+            'er-aux' => [
+                'incidentType' => 'ER Aux Equipment Inspection',
+                'erAuxChecks' => [[
+                    'equipment' => 'ER Aux item marker',
+                    'location' => 'Store',
+                    'condition' => 'OK',
+                ]],
+                'marker' => 'ER Aux item marker',
+            ],
+            'fire-extinguisher' => [
+                'incidentType' => 'Fire Extinguisher Inspection',
+                'fireExtinguisherChecks' => [[
+                    'idLocNo' => 'Fire extinguisher item marker',
+                    'physicalCondition' => 'Good',
+                ]],
+                'marker' => 'Fire extinguisher item marker',
+            ],
+            'hydraulic' => [
+                'incidentType' => 'Hydraulic Rescue Tools Inspection',
+                'hydraulicChecks' => [[
+                    'equipment' => 'Hydraulic item marker',
+                    'location' => 'FRT',
+                    'physicalCondition' => 'OK',
+                ]],
+                'marker' => 'Hydraulic item marker',
+            ],
+            'frt' => [
+                'incidentType' => 'FRT Daily Inspection',
+                'frtDailyChecks' => [[
+                    'rowNumber' => '1',
+                    'location' => 'LOCKER 01',
+                    'equipment' => 'FRT item marker',
+                    'rowKind' => 'status',
+                    'status' => 'Checked',
+                ]],
+                'marker' => 'FRT item marker',
+            ],
+            'high-angle' => [
+                'incidentType' => 'High Angle Rescue Equipment Inspection',
+                'highAngleChecks' => [[
+                    'rowNumber' => '1',
+                    'mainLocation' => 'Response Kit #1',
+                    'equipment' => 'High Angle item marker',
+                    'condition' => 'Good',
+                ]],
+                'marker' => 'High Angle item marker',
+            ],
+            'scba' => [
+                'incidentType' => 'SCBA Inspection',
+                'scbaBackPlateChecks' => [[
+                    'location' => 'FRT',
+                    'brand' => 'SCBA item marker',
+                    'serialNo' => 'SCBA-01',
+                    'backPlateHarnessCondition' => 'Good',
+                ]],
+                'marker' => 'SCBA item marker',
+            ],
+            'hse' => [
+                'incidentType' => 'Health Safety Environment Inspection',
+                'hseSelections' => ['unsafeAct'],
+                'hseUnsafeActDetails' => 'HSE item marker',
+                'marker' => 'HSE item marker',
+            ],
+        ];
+
+        foreach ($records as $type => $record) {
+            $marker = $record['marker'];
+            unset($record['marker']);
+            $html = view('pdf.inspection_report', [
+                'record' => array_merge($record, [
+                    'displayId' => 'INS-EVIDENCE-'.strtoupper($type),
+                    'status' => 'Submitted',
+                    'location' => 'Test location',
+                    'reportRemarks' => 'Whole-report remarks for '.$type.'.',
+                    'photos' => [$photo],
+                ]),
+            ])->render();
+
+            $itemPosition = strpos($html, $marker);
+            $evidencePosition = strpos($html, 'Additional report evidence');
+            $signoffPosition = strpos($html, 'Workflow Sign-offs');
+
+            $this->assertNotFalse($itemPosition, "Missing {$type} item marker.");
+            $this->assertNotFalse($evidencePosition, "Missing {$type} report evidence.");
+            $this->assertNotFalse($signoffPosition, "Missing {$type} workflow sign-offs.");
+            $this->assertTrue(
+                $itemPosition < $evidencePosition && $evidencePosition < $signoffPosition,
+                "Report evidence is out of order for {$type}.",
+            );
+            $this->assertStringContainsString('Whole-report remarks for '.$type.'.', $html);
+            $this->assertStringContainsString('Whole-report evidence photo.', $html);
+        }
     }
 
     public function test_pdf_template_does_not_render_sections_from_other_inspection_forms(): void

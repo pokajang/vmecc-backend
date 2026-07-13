@@ -4,8 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Report;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\InspectionReports\InspectionReportPdfRenderer;
 use App\Services\ReportMediaService;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 
 class InspectionReportPdfController extends Controller
@@ -13,6 +13,7 @@ class InspectionReportPdfController extends Controller
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly ReportMediaService $reportMediaService,
+        private readonly InspectionReportPdfRenderer $pdfRenderer,
     ) {}
 
     public function download(Request $request)
@@ -75,16 +76,7 @@ class InspectionReportPdfController extends Controller
         $safeId = trim((string) $safeId, '-');
         $filename = ($safeId !== '' ? $safeId : 'inspection-report').'.pdf';
 
-        $document = Pdf::loadView('pdf.inspection_report', [
-            'record' => $payload,
-        ])->setPaper('a4')->setOption([
-            'defaultFont' => 'Helvetica',
-            'isFontSubsettingEnabled' => true,
-            'isHtml5ParserEnabled' => true,
-            'isRemoteEnabled' => false,
-        ]);
-
-        $output = $document->output(['compress' => 1]);
+        $output = $this->pdfRenderer->render($payload);
 
         return response($output, 200, [
             'Content-Type' => 'application/pdf',

@@ -28,7 +28,7 @@ final class DrillPayloadService
 
     public function validateForDraft(array $payload): void
     {
-        if (! $this->usesV2($payload)) {
+        if (! $this->usesV2($payload, false)) {
             return;
         }
 
@@ -37,16 +37,22 @@ final class DrillPayloadService
 
     public function validateForSubmit(array $payload): void
     {
-        if (! $this->usesV2($payload)) {
+        if (! $this->usesV2($payload, true)) {
             return;
         }
 
         $this->validateV2($payload, true);
     }
 
-    private function usesV2(array $payload): bool
+    private function usesV2(array $payload, bool $requireSchema): bool
     {
         if (! array_key_exists('schemaVersion', $payload)) {
+            if ($requireSchema) {
+                throw ValidationException::withMessages([
+                    'schemaVersion' => ['Drill schema version 2 is required for submission.'],
+                ]);
+            }
+
             return false;
         }
 

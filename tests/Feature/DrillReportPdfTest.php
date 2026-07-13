@@ -42,9 +42,7 @@ class DrillReportPdfTest extends TestCase
             'display_id' => 'DRL-01-28042026',
             'report_type' => 'drill',
             'status' => 'Submitted',
-            'payload' => [
-                'incidentType' => 'Fire Drill',
-                'location' => 'Workshop',
+            'payload' => array_replace_recursive($this->validDrillPayload('Workshop'), [
                 'timeline' => [
                     [
                         'action' => 'Submitted',
@@ -52,7 +50,7 @@ class DrillReportPdfTest extends TestCase
                         'at' => '2026-04-28T00:00:00+08:00',
                     ],
                 ],
-            ],
+            ]),
         ]);
         $create->assertCreated();
         $reportUid = (string) $create->json('data.id');
@@ -120,11 +118,10 @@ class DrillReportPdfTest extends TestCase
             'display_id' => 'DRL-02-28042026',
             'report_type' => 'drill',
             'status' => 'Submitted',
-            'payload' => [
+            'payload' => array_replace($this->validDrillPayload('Main plant'), [
                 'incidentType' => 'Rescue Drill',
-                'location' => 'Main plant',
                 'details' => 'Owner only drill',
-            ],
+            ]),
         ]);
         $create->assertCreated();
         $reportUid = (string) $create->json('data.id');
@@ -466,6 +463,22 @@ class DrillReportPdfTest extends TestCase
 
         $this->assertStringStartsWith('%PDF-', $output);
         $this->assertGreaterThan(5000, strlen($output));
+    }
+
+    private function validDrillPayload(string $location): array
+    {
+        return [
+            'schemaVersion' => 2,
+            'reportDate' => '2026-04-28',
+            'reportTime' => '09:00',
+            'weather' => 'Clear',
+            'incidentType' => 'Fire Drill',
+            'location' => $location,
+            'details' => 'Controlled drill scenario.',
+            'summary' => 'Drill completed safely.',
+            'chronology' => [['time' => '09:00', 'action' => 'Exercise started.']],
+            'postIncidentAnalysis' => ['photos' => []],
+        ];
     }
 
     private function createMedia(User $owner, string $publicId, string $module, string $prefix): ReportMedia

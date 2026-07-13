@@ -33,9 +33,8 @@ class ErcoReportPdfTest extends TestCase
             'display_id' => 'ERCO-02-28042026',
             'report_type' => 'erco',
             'status' => 'Submitted',
-            'payload' => [
+            'payload' => array_replace($this->validErcoPayload('Zone 2'), [
                 'incidentType' => 'Special Assistance',
-                'location' => 'Zone 2',
                 'timeline' => [
                     [
                         'action' => 'Submitted',
@@ -43,7 +42,7 @@ class ErcoReportPdfTest extends TestCase
                         'at' => '2026-04-28T00:00:00+08:00',
                     ],
                 ],
-            ],
+            ]),
         ]);
         $create->assertCreated();
         $reportUid = (string) $create->json('data.id');
@@ -74,6 +73,7 @@ class ErcoReportPdfTest extends TestCase
             ->once()
             ->withArgs(function (string $view, array $data) use (&$capturedRecord): bool {
                 $capturedRecord = $data['record'] ?? null;
+
                 return $view === 'pdf.erco_report';
             })
             ->andReturn($document);
@@ -112,11 +112,10 @@ class ErcoReportPdfTest extends TestCase
             'display_id' => 'ERCO-03-28042026',
             'report_type' => 'erco',
             'status' => 'Submitted',
-            'payload' => [
+            'payload' => array_replace($this->validErcoPayload('Zone 2'), [
                 'incidentType' => 'Special Assistance',
-                'location' => 'Zone 2',
                 'details' => 'Owner only report',
-            ],
+            ]),
         ]);
         $create->assertCreated();
         $reportUid = (string) $create->json('data.id');
@@ -197,6 +196,25 @@ class ErcoReportPdfTest extends TestCase
             $this->assertStringContainsString($text, $html);
         }
         $this->assertStringContainsString('compact-info-grid', $html);
+    }
+
+    private function validErcoPayload(string $location): array
+    {
+        return [
+            'schemaVersion' => 1,
+            'incidentDate' => '2026-04-28',
+            'incidentTime' => '09:00',
+            'weather' => 'Clear',
+            'incidentType' => 'Fire',
+            'location' => $location,
+            'details' => 'Emergency response PDF test details.',
+            'summary' => 'Emergency response PDF test summary.',
+            'respondingTeam' => [
+                'attendance' => [['memberId' => 'member-1', 'name' => 'Responder One']],
+            ],
+            'chronology' => [['time' => '09:00', 'action' => 'Response started.']],
+            'postIncidentAnalysis' => ['strengths' => ['Prompt mobilisation'], 'photos' => []],
+        ];
     }
 
     private function buildComprehensiveRecord(): array

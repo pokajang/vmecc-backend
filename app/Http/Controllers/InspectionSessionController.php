@@ -15,7 +15,9 @@ use App\Services\InspectionDutyConfirmationService;
 use App\Services\InspectionDutyContextResolver;
 use App\Services\InspectionExtinguisherOperationService;
 use App\Services\InspectionFireExtinguisherSessionProgressService;
+use App\Services\InspectionPayloadService;
 use App\Services\InspectionPolicy;
+use App\Services\InspectionSessionReportPayloadBuilder;
 use App\Services\InspectionSessionResolverService;
 use App\Services\InspectionWorkflowService;
 use App\Services\ReportMediaService;
@@ -60,6 +62,8 @@ class InspectionSessionController extends Controller
         private readonly InspectionCheckRowSyncService $inspectionCheckRowSyncService,
         private readonly InspectionFireExtinguisherSessionProgressService $sessionProgressService,
         private readonly InspectionSessionResolverService $sessionResolverService,
+        private readonly InspectionSessionReportPayloadBuilder $sessionReportPayloadBuilder,
+        private readonly InspectionPayloadService $inspectionPayloadService,
         private readonly InspectionExtinguisherOperationService $extinguisherOperationService,
         private readonly InspectionWorkflowService $inspectionWorkflowService,
         private readonly WorkflowNotificationService $workflowNotificationService,
@@ -684,10 +688,15 @@ class InspectionSessionController extends Controller
         $data = $request->validate([
             'session_version' => ['nullable', 'integer', 'min:1'],
             'sessionVersion' => ['nullable', 'integer', 'min:1'],
+            'report_remarks' => ['nullable', 'string', 'max:5000'],
+            'reportRemarks' => ['nullable', 'string', 'max:5000'],
+            'photos' => ['nullable', 'array', 'max:10'],
         ]);
         $expectedSessionVersion = (int) ($data['session_version'] ?? $data['sessionVersion'] ?? 0);
         $submissionKey = $this->text($request->input('submission_key', ''));
         $submittedAt = $this->submittedAtFromRequest($request);
+        $reportRemarks = $this->text($data['report_remarks'] ?? $data['reportRemarks'] ?? '');
+        $reportPhotos = is_array($data['photos'] ?? null) ? $data['photos'] : [];
 
         if ($submissionKey !== '') {
             $existing = Report::query()
@@ -695,6 +704,14 @@ class InspectionSessionController extends Controller
                 ->where('submission_key', $submissionKey)
                 ->first();
             if ($existing) {
+                $this->reportMediaService->syncPayloadLinks(
+                    is_array($existing->payload) ? $existing->payload : [],
+                    'report',
+                    (string) $existing->report_uid,
+                    (int) $existing->owner_user_id,
+                    'inspection',
+                );
+
                 return response()->json([
                     'data' => [
                         'reportUid' => $existing->report_uid,
@@ -718,7 +735,7 @@ class InspectionSessionController extends Controller
             self::FIRE_EXTINGUISHER_TYPE_KEY,
         );
 
-        $submission = DB::transaction(function () use ($session, $expectedSessionVersion, $submissionKey, $request, $user, $submittedAt, $dutyContext): array {
+        $submission = DB::transaction(function () use ($session, $expectedSessionVersion, $submissionKey, $request, $user, $submittedAt, $dutyContext, $reportRemarks, $reportPhotos): array {
             $lockedSession = InspectionSession::query()->lockForUpdate()->findOrFail($session->id);
             $lockedSession->fill([
                 'duty_context_status' => $dutyContext['status'] ?? null,
@@ -767,7 +784,12 @@ class InspectionSessionController extends Controller
                 ]);
             }
 
-            $payload = $this->compileSessionReportPayload($lockedSession, $completedResults, $submittedAt);
+            $payload = $this->sessionReportPayloadBuilder->build($lockedSession, $completedResults, $submittedAt);
+            $payload['reportRemarks'] = $reportRemarks;
+            $payload['photos'] = $reportPhotos;
+            $this->inspectionPayloadService->validateForSubmit($payload);
+            $payload = $this->inspectionPayloadService->normalize($payload);
+            $payload = $this->sessionReportPayloadBuilder->normalizeDerivedFields($payload);
             $storedSubmittedAt = $submittedAt->copy()->setTimezone(config('app.timezone', 'UTC'));
             $workflowFields = $this->inspectionWorkflowService->appendSubmissionHistory(
                 $this->inspectionWorkflowService->buildWorkflowForSubmission($user),
@@ -834,6 +856,16 @@ class InspectionSessionController extends Controller
         /** @var Report $report */
         $report = $submission['report'];
         $idempotentReplay = $submission['replayed'] === true;
+
+        if ($idempotentReplay) {
+            $this->reportMediaService->syncPayloadLinks(
+                is_array($report->payload) ? $report->payload : [],
+                'report',
+                (string) $report->report_uid,
+                (int) $report->owner_user_id,
+                'inspection',
+            );
+        }
 
         if (! $idempotentReplay) {
             try {
@@ -1074,74 +1106,6 @@ class InspectionSessionController extends Controller
         }
 
         return now();
-    }
-
-    private function compileSessionReportPayload(InspectionSession $session, $completedResults, Carbon $submittedAt): array
-    {
-        $checks = $completedResults
-            ->map(fn (InspectionExtinguisherResult $result): array => array_merge($result->check_payload, [
-                'inspectionSessionUid' => $session->session_uid,
-                'inspectionResultId' => $result->id,
-                'checkedBy' => $result->checkedBy?->name ?? '',
-                'checkedAt' => $result->checked_at?->toIso8601String() ?? '',
-            ]))
-            ->values()
-            ->all();
-        $scope = is_array($session->scope) ? $session->scope : [];
-        $zone = $this->text($scope['zone'] ?? '');
-        $mainLocation = $this->text($scope['mainLocation'] ?? '');
-        $location = implode(' > ', array_filter([
-            $zone !== '' ? 'Zone '.$zone : '',
-            $mainLocation,
-        ]));
-
-        return [
-            'inspectionSessionUid' => $session->session_uid,
-            'compiledAt' => $submittedAt->toIso8601String(),
-            'inspectedAt' => $submittedAt->toIso8601String(),
-            'incidentType' => self::FIRE_EXTINGUISHER_TYPE,
-            'inspectionType' => self::FIRE_EXTINGUISHER_TYPE,
-            'location' => $location,
-            'selectedLocation' => $location,
-            'zone' => $zone,
-            'mainLocation' => $mainLocation,
-            'subLocation' => '',
-            'fireExtinguisherInspectedBy' => $session->startedBy?->name ?? '',
-            'fireExtinguisherInspectionDate' => $submittedAt->toDateString(),
-            'description' => sprintf(
-                'Fire extinguisher inspection session %s. %d extinguisher(s) checked.',
-                $session->session_uid,
-                count($checks),
-            ),
-            'reportRemarks' => '',
-            'photos' => [],
-            'fireExtinguisherChecks' => $checks,
-            'checklist' => $this->compiledChecklist($checks),
-            'summary' => [
-                'checkedCount' => count($checks),
-                'scope' => $scope,
-            ],
-        ];
-    }
-
-    private function compiledChecklist(array $checks): array
-    {
-        $fields = [
-            'physicalCondition' => 'Physical Condition',
-            'signageCondition' => 'Signage Condition',
-            'boxKeyAvailability' => 'Box Key Availability',
-            'boxGlassAvailability' => 'Box Glass Availability',
-            'operationalCondition' => 'Operational Condition',
-        ];
-
-        return collect($fields)
-            ->map(fn (string $label, string $key): array => [
-                'id' => 'fire-extinguisher-'.$this->slug($key),
-                'label' => $label,
-                'selected' => collect($checks)->contains(fn (array $row): bool => $this->text($row[$key] ?? '') !== ''),
-            ])
-            ->values()
-            ->all();
     }
 
     private function resultMatchesLocationFilter(

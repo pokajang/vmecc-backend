@@ -200,14 +200,49 @@ class ReportingWorkflowStabilityTest extends TestCase
 
     private function payloadFor(string $reportType, string $location): array
     {
+        if ($reportType === 'erco') {
+            return [
+                'schemaVersion' => 1,
+                'incidentDate' => '2026-07-13',
+                'incidentTime' => '09:00',
+                'weather' => 'Clear',
+                'incidentType' => 'Fire',
+                'location' => $location,
+                'details' => 'Reporting workflow stability validation report.',
+                'summary' => 'Reporting workflow stability validation summary.',
+                'respondingTeam' => [
+                    'attendance' => [['memberId' => 'member-1', 'name' => 'Responder One']],
+                ],
+                'chronology' => [['time' => '09:00', 'action' => 'Response started.']],
+                'postIncidentAnalysis' => ['strengths' => ['Prompt mobilisation'], 'photos' => []],
+            ];
+        }
+
+        if ($reportType === 'drill') {
+            return [
+                'schemaVersion' => 2,
+                'reportDate' => '2026-07-13',
+                'reportTime' => '09:00',
+                'weather' => 'Clear',
+                'incidentType' => 'Fire Drill',
+                'location' => $location,
+                'details' => 'Reporting workflow stability drill scenario.',
+                'summary' => 'Reporting workflow stability drill summary.',
+                'chronology' => [['time' => '09:00', 'action' => 'Exercise started.']],
+                'postIncidentAnalysis' => ['photos' => []],
+            ];
+        }
+
         return [
-            'incidentType' => match ($reportType) {
-                'drill' => 'Drill',
-                'fitness-test' => 'Endurance Test',
-                default => 'Fire',
-            },
+            'schemaVersion' => 1,
+            'reportDate' => '2026-07-13',
+            'reportTime' => '09:00',
+            'weather' => 'Routine',
+            'incidentType' => 'Endurance Test',
             'location' => $location,
-            'description' => 'Reporting workflow stability validation report.',
+            'details' => 'Reporting workflow stability fitness test details.',
+            'summary' => 'Reporting workflow stability fitness test summary.',
+            'chronology' => [['time' => '09:00', 'action' => 'Fitness test started.']],
         ];
     }
 

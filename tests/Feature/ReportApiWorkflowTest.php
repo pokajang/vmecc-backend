@@ -25,10 +25,7 @@ class ReportApiWorkflowTest extends TestCase
             'display_id' => 'ERCO-01-28042026',
             'report_type' => 'erco',
             'status' => 'Submitted',
-            'payload' => [
-                'incidentType' => 'Fire',
-                'location' => 'Zone 1',
-            ],
+            'payload' => $this->ercoPayload('Zone 1'),
         ]);
         $create->assertCreated();
         $create->assertJsonPath('data.status', 'Submitted');
@@ -42,10 +39,9 @@ class ReportApiWorkflowTest extends TestCase
         $update = $this->putJson("/api/reports/{$reportUid}", [
             'version' => 1,
             'status' => 'Submitted',
-            'payload' => [
+            'payload' => array_replace($this->ercoPayload('Zone 2'), [
                 'incidentType' => 'Fire Updated',
-                'location' => 'Zone 2',
-            ],
+            ]),
         ]);
         $update->assertOk();
         $update->assertJsonPath('data.version', 2);
@@ -81,10 +77,7 @@ class ReportApiWorkflowTest extends TestCase
             'display_id' => 'DRL-01-28042026',
             'report_type' => 'drill',
             'status' => 'Submitted',
-            'payload' => [
-                'incidentType' => 'Drill',
-                'location' => 'Zone A',
-            ],
+            'payload' => $this->drillPayload('Zone A'),
         ]);
         $create->assertCreated();
         $reportUid = (string) $create->json('data.id');
@@ -133,10 +126,7 @@ class ReportApiWorkflowTest extends TestCase
             'report_type' => 'fitness-test',
             'status' => 'Submitted',
             'submission_key' => 'report-submit-abc123',
-            'payload' => [
-                'incidentType' => 'Endurance Test',
-                'location' => 'Zone T',
-            ],
+            'payload' => $this->fitnessPayload('Zone T'),
         ];
 
         $first = $this->postJson('/api/reports', $payload);
@@ -173,5 +163,62 @@ class ReportApiWorkflowTest extends TestCase
             'team_id' => null,
             'is_primary' => true,
         ]);
+    }
+
+    private function ercoPayload(string $location): array
+    {
+        return [
+            'schemaVersion' => 1,
+            'incidentDate' => '2026-04-28',
+            'incidentTime' => '09:00',
+            'weather' => 'Clear',
+            'incidentType' => 'Fire',
+            'location' => $location,
+            'details' => 'Emergency response details.',
+            'summary' => 'Emergency response summary.',
+            'respondingTeam' => [
+                'name' => 'Alpha',
+                'shift' => 'Day',
+                'attendance' => [['memberId' => 'member-1', 'name' => 'Responder One', 'role' => 'TRT']],
+            ],
+            'chronology' => [['time' => '09:00', 'action' => 'Response started.']],
+            'postIncidentAnalysis' => [
+                'strengths' => ['Rapid mobilisation'],
+                'resourcesMobilised' => [],
+                'improvementOpportunities' => [],
+                'photos' => [],
+            ],
+        ];
+    }
+
+    private function drillPayload(string $location): array
+    {
+        return [
+            'schemaVersion' => 2,
+            'reportDate' => '2026-04-28',
+            'reportTime' => '09:00',
+            'weather' => 'Clear',
+            'incidentType' => 'Fire Drill',
+            'location' => $location,
+            'details' => 'Controlled drill scenario.',
+            'summary' => 'Drill completed safely.',
+            'chronology' => [['time' => '09:00', 'action' => 'Exercise started.']],
+            'postIncidentAnalysis' => ['photos' => []],
+        ];
+    }
+
+    private function fitnessPayload(string $location): array
+    {
+        return [
+            'schemaVersion' => 1,
+            'reportDate' => '2026-04-28',
+            'reportTime' => '09:00',
+            'weather' => 'Routine',
+            'incidentType' => 'Endurance Test',
+            'location' => $location,
+            'details' => 'Fitness test session details.',
+            'summary' => 'Fitness test completed safely.',
+            'chronology' => [['time' => '09:00', 'action' => 'Fitness test started.']],
+        ];
     }
 }

@@ -74,7 +74,7 @@ class ReportApiSecurityTest extends TestCase
             'display_id' => 'ERCO-SEC-001',
             'report_type' => 'erco',
             'status' => 'Submitted',
-            'payload' => ['incidentType' => 'Fire', 'location' => 'Zone S'],
+            'payload' => $this->validErcoPayload('Zone S'),
         ]);
         $created->assertCreated();
         $reportUid = (string) $created->json('data.id');
@@ -96,7 +96,7 @@ class ReportApiSecurityTest extends TestCase
             'display_id' => 'DRL-SEC-002',
             'report_type' => 'drill',
             'status' => 'Submitted',
-            'payload' => ['incidentType' => 'Drill', 'location' => 'Zone D'],
+            'payload' => $this->validDrillPayload('Zone D'),
         ]);
         $created->assertCreated();
         $reportUid = (string) $created->json('data.id');
@@ -121,7 +121,7 @@ class ReportApiSecurityTest extends TestCase
             'display_id' => 'FIT-SEC-003',
             'report_type' => 'fitness-test',
             'status' => 'Submitted',
-            'payload' => ['incidentType' => 'Endurance Test', 'location' => 'Zone F'],
+            'payload' => $this->validFitnessPayload('Zone F'),
         ]);
         $created->assertCreated();
         $reportUid = (string) $created->json('data.id');
@@ -140,6 +140,56 @@ class ReportApiSecurityTest extends TestCase
         $this->actingAs($user);
         $delete = $this->deleteJson("/api/reports/{$reportUid}");
         $delete->assertNoContent();
+    }
+
+    private function validErcoPayload(string $location): array
+    {
+        return [
+            'schemaVersion' => 1,
+            'incidentDate' => '2026-07-13',
+            'incidentTime' => '09:00',
+            'weather' => 'Clear',
+            'incidentType' => 'Fire',
+            'location' => $location,
+            'details' => 'Security workflow test details.',
+            'summary' => 'Security workflow test summary.',
+            'respondingTeam' => [
+                'attendance' => [['memberId' => 'member-1', 'name' => 'Responder One']],
+            ],
+            'chronology' => [['time' => '09:00', 'action' => 'Response started.']],
+            'postIncidentAnalysis' => ['strengths' => ['Prompt mobilisation'], 'photos' => []],
+        ];
+    }
+
+    private function validDrillPayload(string $location): array
+    {
+        return [
+            'schemaVersion' => 2,
+            'reportDate' => '2026-07-13',
+            'reportTime' => '09:00',
+            'weather' => 'Clear',
+            'incidentType' => 'Fire Drill',
+            'location' => $location,
+            'details' => 'Security drill scenario.',
+            'summary' => 'Security drill summary.',
+            'chronology' => [['time' => '09:00', 'action' => 'Exercise started.']],
+            'postIncidentAnalysis' => ['photos' => []],
+        ];
+    }
+
+    private function validFitnessPayload(string $location): array
+    {
+        return [
+            'schemaVersion' => 1,
+            'reportDate' => '2026-07-13',
+            'reportTime' => '09:00',
+            'weather' => 'Routine',
+            'incidentType' => 'Endurance Test',
+            'location' => $location,
+            'details' => 'Security fitness test details.',
+            'summary' => 'Security fitness test summary.',
+            'chronology' => [['time' => '09:00', 'action' => 'Fitness test started.']],
+        ];
     }
 
     private function grantInspectionPermission(User $user): void

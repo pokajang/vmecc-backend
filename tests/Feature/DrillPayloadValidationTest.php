@@ -150,7 +150,7 @@ class DrillPayloadValidationTest extends TestCase
         $this->assertDatabaseMissing('reports', ['display_id' => 'DRL-V2-PHOTO-LIMIT']);
     }
 
-    public function test_legacy_drill_payload_remains_writable(): void
+    public function test_legacy_drill_payload_is_read_compatible_but_not_accepted_for_new_submissions(): void
     {
         $user = $this->userWithDrillPermission();
 
@@ -162,7 +162,9 @@ class DrillPayloadValidationTest extends TestCase
                 'incidentType' => 'Legacy Rescue Drill',
                 'location' => 'Workshop',
             ],
-        ])->assertCreated()->assertJsonPath('data.incidentType', 'Legacy Rescue Drill');
+        ])->assertUnprocessable()->assertJsonValidationErrors(['schemaVersion']);
+
+        $this->assertDatabaseMissing('reports', ['display_id' => 'DRL-LEGACY']);
     }
 
     public function test_drill_draft_and_report_writes_require_drill_permission(): void

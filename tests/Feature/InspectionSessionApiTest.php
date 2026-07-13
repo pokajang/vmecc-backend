@@ -904,19 +904,48 @@ class InspectionSessionApiTest extends TestCase
                 ],
             )->assertOk();
         }
+        $generalMedia = $this->managedInspectionPhoto($user, 'rpm_session_general_evidence');
 
         $clientSubmittedAt = Carbon::parse('2026-07-08T21:07:00+08:00');
         $submit = $this->actingAs($user)->postJson("/api/inspection/sessions/{$sessionUid}/submit", [
             'display_id' => 'INS-FE-SESSION-001',
             'submitted_at' => $clientSubmittedAt->toIso8601String(),
+            'report_remarks' => 'General extinguisher room evidence.',
+            'photos' => [[
+                'id' => 'general-evidence-photo',
+                'mediaId' => $generalMedia->public_id,
+                'url' => '/api/report-media/'.$generalMedia->public_id,
+            ]],
         ]);
 
         $submit->assertCreated();
         $this->assertSame(1, Report::query()->where('report_type', 'inspection')->count());
         $report = Report::query()->where('display_id', 'INS-FE-SESSION-001')->firstOrFail();
         $this->assertSame($sessionUid, $report->payload['inspectionSessionUid']);
-        $this->assertSame('', $report->payload['reportRemarks'] ?? null);
+        $this->assertSame('General extinguisher room evidence.', $report->payload['reportRemarks'] ?? null);
+        $this->assertCount(1, $report->payload['photos']);
         $this->assertCount(2, $report->payload['fireExtinguisherChecks']);
+        $this->assertSame('Zone 1 > Manjung Hub > Reception', $report->payload['location']);
+        $this->assertSame('Manjung Hub', $report->payload['mainLocation']);
+        $this->assertSame('Reception', $report->payload['subLocation']);
+        $this->assertSame(0, $report->payload['itemEvidencePhotoCount']);
+        $this->assertSame(1, $report->payload['generalPhotoCount']);
+        $this->assertSame(1, $report->payload['evidencePhotoCount']);
+        $this->assertSame([[
+            'zone' => '1',
+            'mainLocation' => 'Manjung Hub',
+            'subLocation' => 'Reception',
+        ]], $report->payload['inspectionLocations']);
+        $this->assertDatabaseHas('report_media_links', [
+            'report_media_id' => $generalMedia->id,
+            'parent_type' => 'report',
+            'parent_key' => $report->report_uid,
+        ]);
+        $this->actingAs($user)
+            ->getJson('/api/reports?reportType=inspection')
+            ->assertOk()
+            ->assertJsonPath('data.0.location', 'Zone 1 > Manjung Hub > Reception')
+            ->assertJsonPath('data.0.evidencePhotoCount', 1);
         $this->assertTrue($report->submitted_at->equalTo($clientSubmittedAt));
         $this->assertTrue(Carbon::parse($report->payload['compiledAt'])->equalTo($clientSubmittedAt));
         $this->assertTrue(Carbon::parse($report->payload['inspectedAt'])->equalTo($clientSubmittedAt));
@@ -967,6 +996,111 @@ class InspectionSessionApiTest extends TestCase
         $second->assertOk()->assertJsonPath('data.idempotentReplay', true);
         $this->assertSame($first->json('data.reportUid'), $second->json('data.reportUid'));
         $this->assertSame(1, Report::query()->where('submission_key', 'session-submit-replay-key')->count());
+    }
+
+    public function test_session_derived_report_uses_normal_update_lifecycle_and_rebuilds_location(): void
+    {
+        $user = $this->inspectionUser('Session Report Editor');
+        $extinguisher = $this->extinguisher();
+        $originalMedia = $this->managedInspectionPhoto($user, 'rpm_session_update_original');
+        $completedPayload = $this->checkPayload($extinguisher);
+        $completedPayload['physicalConditionPhotos'] = [[
+            'id' => 'original-photo',
+            'mediaId' => $originalMedia->public_id,
+            'url' => '/api/report-media/'.$originalMedia->public_id,
+        ]];
+        $sessionUid = $this->createSession($user);
+        $this->actingAs($user)->postJson(
+            "/api/inspection/sessions/{$sessionUid}/extinguishers/{$extinguisher->id}/complete",
+            ['checkPayload' => $completedPayload],
+        )->assertOk();
+        $submitted = $this->actingAs($user)->postJson(
+            "/api/inspection/sessions/{$sessionUid}/submit",
+            ['display_id' => 'INS-FE-SESSION-UPDATE'],
+        )->assertCreated();
+        $reportUid = (string) $submitted->json('data.reportUid');
+        $report = Report::query()->where('report_uid', $reportUid)->firstOrFail();
+        $payload = $report->payload;
+        $payload['inspectionSessionUid'] = 'attempted-session-replacement';
+        $payload['incidentType'] = 'General Inspection';
+        $payload['inspectionType'] = 'General Inspection';
+        $payload['location'] = 'stale browser location';
+        $payload['fireExtinguisherChecks'][0]['subLocation'] = 'Workshop';
+        $replacementMedia = $this->managedInspectionPhoto($user, 'rpm_session_update_replacement');
+        $payload['fireExtinguisherChecks'][0]['physicalConditionPhotos'] = [[
+            'id' => 'replacement-photo',
+            'mediaId' => $replacementMedia->public_id,
+            'url' => '/api/report-media/'.$replacementMedia->public_id,
+        ]];
+
+        $updated = $this->actingAs($user)->putJson("/api/reports/{$reportUid}", [
+            'payload' => $payload,
+            'status' => 'Submitted',
+            'version' => $report->version,
+        ]);
+
+        $updated->assertOk();
+        $updated->assertJsonPath('data.inspectionSessionUid', $sessionUid);
+        $updated->assertJsonPath('data.incidentType', 'Fire Extinguisher Inspection');
+        $updated->assertJsonPath('data.location', 'Zone 1 > Manjung Hub > Workshop');
+        $updated->assertJsonPath('data.evidencePhotoCount', 1);
+        $updated->assertJsonPath('data.version', 2);
+        $this->assertDatabaseMissing('report_media_links', [
+            'report_media_id' => $originalMedia->id,
+            'parent_type' => 'report',
+            'parent_key' => $reportUid,
+        ]);
+        $this->assertDatabaseHas('report_media_links', [
+            'report_media_id' => $replacementMedia->id,
+            'parent_type' => 'report',
+            'parent_key' => $reportUid,
+        ]);
+        $this->assertDatabaseHas('report_media_links', [
+            'report_media_id' => $originalMedia->id,
+            'parent_type' => 'inspection_result',
+        ]);
+        $this->assertSame('submitted', InspectionSession::query()->where('session_uid', $sessionUid)->value('status'));
+    }
+
+    public function test_deleting_session_report_removes_report_media_link_but_preserves_result_audit_link(): void
+    {
+        $user = $this->inspectionUser('Session Report Deleter');
+        $extinguisher = $this->extinguisher();
+        $media = $this->managedInspectionPhoto($user, 'rpm_session_delete_photo');
+        $payload = $this->checkPayload($extinguisher);
+        $payload['physicalConditionPhotos'] = [[
+            'id' => 'delete-photo',
+            'mediaId' => $media->public_id,
+            'url' => '/api/report-media/'.$media->public_id,
+        ]];
+        $sessionUid = $this->createSession($user);
+        $completed = $this->actingAs($user)->postJson(
+            "/api/inspection/sessions/{$sessionUid}/extinguishers/{$extinguisher->id}/complete",
+            ['checkPayload' => $payload],
+        )->assertOk();
+        $resultId = (string) $completed->json('data.id');
+        $submitted = $this->actingAs($user)->postJson(
+            "/api/inspection/sessions/{$sessionUid}/submit",
+            ['display_id' => 'INS-FE-SESSION-DELETE'],
+        )->assertCreated();
+        $reportUid = (string) $submitted->json('data.reportUid');
+        $reportId = Report::query()->where('report_uid', $reportUid)->value('id');
+
+        $this->actingAs($user)->deleteJson("/api/reports/{$reportUid}")->assertNoContent();
+
+        $this->assertSoftDeleted('reports', ['report_uid' => $reportUid]);
+        $this->assertSoftDeleted('inspection_check_rows', ['report_id' => $reportId]);
+        $this->assertDatabaseMissing('report_media_links', [
+            'report_media_id' => $media->id,
+            'parent_type' => 'report',
+            'parent_key' => $reportUid,
+        ]);
+        $this->assertDatabaseHas('report_media_links', [
+            'report_media_id' => $media->id,
+            'parent_type' => 'inspection_result',
+            'parent_key' => $resultId,
+        ]);
+        $this->assertSame('submitted', InspectionSession::query()->where('session_uid', $sessionUid)->value('status'));
     }
 
     public function test_session_submit_rejects_a_stale_session_version(): void

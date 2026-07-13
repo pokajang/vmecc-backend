@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\ReportDraft;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\DrillPayloadService;
+use App\Services\ErcoPayloadService;
+use App\Services\FitnessTestPayloadService;
 use App\Services\InspectionPayloadService;
 use App\Services\ReportMediaService;
 use App\Services\RoleCatalog;
@@ -35,6 +37,8 @@ class ReportDraftController extends Controller
         private readonly InspectionPayloadService $inspectionPayloadService,
         private readonly ReportMediaService $reportMediaService,
         private readonly DrillPayloadService $drillPayloadService,
+        private readonly ErcoPayloadService $ercoPayloadService,
+        private readonly FitnessTestPayloadService $fitnessTestPayloadService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -126,6 +130,12 @@ class ReportDraftController extends Controller
         if ($reportType === 'drill') {
             $this->drillPayloadService->validateForDraft((array) $data['payload']);
         }
+        if ($reportType === self::ERCO_TYPE) {
+            $this->ercoPayloadService->validateForDraft((array) $data['payload']);
+        }
+        if ($reportType === 'fitness-test') {
+            $this->fitnessTestPayloadService->validateForDraft((array) $data['payload']);
+        }
         if ($reportType === self::INSPECTION_TYPE) {
             $data['payload'] = $this->applyInspectionSessionInspector(
                 (array) $data['payload'],
@@ -202,6 +212,12 @@ class ReportDraftController extends Controller
 
         if ($this->normalizeReportType((string) $row->report_type) === 'drill') {
             $this->drillPayloadService->validateForDraft((array) $data['payload']);
+        }
+        if ($this->normalizeReportType((string) $row->report_type) === self::ERCO_TYPE) {
+            $this->ercoPayloadService->validateForDraft((array) $data['payload']);
+        }
+        if ($this->normalizeReportType((string) $row->report_type) === 'fitness-test') {
+            $this->fitnessTestPayloadService->validateForDraft((array) $data['payload']);
         }
 
         if ($this->normalizeReportType((string) ($row->report_type ?? '')) === self::INSPECTION_TYPE) {
