@@ -76,7 +76,9 @@ class FeedbackReportController extends Controller
                 ->with(['reporter', 'reviewer'])
                 ->latest('created_at');
 
-            if ($status !== '' && $status !== 'all' && in_array($status, FeedbackReport::STATUSES, true)) {
+            if ($status === 'actionable') {
+                $query->whereIn('status', [FeedbackReport::STATUS_NEW, FeedbackReport::STATUS_REVIEWING]);
+            } elseif ($status !== '' && $status !== 'all' && in_array($status, FeedbackReport::STATUSES, true)) {
                 $query->where('status', $status);
             }
 
@@ -101,6 +103,8 @@ class FeedbackReportController extends Controller
                         'reviewing' => (int) ($countsByStatus[FeedbackReport::STATUS_REVIEWING] ?? 0),
                         'resolved' => (int) ($countsByStatus[FeedbackReport::STATUS_RESOLVED] ?? 0),
                         'dismissed' => (int) ($countsByStatus[FeedbackReport::STATUS_DISMISSED] ?? 0),
+                        'actionable' => (int) ($countsByStatus[FeedbackReport::STATUS_NEW] ?? 0)
+                            + (int) ($countsByStatus[FeedbackReport::STATUS_REVIEWING] ?? 0),
                         'all' => array_sum(array_map('intval', $countsByStatus)),
                     ],
                 ],

@@ -12,15 +12,19 @@ class AiHelperKnowledgeLifecycleService
     public function beginIngestion(AiHelperKnowledgeEntry $entry): string
     {
         $runId = (string) str()->uuid();
+        $hasUsableIndex = (bool) $entry->active
+            && (bool) $entry->extraction_complete
+            && trim((string) $entry->content) !== ''
+            && $entry->chunks()->where('active', true)->exists();
         $entry->forceFill([
             'status' => AiHelperKnowledgeEntry::STATUS_PROCESSING,
-            'active' => false,
+            'active' => $hasUsableIndex,
             'ingestion_run_id' => $runId,
             'ingestion_version' => max(1, (int) $entry->ingestion_version) + 1,
             'ingestion_started_at' => now(),
             'ingestion_completed_at' => null,
-            'extraction_complete' => false,
-            'extracted_characters' => 0,
+            'extraction_complete' => $hasUsableIndex,
+            'extracted_characters' => $hasUsableIndex ? (int) $entry->extracted_characters : 0,
             'error' => null,
         ])->save();
 
@@ -50,6 +54,7 @@ class AiHelperKnowledgeLifecycleService
                 'error' => null,
             ])->save();
             $locked->chunks()->delete();
+            $locked->pages()->delete();
 
             return $sourcePath;
         });

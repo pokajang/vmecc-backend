@@ -1,4 +1,4 @@
-@if (($isGeneralInspection || $isHseInspection) && count($inspectionIssues) > 0)
+@if (($isGeneralInspection || ($isHseInspection && ! $hse['isVersion2'])) && count($inspectionIssues) > 0)
 <div class="card">
     <div class="card-head">Findings ({{ count($inspectionIssues) }})</div>
     <div class="card-body">

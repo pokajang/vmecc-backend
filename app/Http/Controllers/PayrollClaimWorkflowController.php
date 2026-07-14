@@ -507,9 +507,11 @@ class PayrollClaimWorkflowController extends Controller
         }
 
         $requiredRole = trim((string) ($claim->next_action_role ?? ''));
-        if ($requiredRole !== '' && !in_array($requiredRole, $roles, true)) {
+        if ($requiredRole === '' || ! in_array($requiredRole, $roles, true)) {
             throw ValidationException::withMessages([
-                'role' => ["This action requires the '{$requiredRole}' role."],
+                'role' => [$requiredRole === ''
+                    ? 'This claim has no workflow role assigned for the current action.'
+                    : "This action requires the '{$requiredRole}' role."],
             ]);
         }
 

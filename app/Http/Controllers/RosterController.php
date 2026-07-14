@@ -63,6 +63,7 @@ class RosterController extends Controller
             'from'     => ['sometimes', 'nullable', 'date'],
             'to'       => ['sometimes', 'nullable', 'date', 'after_or_equal:from'],
             'status'   => ['sometimes', 'nullable', 'string', 'in:draft,published,unassigned'],
+            'attention' => ['sometimes', 'nullable', 'string', 'in:draft'],
             'months'   => ['sometimes', 'nullable', 'array', 'max:24'],
             'months.*' => ['string', 'regex:/^\d{4}-\d{2}$/'],
         ]);
@@ -90,6 +91,10 @@ class RosterController extends Controller
 
         if ($request->filled('status')) {
             $query->where('status', $request->input('status'));
+        }
+
+        if ($request->input('attention') === 'draft') {
+            $query->whereIn('date', Roster::query()->select('date')->where('status', 'draft'));
         }
 
         if ($request->filled('months')) {

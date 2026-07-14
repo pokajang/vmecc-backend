@@ -15,7 +15,7 @@ class ListFeedbackReportsRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'status' => ['nullable', 'string', 'in:all,'.implode(',', FeedbackReport::STATUSES)],
+            'status' => ['nullable', 'string', 'in:all,actionable,'.implode(',', FeedbackReport::STATUSES)],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ];

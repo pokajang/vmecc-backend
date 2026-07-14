@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Report;
 use App\Models\User;
 use App\Services\InspectionReports\InspectionReportPdfRenderer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -227,7 +228,7 @@ class InspectionReportPdfTest extends TestCase
         $this->assertCount(3, $actions);
     }
 
-    public function test_pdf_download_is_scoped_to_owner_for_report_uid_requests(): void
+    public function test_pdf_download_allows_module_viewers_and_rejects_users_without_permission(): void
     {
         $owner = User::factory()->create(['status' => 'active']);
         $otherUser = User::factory()->create(['status' => 'active']);
@@ -252,7 +253,20 @@ class InspectionReportPdfTest extends TestCase
         $response = $this->postJson('/api/reports/inspection/pdf', [
             'report_uid' => $reportUid,
         ]);
-        $response->assertStatus(404);
+        $response
+            ->assertOk()
+            ->assertHeader('Content-Type', 'application/pdf')
+            ->assertHeader('X-Report-Version', '1');
+        $this->assertDatabaseHas('audit_logs', [
+            'actor_user_id' => $otherUser->id,
+            'action' => 'report_pdf_downloaded',
+        ]);
+
+        $unauthorizedUser = User::factory()->create(['status' => 'active']);
+        $this->actingAs($unauthorizedUser);
+        $this->postJson('/api/reports/inspection/pdf', [
+            'report_uid' => $reportUid,
+        ])->assertForbidden();
     }
 
     public function test_pdf_download_requires_report_uid(): void
@@ -264,6 +278,27 @@ class InspectionReportPdfTest extends TestCase
         $response = $this->postJson('/api/reports/inspection/pdf', []);
         $response->assertStatus(422);
         $response->assertJsonValidationErrors(['report_uid']);
+    }
+
+    public function test_pdf_download_rejects_draft_reports(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $report = Report::query()->create([
+            'report_uid' => 'inspection-draft-pdf-test',
+            'display_id' => 'INS-DRAFT-PDF',
+            'owner_user_id' => $user->id,
+            'report_type' => 'inspection',
+            'status' => 'Draft',
+            'version' => 1,
+            'revision' => 1,
+            'payload' => [],
+        ]);
+
+        $this->actingAs($user)
+            ->postJson('/api/reports/inspection/pdf', ['report_uid' => $report->report_uid])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'REPORT_PDF_UNAVAILABLE');
     }
 
     public function test_pdf_download_endpoint_returns_a_real_rendered_pdf(): void
@@ -1435,6 +1470,51 @@ class InspectionReportPdfTest extends TestCase
         ] as $text) {
             $this->assertStringContainsString($text, $html);
         }
+    }
+
+    public function test_pdf_template_renders_lean_hse_v2_without_duplicate_legacy_sections(): void
+    {
+        $record = [
+            'displayId' => 'INS-HSE-V2-14072026',
+            'status' => 'Submitted',
+            'incidentType' => 'Health Safety Environment Inspection',
+            'hsePayloadVersion' => 2,
+            'location' => 'Zone A > Dock',
+            'selectedLocation' => 'Zone A > Dock',
+            'inspectedAt' => '2026-07-14T09:30:00+08:00',
+            'hseInspectedBy' => 'Inspector HSE',
+            'hseSelections' => ['unsafeCondition'],
+            'hseUnsafeConditionDetails' => 'Open edge without protection.',
+            'hseImmediateAction' => 'Stopped access and installed a barrier.',
+            'hseSeverity' => 'Critical',
+            'inspectionIssues' => [[
+                'description' => 'Duplicate finding must not render.',
+                'actionRequired' => 'Duplicate action must not render.',
+            ]],
+            'photos' => [[
+                'description' => 'Open edge observation.',
+                'url' => 'data:image/png;base64,AA==',
+            ]],
+        ];
+
+        $html = view('pdf.inspection_report', ['record' => $record])->render();
+
+        foreach ([
+            'HSE Observation',
+            'Observed At',
+            'Zone A &gt; Dock',
+            'Unsafe Condition',
+            'Open edge without protection.',
+            'Immediate Corrective Action',
+            'Stopped access and installed a barrier.',
+            'Observation Photos (1)',
+            'Open edge observation.',
+        ] as $text) {
+            $this->assertStringContainsString($text, $html);
+        }
+        $this->assertStringNotContainsString('Additional report evidence', $html);
+        $this->assertStringNotContainsString('Duplicate finding must not render.', $html);
+        $this->assertStringNotContainsString('Critical', $html);
     }
 
     private function grantInspectionPermission(User $user, string $roleName = 'Inspection Pdf Tester'): void

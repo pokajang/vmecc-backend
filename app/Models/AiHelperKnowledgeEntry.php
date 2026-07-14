@@ -12,21 +12,31 @@ class AiHelperKnowledgeEntry extends Model
     use SoftDeletes;
 
     public const STATUS_PROCESSING = 'processing';
+
     public const STATUS_ACTIVE = 'active';
+
     public const STATUS_DISABLED = 'disabled';
+
     public const STATUS_FAILED = 'failed';
+
     public const STATUS_DELETING = 'deleting';
+
     public const STATUS_DELETED = 'deleted';
 
     public const VISIBILITY_PERSONAL = 'personal';
+
     public const VISIBILITY_SHARED = 'shared';
 
     public const REVIEW_PENDING = 'pending';
+
     public const REVIEW_APPROVED = 'approved';
+
     public const REVIEW_REJECTED = 'rejected';
 
     public const SCOPE_GLOBAL = 'global';
+
     public const SCOPE_ROUTE = 'route';
+
     public const SCOPE_MODULE = 'module';
 
     public const USER_UPLOAD_MODULE_KEYS = [
@@ -82,6 +92,7 @@ class AiHelperKnowledgeEntry extends Model
         'pdf_readable_word_count',
         'pdf_image_coverage_estimate',
         'processing_warnings',
+        'processing_findings',
         'scope_type',
         'visibility',
         'status',
@@ -101,6 +112,13 @@ class AiHelperKnowledgeEntry extends Model
         'ingestion_completed_at',
         'extraction_mode',
         'extraction_complete',
+        'quality_status',
+        'pages_indexed',
+        'pages_native',
+        'pages_ocr',
+        'pages_blank',
+        'pages_visual_only',
+        'pages_unreadable',
         'extracted_characters',
     ];
 
@@ -116,7 +134,14 @@ class AiHelperKnowledgeEntry extends Model
         'pdf_readable_word_count' => 'integer',
         'pdf_image_coverage_estimate' => 'integer',
         'processing_warnings' => 'array',
+        'processing_findings' => 'array',
         'extraction_complete' => 'boolean',
+        'pages_indexed' => 'integer',
+        'pages_native' => 'integer',
+        'pages_ocr' => 'integer',
+        'pages_blank' => 'integer',
+        'pages_visual_only' => 'integer',
+        'pages_unreadable' => 'integer',
         'ingestion_version' => 'integer',
         'extracted_characters' => 'integer',
         'acknowledged_at' => 'datetime',
@@ -139,5 +164,10 @@ class AiHelperKnowledgeEntry extends Model
     public function chunks(): HasMany
     {
         return $this->hasMany(AiHelperKnowledgeChunk::class, 'knowledge_entry_id');
+    }
+
+    public function pages(): HasMany
+    {
+        return $this->hasMany(AiHelperKnowledgePage::class, 'knowledge_entry_id');
     }
 }

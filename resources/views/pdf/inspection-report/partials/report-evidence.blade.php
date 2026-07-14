@@ -1,4 +1,4 @@
-@if ($reportEvidence['visible'])
+@if ($reportEvidence['visible'] && ! ($hse['consumesReportEvidence'] ?? false))
     <div class="card">
         <div class="card-head">Additional report evidence</div>
         <div class="card-body">

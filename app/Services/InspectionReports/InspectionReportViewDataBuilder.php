@@ -8,6 +8,7 @@ class InspectionReportViewDataBuilder
         private readonly InspectionReportTypeResolver $typeResolver,
         private readonly InspectionReportEvidenceViewDataBuilder $evidenceBuilder,
         private readonly InspectionReportSectionDataBuilder $sectionDataBuilder,
+        private readonly InspectionReportHseViewDataBuilder $hseViewDataBuilder,
     ) {}
 
     public function build(array $record): array
@@ -29,6 +30,7 @@ class InspectionReportViewDataBuilder
             'description' => (string) ($record['description'] ?? ''),
             'reportRemarks' => $this->text($record['reportRemarks'] ?? $record['report_remarks'] ?? ''),
             'reportEvidence' => $reportEvidence,
+            'hse' => $this->hseViewDataBuilder->build($record, $reportEvidence),
             'sections' => $this->sectionDataBuilder->build($record, $inspectionTypeKey),
             'isErAuxInspection' => $type === InspectionReportType::ErAux,
             'isFireExtinguisherInspection' => $type === InspectionReportType::FireExtinguisher,

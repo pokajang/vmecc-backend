@@ -3,15 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\Models\Report;
-use App\Services\AssignmentAuthorizationService;
+use App\Services\AuditLogger;
 use App\Services\InspectionReports\InspectionReportPdfRenderer;
 use App\Services\ReportMediaService;
+use App\Services\ReportReadAuthorizationService;
 use Illuminate\Http\Request;
 
 class InspectionReportPdfController extends Controller
 {
     public function __construct(
-        private readonly AssignmentAuthorizationService $authorizationService,
+        private readonly ReportReadAuthorizationService $readAuthorizationService,
         private readonly ReportMediaService $reportMediaService,
         private readonly InspectionReportPdfRenderer $pdfRenderer,
     ) {}
@@ -20,30 +21,26 @@ class InspectionReportPdfController extends Controller
     {
         $validated = $request->validate([
             'report_uid' => ['required', 'string', 'max:190'],
-            'version' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $reportUid = trim((string) ($validated['report_uid'] ?? ''));
-        $version = $request->input('version');
         $user = $request->user();
-        if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.view')) {
+        if (! $user || ! $this->readAuthorizationService->canViewModule($user, 'inspection')) {
             abort(403, 'Forbidden');
         }
         $report = Report::query()
             ->with('timelineEntries')
-            ->where('owner_user_id', $user->id)
             ->where('report_uid', $reportUid)
             ->where('report_type', 'inspection')
             ->first();
         if (! $report) {
             return response()->json(['message' => 'Report not found.'], 404);
         }
-        if ($version !== null && (int) $version !== (int) $report->version) {
+        if (! $this->readAuthorizationService->canDownloadPdf($user, $report)) {
             return response()->json([
-                'message' => 'Version conflict. Reload latest report before downloading.',
-                'code' => 'REPORT_VERSION_CONFLICT',
-                'currentVersion' => (int) $report->version,
-            ], 409);
+                'message' => 'PDF download is unavailable until the report is submitted.',
+                'code' => 'REPORT_PDF_UNAVAILABLE',
+            ], 422);
         }
 
         $payload = $this->reportMediaService->hydrateLinkedPayloadForPdf(
@@ -78,11 +75,20 @@ class InspectionReportPdfController extends Controller
 
         $output = $this->pdfRenderer->render($payload);
 
+        AuditLogger::log($request, 'report_pdf_downloaded', null, [
+            'report_uid' => $report->report_uid,
+            'report_type' => $report->report_type,
+            'report_version' => (int) $report->version,
+            'report_status' => $report->status,
+            'owner_user_id' => (int) $report->owner_user_id,
+        ]);
+
         return response($output, 200, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'attachment; filename="'.$filename.'"; filename*=UTF-8\'\''.rawurlencode($filename),
             'Cache-Control' => 'private, no-store, max-age=0',
             'X-Content-Type-Options' => 'nosniff',
+            'X-Report-Version' => (string) $report->version,
             'Content-Length' => strlen($output),
         ]);
     }

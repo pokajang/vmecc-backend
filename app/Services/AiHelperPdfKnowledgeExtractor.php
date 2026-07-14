@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\File;
+use App\Services\AiHelper\PdfKnowledgeExtractionResult;
+use App\Services\AiHelper\PdfOcrService;
+use App\Services\AiHelper\PdfPageQualityEvaluator;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Smalot\PdfParser\Parser;
@@ -12,29 +14,21 @@ use Throwable;
 
 class AiHelperPdfKnowledgeExtractor
 {
-    public function __construct(private readonly Parser $parser)
-    {
-    }
+    public function __construct(
+        private readonly Parser $parser,
+        private readonly PdfPageQualityEvaluator $qualityEvaluator,
+        private readonly PdfOcrService $ocrService,
+    ) {}
 
-    /**
-     * @return array{
-     *     text: string,
-     *     pages: array<int, array{number: int, text: string, extraction_mode: string}>,
-     *     extraction_mode: string,
-     *     extraction_complete: bool,
-     *     page_count: int,
-     *     image_count: int,
-     *     pages_with_images: int,
-     *     readable_text_characters: int,
-     *     readable_word_count: int,
-     *     image_coverage_estimate: int,
-     *     warnings: array<int, string>
-     * }
-     */
-    public function extract(string $absolutePath, int $maxCharacters = 0): array
+    /** @return PdfKnowledgeExtractionResult */
+    public function extract(string $absolutePath, int $maxCharacters = 0)
     {
-        [$parserText, $pages, $imageCount, $pagesWithImages] = $this->parseWithFallback($absolutePath);
+        [$parserText, $pages, $imageCount, $pagesWithImages, $pageImageCounts] = $this->parseWithFallback($absolutePath);
         $pageCount = count($pages) ?: $this->pageCountFromPdfInfo($absolutePath);
+        $maximumPages = max(1, (int) config('ai_helper.knowledge_max_pdf_pages', 250));
+        if ($pageCount > $maximumPages) {
+            throw new RuntimeException("PDF contains {$pageCount} pages; the configured maximum is {$maximumPages}.");
+        }
         $nativePages = $this->extractNativePages($absolutePath, $pageCount);
 
         if ($nativePages === []) {
@@ -43,34 +37,42 @@ class AiHelperPdfKnowledgeExtractor
                 : [];
         }
 
-        $warnings = [];
+        $ocrPageCount = collect($nativePages)
+            ->filter(fn (string $nativeText) => $this->qualityEvaluator->needsOcr($this->normalizeText($nativeText)))
+            ->count();
+        $maximumOcrPages = max(0, (int) config('ai_helper.knowledge_max_ocr_pages_per_document', 20));
+        if ($maximumOcrPages > 0 && $ocrPageCount > $maximumOcrPages) {
+            throw new RuntimeException(
+                "PDF requires OCR on {$ocrPageCount} pages; the configured maximum is {$maximumOcrPages}."
+            );
+        }
+
+        $ocrDeadline = microtime(true) + max(30, (int) config(
+            'ai_helper.knowledge_ocr_document_timeout_seconds',
+            600,
+        ));
         $resultPages = [];
-        $usedOcr = false;
         foreach ($nativePages as $pageNumber => $nativeText) {
             $nativeText = $this->normalizeText($nativeText);
-            $ocrText = '';
-
-            if ($this->shouldOcr($nativeText)) {
-                $ocrText = $this->extractOcrPage($absolutePath, $pageNumber);
-                $usedOcr = $ocrText !== '';
-            }
-
-            $text = $this->mergePageText($nativeText, $ocrText);
-            if ($text === '') {
-                $warnings[] = "Page {$pageNumber} contains no readable text after native extraction and OCR.";
-            }
-
-            $resultPages[] = [
-                'number' => $pageNumber,
-                'text' => $text,
-                'extraction_mode' => $nativeText !== '' && $ocrText !== ''
-                    ? 'native_and_ocr'
-                    : ($ocrText !== '' ? 'ocr' : 'native'),
-            ];
+            $ocr = $this->qualityEvaluator->needsOcr($nativeText)
+                ? $this->ocrService->extractPage($absolutePath, $pageNumber, $ocrDeadline)
+                : [
+                    'attempted' => false,
+                    'text' => '',
+                    'error' => null,
+                    'has_visual_content' => null,
+                    'visual_content_ratio' => null,
+                ];
+            $resultPages[] = $this->qualityEvaluator->evaluate(
+                $pageNumber,
+                $nativeText,
+                $ocr,
+                (int) ($pageImageCounts[$pageNumber] ?? 0),
+            );
         }
 
         $text = trim(implode("\n\n", array_map(
-            static fn (array $page) => $page['text'],
+            static fn ($page) => $page->text,
             $resultPages,
         )));
         $readableCharacters = Str::length($text);
@@ -84,46 +86,29 @@ class AiHelperPdfKnowledgeExtractor
         $fallbackImageCount = $this->countRawImageMarkers($absolutePath);
         if ($fallbackImageCount > $imageCount) {
             $imageCount = $fallbackImageCount;
-            $pagesWithImages = $pageCount > 0
-                ? max($pagesWithImages, min($pageCount, $fallbackImageCount))
-                : $pagesWithImages;
         }
 
-        if ($imageCount > 0 && ! $usedOcr) {
-            $warnings[] = 'This PDF contains images. Native text was indexed; image-only content requires OCR or visual analysis.';
-        }
-        if ($usedOcr) {
-            $warnings[] = 'OCR text was extracted from pages with insufficient native text.';
-        }
-
-        return [
-            'text' => $text,
-            'pages' => $resultPages,
-            'extraction_mode' => $usedOcr
-                ? (collect($resultPages)->contains('extraction_mode', 'native_and_ocr') ? 'native_and_ocr' : 'ocr')
-                : 'native',
-            'extraction_complete' => $pageCount > 0 && count($resultPages) === $pageCount && $text !== '',
-            'page_count' => $pageCount,
-            'image_count' => $imageCount,
-            'pages_with_images' => $pagesWithImages,
-            'readable_text_characters' => $readableCharacters,
-            'readable_word_count' => $this->wordCount($text),
-            'image_coverage_estimate' => $this->imageCoverageEstimate($pageCount, $pagesWithImages, $imageCount),
-            'warnings' => array_values(array_unique($warnings)),
-        ];
+        return new PdfKnowledgeExtractionResult(
+            text: $text,
+            pages: $resultPages,
+            pageCount: $pageCount,
+            imageCount: $imageCount,
+            pagesWithImages: $pagesWithImages,
+            imageCoverageEstimate: $this->imageCoverageEstimate($pageCount, $pagesWithImages, $imageCount),
+        );
     }
 
-    /** @return array{0: string, 1: array<int, mixed>, 2: int, 3: int} */
+    /** @return array{0: string, 1: array<int, mixed>, 2: int, 3: int, 4: array<int, int>} */
     private function parseWithFallback(string $absolutePath): array
     {
         try {
             $pdf = $this->parser->parseFile($absolutePath);
             $pages = $pdf->getPages();
-            [$imageCount, $pagesWithImages] = $this->countParsedImages($pages);
+            [$imageCount, $pagesWithImages, $pageImageCounts] = $this->countParsedImages($pages);
 
-            return [(string) $pdf->getText(), $pages, $imageCount, $pagesWithImages];
+            return [(string) $pdf->getText(), $pages, $imageCount, $pagesWithImages, $pageImageCounts];
         } catch (Throwable) {
-            return ['', [], 0, 0];
+            return ['', [], 0, 0, []];
         }
     }
 
@@ -134,6 +119,33 @@ class AiHelperPdfKnowledgeExtractor
             return [];
         }
 
+        $documentText = $this->run([
+            (string) config('ai_helper.knowledge_pdftotext_binary', 'pdftotext'),
+            '-layout',
+            $absolutePath,
+            '-',
+        ]);
+        if ($documentText !== null) {
+            $segments = preg_split('/\f/u', $documentText) ?: [];
+            while (count($segments) > $pageCount && trim((string) end($segments)) === '') {
+                array_pop($segments);
+            }
+            if (count($segments) >= $pageCount) {
+                $pages = [];
+                for ($page = 1; $page <= $pageCount; $page++) {
+                    $pages[$page] = (string) ($segments[$page - 1] ?? '');
+                }
+
+                return $pages;
+            }
+        }
+
+        return $this->extractNativePagesIndividually($absolutePath, $pageCount);
+    }
+
+    /** @return array<int, string> */
+    private function extractNativePagesIndividually(string $absolutePath, int $pageCount): array
+    {
         $pages = [];
         for ($page = 1; $page <= $pageCount; $page++) {
             $text = $this->run([
@@ -176,45 +188,6 @@ class AiHelperPdfKnowledgeExtractor
         return $pages;
     }
 
-    private function shouldOcr(string $nativeText): bool
-    {
-        return (bool) config('ai_helper.knowledge_ocr_enabled', true)
-            && ($this->wordCount($nativeText) < 12 || Str::length($nativeText) < 100);
-    }
-
-    private function extractOcrPage(string $absolutePath, int $pageNumber): string
-    {
-        $temporaryDirectory = storage_path('app/ai-helper/knowledge-ocr/'.Str::uuid());
-        File::ensureDirectoryExists($temporaryDirectory);
-        $prefix = $temporaryDirectory.'/page';
-
-        try {
-            $rendered = $this->run([
-                (string) config('ai_helper.knowledge_pdftoppm_binary', 'pdftoppm'),
-                '-f', (string) $pageNumber,
-                '-l', (string) $pageNumber,
-                '-r', (string) max(150, (int) config('ai_helper.knowledge_ocr_dpi', 300)),
-                '-png',
-                '-singlefile',
-                $absolutePath,
-                $prefix,
-            ]);
-            $imagePath = $prefix.'.png';
-            if ($rendered === null || ! File::exists($imagePath)) {
-                return '';
-            }
-
-            return $this->normalizeText($this->run([
-                (string) config('ai_helper.knowledge_tesseract_binary', 'tesseract'),
-                $imagePath,
-                'stdout',
-                '-l', (string) config('ai_helper.knowledge_ocr_languages', 'eng+msa'),
-            ]) ?? '');
-        } finally {
-            File::deleteDirectory($temporaryDirectory);
-        }
-    }
-
     private function run(array $command): ?string
     {
         try {
@@ -226,18 +199,6 @@ class AiHelperPdfKnowledgeExtractor
         } catch (Throwable) {
             return null;
         }
-    }
-
-    private function mergePageText(string $nativeText, string $ocrText): string
-    {
-        if ($nativeText === '') {
-            return $ocrText;
-        }
-        if ($ocrText === '' || str_contains(Str::lower($nativeText), Str::lower(Str::limit($ocrText, 80, '')))) {
-            return $nativeText;
-        }
-
-        return trim("{$nativeText}\n\n{$ocrText}");
     }
 
     private function normalizeText(string $text): string
@@ -253,8 +214,9 @@ class AiHelperPdfKnowledgeExtractor
     {
         $imageCount = 0;
         $pagesWithImages = 0;
+        $pageImageCounts = [];
 
-        foreach ($pages as $page) {
+        foreach (array_values($pages) as $index => $page) {
             if (! method_exists($page, 'getXObjects')) {
                 continue;
             }
@@ -268,10 +230,11 @@ class AiHelperPdfKnowledgeExtractor
             if ($pageImages !== []) {
                 $pagesWithImages++;
                 $imageCount += count($pageImages);
+                $pageImageCounts[$index + 1] = count($pageImages);
             }
         }
 
-        return [$imageCount, $pagesWithImages];
+        return [$imageCount, $pagesWithImages, $pageImageCounts];
     }
 
     private function countRawImageMarkers(string $absolutePath): int
@@ -285,13 +248,6 @@ class AiHelperPdfKnowledgeExtractor
         $inlineImages = preg_match_all('/\bBI\b[\s\S]{0,2000}?\bID\b[\s\S]{0,60000}?\bEI\b/', $raw) ?: 0;
 
         return max(0, (int) $xobjectImages + (int) $inlineImages);
-    }
-
-    private function wordCount(string $text): int
-    {
-        $words = preg_split('/[^\pL\pN]+/u', $text) ?: [];
-
-        return count(array_filter($words, static fn (string $word) => $word !== ''));
     }
 
     private function imageCoverageEstimate(int $pageCount, int $pagesWithImages, int $imageCount): int

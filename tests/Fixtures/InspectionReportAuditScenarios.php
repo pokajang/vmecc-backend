@@ -109,6 +109,25 @@ class InspectionReportAuditScenarios
                 'hseResponsiblePerson' => 'Élodie François - Area Supervisor',
                 'hseTargetDate' => '2026-07-20',
             ]),
+            'hse-v2' => self::common('Health Safety Environment Inspection', [
+                'displayId' => 'AUDIT-HSE-V2-LEAN-OBSERVATION',
+                'hsePayloadVersion' => 2,
+                'hseInspectedBy' => 'HSE Inspector',
+                'hseInspectionDate' => '2026-07-13',
+                'inspectedAt' => '2026-07-13T11:45:00+08:00',
+                'hseSelections' => ['unsafeCondition'],
+                'hseUnsafeActDetails' => 'Stale unsafe-act details must not render.',
+                'hseUnsafeConditionDetails' => str_repeat(
+                    'An open edge beside the access route was missing its protective barrier. ',
+                    5,
+                ),
+                'hseSeverity' => 'Critical',
+                'hseImmediateAction' => 'Stopped access and installed a temporary barrier.',
+                'hseCorrectiveAction' => 'Legacy corrective action must not render.',
+                'hseResponsiblePerson' => 'Legacy responsible person must not render.',
+                'hseTargetDate' => '2026-07-20',
+                'photos' => [self::photo('Unsafe condition observation.', 'portrait')],
+            ]),
         ];
     }
 

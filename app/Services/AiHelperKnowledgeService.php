@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use App\Models\AiHelperKnowledgeEntry;
 use App\Models\AiHelperKnowledgeChunk;
+use App\Models\AiHelperKnowledgeEntry;
 use App\Models\User;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
@@ -99,7 +99,7 @@ class AiHelperKnowledgeService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $guidance
+     * @param  array<int, array<string, mixed>>  $guidance
      * @return array<int, array{knowledge_id: int, title: string, source_mime: string, page_start: ?int, page_end: ?int}>
      */
     public function citationsForGuidance(array $guidance): array
@@ -113,6 +113,7 @@ class AiHelperKnowledgeService
             ]))
             ->map(function ($entries) {
                 $entry = $entries->first();
+
                 return [
                     'knowledge_id' => (int) $entry['id'],
                     'title' => Str::limit(trim((string) ($entry['title'] ?? 'Knowledge source')), 140, ''),
@@ -133,6 +134,7 @@ class AiHelperKnowledgeService
         $languageInstruction = $this->languageInstruction($responseLanguage);
         $guidanceText = collect($guidance)->map(function ($entry) {
             $scope = $entry['source_scope'] ?? 'guidance';
+
             return "- {$entry['title']} ({$scope}): {$entry['content']}";
         })->join("\n");
 
@@ -193,7 +195,10 @@ TEXT;
             ->pluck('aggregate', 'status')
             ->map(static fn ($count) => (int) $count)
             ->all();
-        $blocking = (int) ($counts[AiHelperKnowledgeEntry::STATUS_PROCESSING] ?? 0);
+        $blocking = AiHelperKnowledgeEntry::query()
+            ->where('status', AiHelperKnowledgeEntry::STATUS_PROCESSING)
+            ->where('active', false)
+            ->count();
         $failed = (int) ($counts[AiHelperKnowledgeEntry::STATUS_FAILED] ?? 0);
 
         return [
@@ -247,6 +252,7 @@ TEXT;
             return '';
         }
         $path = '/'.ltrim($path, '/');
+
         return Str::limit($path, 255, '');
     }
 
@@ -269,7 +275,10 @@ TEXT;
     {
         $query
             ->where('active', true)
-            ->where('status', AiHelperKnowledgeEntry::STATUS_ACTIVE)
+            ->whereIn('status', [
+                AiHelperKnowledgeEntry::STATUS_ACTIVE,
+                AiHelperKnowledgeEntry::STATUS_PROCESSING,
+            ])
             ->where('review_status', AiHelperKnowledgeEntry::REVIEW_APPROVED)
             ->where(function ($inner) use ($user) {
                 $inner->where('visibility', AiHelperKnowledgeEntry::VISIBILITY_SHARED);
@@ -332,6 +341,7 @@ TEXT;
         if ($entryModule && $entryModule === $moduleKey) {
             return 'Module guidance';
         }
+
         return 'General guidance';
     }
 
@@ -363,6 +373,7 @@ TEXT;
         }
 
         $haystack = Str::lower($content);
+
         return $terms->sum(fn (string $term) => str_contains($haystack, $term) ? 20 : 0);
     }
 
@@ -387,6 +398,7 @@ TEXT;
     private function routeKeyForPath(string $path): string
     {
         $path = strtolower($this->cleanPath($path));
+
         return match (true) {
             $path === '/' || str_starts_with($path, '/dashboard') => 'dashboard',
             str_starts_with($path, '/inspection') || str_starts_with($path, '/report/inspection') => 'inspection',
@@ -448,6 +460,7 @@ TEXT;
             }
             $clean[(string) $key] = Str::limit((string) $value, 120, '');
         }
+
         return $clean;
     }
 }

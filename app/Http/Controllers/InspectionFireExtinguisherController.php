@@ -6,6 +6,8 @@ use App\Models\InspectionCheckRow;
 use App\Models\InspectionFireExtinguisher;
 use App\Models\Report;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\InspectionFireExtinguisherBatchCreator;
+use App\Services\InspectionSiteLocationCatalogService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -17,6 +19,8 @@ use Illuminate\Validation\ValidationException;
 
 class InspectionFireExtinguisherController extends Controller
 {
+    private const DUPLICATE_LOCATOR_CODE = 'FIRE_EXTINGUISHER_DUPLICATE_LOCATOR';
+
     private const FIRE_EXTINGUISHER_INSPECTION_TYPE_KEY = 'fire-extinguisher-inspection';
 
     private const FIRE_EXTINGUISHER_SOURCE_PAYLOAD_KEY = 'fireExtinguisherChecks';
@@ -61,8 +65,9 @@ class InspectionFireExtinguisherController extends Controller
 
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
-    ) {
-    }
+        private readonly InspectionFireExtinguisherBatchCreator $batchCreator,
+        private readonly InspectionSiteLocationCatalogService $siteLocationCatalog,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -329,20 +334,134 @@ class InspectionFireExtinguisherController extends Controller
     {
         $this->ensureInspectionPermission($request);
 
-        $data = $request->validate($this->rules());
-        $row = DB::transaction(function () use ($data, $request) {
-            $this->assertUniqueActiveIdentity($data, null, true);
-            $this->assertUniqueActiveLocator($data, null, true);
+        $data = $request->validate($this->rules(requireCompleteLocation: true));
+        $this->validateRequiredCatalogIdentity($data);
+        $confirmDuplicate = (bool) ($data['confirmDuplicate'] ?? $data['confirm_duplicate'] ?? false);
 
-            return InspectionFireExtinguisher::query()->create($this->payloadToAttributes($data, [
+        $result = DB::transaction(function () use ($confirmDuplicate, $data, $request): array {
+            $this->validateRegisteredLocationPath($data, lock: true);
+            $conflicts = $this->matchingActiveLocators($data, lock: true);
+            if ($conflicts->isNotEmpty() && ! $confirmDuplicate) {
+                return ['conflicts' => $conflicts];
+            }
+
+            $attributes = $this->payloadToAttributes($data, [
                 'source' => 'custom',
                 'created_by' => $request->user()?->id,
                 'is_active' => true,
                 'sort_order' => $this->nextSortOrder((string) ($data['mainLocation'] ?? $data['main_location'] ?? '')),
-            ]));
+            ]);
+
+            if ($confirmDuplicate && $this->activeIdentityExists($data, lock: true)) {
+                $attributes['active_identity_key'] = null;
+            } else {
+                $this->assertUniqueActiveIdentity($data, null, true);
+            }
+
+            return ['row' => InspectionFireExtinguisher::query()->create($attributes)];
         });
 
+        /** @var Collection<int, InspectionFireExtinguisher>|null $conflicts */
+        $conflicts = $result['conflicts'] ?? null;
+        if ($conflicts?->isNotEmpty()) {
+            return response()->json([
+                'code' => self::DUPLICATE_LOCATOR_CODE,
+                'message' => 'One or more active fire extinguishers use this locator.',
+                'data' => [
+                    'matches' => $conflicts
+                        ->map(fn (InspectionFireExtinguisher $row) => $this->formatRow($row, $request))
+                        ->values(),
+                ],
+                'meta' => [
+                    'count' => $conflicts->count(),
+                ],
+            ], Response::HTTP_CONFLICT);
+        }
+
+        /** @var InspectionFireExtinguisher $row */
+        $row = $result['row'];
+
         return response()->json(['data' => $this->formatRow($row, $request)], 201);
+    }
+
+    public function storeBatch(Request $request): JsonResponse
+    {
+        $this->ensureInspectionPermission($request);
+
+        $data = $request->validate($this->batchRules());
+        $location = [
+            'zone' => $data['zone'] ?? '',
+            'zoneId' => $data['zoneId'] ?? $data['zone_id'] ?? null,
+            'mainLocation' => $data['mainLocation'] ?? $data['main_location'] ?? '',
+            'mainLocationId' => $data['mainLocationId'] ?? $data['main_location_id'] ?? null,
+            'subLocation' => $data['subLocation'] ?? $data['sub_location'] ?? '',
+            'subLocationId' => $data['subLocationId'] ?? $data['sub_location_id'] ?? null,
+        ];
+        $this->validateRequiredLocationPath($location);
+        $items = collect($data['items'] ?? [])
+            ->map(fn (array $item): array => [
+                'idLocNo' => $item['idLocNo'] ?? $item['id_loc_no'] ?? '',
+                'barcodeNo' => $item['barcodeNo'] ?? $item['barcode_no'] ?? '',
+                'feType' => $item['feType'] ?? $item['fe_type'] ?? '',
+                'certificationValidity' => $item['certificationValidity'] ?? $item['certification_validity'] ?? '',
+                'confirmDuplicate' => (bool) ($item['confirmDuplicate'] ?? $item['confirm_duplicate'] ?? false),
+            ])
+            ->values()
+            ->all();
+
+        $locatorErrors = [];
+        foreach ($items as $index => $item) {
+            if ($this->locatorCandidates($item) === []) {
+                $message = 'Enter an ID Loc. No. or barcode/S/N.';
+                $locatorErrors["items.{$index}.idLocNo"] = $message;
+                $locatorErrors["items.{$index}.barcodeNo"] = $message;
+            }
+        }
+        if ($locatorErrors !== []) {
+            throw ValidationException::withMessages($locatorErrors);
+        }
+
+        try {
+            $result = $this->batchCreator->create($location, $items, $request->user()?->id);
+        } catch (\InvalidArgumentException $error) {
+            throw ValidationException::withMessages(['location' => $error->getMessage()]);
+        }
+        $conflicts = $result['conflicts'] ?? [];
+        if ($conflicts !== []) {
+            return response()->json([
+                'code' => self::DUPLICATE_LOCATOR_CODE,
+                'message' => 'One or more batch lines use a locator that is already in use.',
+                'data' => [
+                    'conflicts' => collect($conflicts)
+                        ->map(fn (array $conflict): array => [
+                            'index' => $conflict['index'],
+                            'matches' => $conflict['matches']
+                                ->map(fn (InspectionFireExtinguisher $row): array => $this->formatRow($row, $request))
+                                ->values(),
+                            'batchMatches' => $conflict['batchMatches']
+                                ->map(fn (array $match): array => array_merge(
+                                    ['index' => $match['index']],
+                                    $this->formatPendingBatchRow($match['item']),
+                                ))
+                                ->values(),
+                        ])
+                        ->values(),
+                ],
+                'meta' => [
+                    'count' => count($conflicts),
+                ],
+            ], Response::HTTP_CONFLICT);
+        }
+
+        /** @var Collection<int, InspectionFireExtinguisher> $rows */
+        $rows = $result['rows'];
+
+        return response()->json([
+            'data' => $rows
+                ->map(fn (InspectionFireExtinguisher $row): array => $this->formatRow($row, $request))
+                ->values(),
+            'meta' => ['count' => $rows->count()],
+        ], Response::HTTP_CREATED);
     }
 
     public function update(Request $request, int $extinguisherId): JsonResponse
@@ -381,14 +500,20 @@ class InspectionFireExtinguisherController extends Controller
     /**
      * @return array<string, array<int, string>>
      */
-    private function rules(): array
+    private function rules(bool $requireCompleteLocation = false): array
     {
         return [
-            'zone' => ['nullable', 'string', 'max:80'],
+            'zone' => [$requireCompleteLocation ? 'required' : 'nullable', 'string', 'max:80'],
+            'zoneId' => ['nullable', 'integer'],
+            'zone_id' => ['nullable', 'integer'],
             'mainLocation' => ['required_without:main_location', 'string', 'max:190'],
             'main_location' => ['nullable', 'string', 'max:190'],
-            'subLocation' => ['nullable', 'string', 'max:190'],
+            'mainLocationId' => ['nullable', 'integer'],
+            'main_location_id' => ['nullable', 'integer'],
+            'subLocation' => [$requireCompleteLocation ? 'required_without:sub_location' : 'nullable', 'string', 'max:190'],
             'sub_location' => ['nullable', 'string', 'max:190'],
+            'subLocationId' => ['nullable', 'integer'],
+            'sub_location_id' => ['nullable', 'integer'],
             'idLocNo' => ['nullable', 'string', 'max:190'],
             'id_loc_no' => ['nullable', 'string', 'max:190'],
             'barcodeNo' => ['nullable', 'string', 'max:190'],
@@ -397,7 +522,115 @@ class InspectionFireExtinguisherController extends Controller
             'fe_type' => ['nullable', 'string', 'max:120'],
             'certificationValidity' => ['nullable', 'date'],
             'certification_validity' => ['nullable', 'date'],
+            'confirmDuplicate' => ['nullable', 'boolean'],
+            'confirm_duplicate' => ['nullable', 'boolean'],
         ];
+    }
+
+    /**
+     * @return array<string, array<int, string>>
+     */
+    private function batchRules(): array
+    {
+        return [
+            'zone' => ['required', 'string', 'max:80'],
+            'zoneId' => ['nullable', 'integer'],
+            'zone_id' => ['nullable', 'integer'],
+            'mainLocation' => ['required_without:main_location', 'string', 'max:190'],
+            'main_location' => ['nullable', 'string', 'max:190'],
+            'mainLocationId' => ['nullable', 'integer'],
+            'main_location_id' => ['nullable', 'integer'],
+            'subLocation' => ['required_without:sub_location', 'string', 'max:190'],
+            'sub_location' => ['nullable', 'string', 'max:190'],
+            'subLocationId' => ['nullable', 'integer'],
+            'sub_location_id' => ['nullable', 'integer'],
+            'items' => ['required', 'array', 'min:1', 'max:25'],
+            'items.*' => ['required', 'array'],
+            'items.*.idLocNo' => ['nullable', 'string', 'max:190'],
+            'items.*.id_loc_no' => ['nullable', 'string', 'max:190'],
+            'items.*.barcodeNo' => ['nullable', 'string', 'max:190'],
+            'items.*.barcode_no' => ['nullable', 'string', 'max:190'],
+            'items.*.feType' => ['nullable', 'string', 'max:120'],
+            'items.*.fe_type' => ['nullable', 'string', 'max:120'],
+            'items.*.certificationValidity' => ['nullable', 'date'],
+            'items.*.certification_validity' => ['nullable', 'date'],
+            'items.*.confirmDuplicate' => ['nullable', 'boolean'],
+            'items.*.confirm_duplicate' => ['nullable', 'boolean'],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     * @return array<string, mixed>
+     */
+    private function formatPendingBatchRow(array $item): array
+    {
+        return [
+            'zone' => $this->text($item['zone'] ?? ''),
+            'mainLocation' => $this->text($item['mainLocation'] ?? ''),
+            'subLocation' => $this->text($item['subLocation'] ?? ''),
+            'idLocNo' => $this->text($item['idLocNo'] ?? ''),
+            'barcodeNo' => $this->text($item['barcodeNo'] ?? ''),
+            'feType' => $this->normalizeFeType($item['feType'] ?? ''),
+            'certificationValidity' => $this->text($item['certificationValidity'] ?? ''),
+            'source' => 'batch',
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function validateRequiredCatalogIdentity(array $data): void
+    {
+        $this->validateRequiredLocationPath($data);
+
+        if ($this->locatorCandidates($data) === []) {
+            throw ValidationException::withMessages([
+                'idLocNo' => 'Enter an ID Loc. No. or barcode/S/N.',
+                'barcodeNo' => 'Enter an ID Loc. No. or barcode/S/N.',
+            ]);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function validateRequiredLocationPath(array $data): void
+    {
+        $errors = [];
+        if ($this->text($data['zone'] ?? '') === '') {
+            $errors['zone'] = 'Zone is required.';
+        }
+        if ($this->text($data['mainLocation'] ?? $data['main_location'] ?? '') === '') {
+            $errors['mainLocation'] = 'Main location is required.';
+        }
+        if ($this->text($data['subLocation'] ?? $data['sub_location'] ?? '') === '') {
+            $errors['subLocation'] = 'Sub-location is required.';
+        }
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
+
+        $this->validateRegisteredLocationPath($data);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function validateRegisteredLocationPath(array $data, bool $lock = false): void
+    {
+        try {
+            $this->siteLocationCatalog->assertCompletePath([
+                'zone' => $data['zone'] ?? '',
+                'zoneId' => $data['zoneId'] ?? $data['zone_id'] ?? null,
+                'mainLocation' => $data['mainLocation'] ?? $data['main_location'] ?? '',
+                'mainLocationId' => $data['mainLocationId'] ?? $data['main_location_id'] ?? null,
+                'subLocation' => $data['subLocation'] ?? $data['sub_location'] ?? '',
+                'subLocationId' => $data['subLocationId'] ?? $data['sub_location_id'] ?? null,
+            ], $lock);
+        } catch (\InvalidArgumentException $error) {
+            throw ValidationException::withMessages(['location' => $error->getMessage()]);
+        }
     }
 
     private function findActiveRow(int $id): InspectionFireExtinguisher
@@ -406,8 +639,8 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $data
-     * @param array<string, mixed> $extra
+     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $extra
      * @return array<string, mixed>
      */
     private function payloadToAttributes(array $data, array $extra = []): array
@@ -430,8 +663,7 @@ class InspectionFireExtinguisherController extends Controller
         InspectionFireExtinguisher $row,
         Request $request,
         ?InspectionCheckRow $lastInspection = null,
-    ): array
-    {
+    ): array {
         $validity = $row->certification_validity;
         $activeIdentityKey = (string) ($row->active_identity_key ?? '');
         $canonicalAssetKey = $this->canonicalAssetKey($row);
@@ -462,8 +694,8 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param Collection<int, array<string, mixed>> $rows
-     * @param array<string, string> $filters
+     * @param  Collection<int, array<string, mixed>>  $rows
+     * @param  array<string, string>  $filters
      * @return Collection<int, array<string, mixed>>
      */
     private function filterCoverageData(Collection $rows, array $filters): Collection
@@ -512,7 +744,7 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param Collection<int, array<string, mixed>> $rows
+     * @param  Collection<int, array<string, mixed>>  $rows
      * @return Collection<int, array<string, mixed>>
      */
     private function sortCoverageData(Collection $rows, string $sort, string $direction = 'asc'): Collection
@@ -580,7 +812,7 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $row
+     * @param  array<string, mixed>  $row
      */
     private function coverageInspectionStatus(array $row): string
     {
@@ -598,7 +830,7 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $row
+     * @param  array<string, mixed>  $row
      */
     private function coverageCertificationStatus(array $row): string
     {
@@ -658,15 +890,14 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param Collection<int, InspectionFireExtinguisher> $catalogRows
+     * @param  Collection<int, InspectionFireExtinguisher>  $catalogRows
      * @return array<int, array<string, mixed>>
      */
     private function coverageRowsForCatalog(
         Collection $catalogRows,
         ?Carbon $periodStart = null,
         ?Carbon $periodEnd = null,
-    ): array
-    {
+    ): array {
         $catalogIds = $catalogRows
             ->pluck('id')
             ->filter()
@@ -711,7 +942,7 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param Collection<int, InspectionFireExtinguisher> $catalogRows
+     * @param  Collection<int, InspectionFireExtinguisher>  $catalogRows
      * @return array<int, int>
      */
     private function coverageLocatorDuplicateCounts(Collection $catalogRows): array
@@ -829,7 +1060,7 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param Collection<int, InspectionCheckRow> $checkRows
+     * @param  Collection<int, InspectionCheckRow>  $checkRows
      * @return array<string, mixed>
      */
     private function buildCoverageData(InspectionFireExtinguisher $catalogRow, Collection $checkRows): array
@@ -876,8 +1107,8 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param Collection<int, InspectionCheckRow> $latestGroup
-     * @param array<string, mixed> $payloadItem
+     * @param  Collection<int, InspectionCheckRow>  $latestGroup
+     * @param  array<string, mixed>  $payloadItem
      * @return array<int, array<string, mixed>>
      */
     private function formatCoverageChecks(Collection $latestGroup, array $payloadItem = []): array
@@ -934,8 +1165,8 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param Collection<int, InspectionCheckRow> $latestGroup
-     * @param array<string, mixed> $payloadItem
+     * @param  Collection<int, InspectionCheckRow>  $latestGroup
+     * @param  array<string, mixed>  $payloadItem
      */
     private function coverageRemarks(Collection $latestGroup, array $payloadItem = []): string
     {
@@ -1014,15 +1245,14 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param array<string, mixed>|null $coverage
+     * @param  array<string, mixed>|null  $coverage
      * @return array<string, mixed>
      */
     private function formatCoverageRow(
         InspectionFireExtinguisher $row,
         ?array $coverage = null,
         int $locatorDuplicateCount = 1,
-    ): array
-    {
+    ): array {
         $validity = $row->certification_validity;
         $latestRow = $coverage['latestRow'] ?? null;
         $checks = collect($coverage['checks'] ?? []);
@@ -1064,7 +1294,7 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param Collection<int, array<string, mixed>> $rows
+     * @param  Collection<int, array<string, mixed>>  $rows
      * @return array<string, int>
      */
     private function coverageSummary(Collection $rows): array
@@ -1083,7 +1313,7 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param Collection<int, InspectionFireExtinguisher> $rows
+     * @param  Collection<int, InspectionFireExtinguisher>  $rows
      * @return array<int, InspectionCheckRow>
      */
     private function latestInspectionsForRows(Collection $rows): array
@@ -1182,27 +1412,11 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      */
     private function assertUniqueActiveLocator(array $data, ?int $ignoreId = null, bool $lock = false): void
     {
-        $locators = $this->locatorCandidates($data);
-        if ($locators === []) {
-            return;
-        }
-
-        $duplicateExists = InspectionFireExtinguisher::query()
-            ->where('is_active', true)
-            ->where(function ($query) use ($locators): void {
-                $query
-                    ->whereIn(DB::raw('LOWER(TRIM(barcode_no))'), $locators)
-                    ->orWhereIn(DB::raw('LOWER(TRIM(id_loc_no))'), $locators);
-            })
-            ->when($ignoreId, fn ($query) => $query->whereKeyNot($ignoreId))
-            ->when($lock, fn ($query) => $query->lockForUpdate())
-            ->exists();
-
-        if (! $duplicateExists) {
+        if ($this->matchingActiveLocators($data, $ignoreId, $lock)->isEmpty()) {
             return;
         }
 
@@ -1213,7 +1427,35 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
+     * @return Collection<int, InspectionFireExtinguisher>
+     */
+    private function matchingActiveLocators(
+        array $data,
+        ?int $ignoreId = null,
+        bool $lock = false,
+    ): Collection {
+        $locators = $this->locatorCandidates($data);
+        if ($locators === []) {
+            return collect();
+        }
+
+        return InspectionFireExtinguisher::query()
+            ->where('is_active', true)
+            ->where(function ($query) use ($locators): void {
+                $query
+                    ->whereIn(DB::raw('LOWER(TRIM(barcode_no))'), $locators)
+                    ->orWhereIn(DB::raw('LOWER(TRIM(id_loc_no))'), $locators);
+            })
+            ->when($ignoreId, fn ($query) => $query->whereKeyNot($ignoreId))
+            ->when($lock, fn ($query) => $query->lockForUpdate())
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
      */
     private function locatorChanged(InspectionFireExtinguisher $row, array $data): bool
     {
@@ -1227,22 +1469,11 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      */
     private function assertUniqueActiveIdentity(array $data, ?int $ignoreId = null, bool $lock = false): void
     {
-        $identityKey = $this->activeIdentityKey($data);
-        if (! $identityKey) {
-            return;
-        }
-
-        $duplicateExists = InspectionFireExtinguisher::query()
-            ->where('active_identity_key', $identityKey)
-            ->when($ignoreId, fn ($query) => $query->whereKeyNot($ignoreId))
-            ->when($lock, fn ($query) => $query->lockForUpdate())
-            ->exists();
-
-        if (! $duplicateExists) {
+        if (! $this->activeIdentityExists($data, $ignoreId, $lock)) {
             return;
         }
 
@@ -1253,7 +1484,27 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
+     */
+    private function activeIdentityExists(
+        array $data,
+        ?int $ignoreId = null,
+        bool $lock = false,
+    ): bool {
+        $identityKey = $this->activeIdentityKey($data);
+        if (! $identityKey) {
+            return false;
+        }
+
+        return InspectionFireExtinguisher::query()
+            ->where('active_identity_key', $identityKey)
+            ->when($ignoreId, fn ($query) => $query->whereKeyNot($ignoreId))
+            ->when($lock, fn ($query) => $query->lockForUpdate())
+            ->exists();
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
      */
     private function activeIdentityKey(array $data): ?string
     {
@@ -1270,7 +1521,7 @@ class InspectionFireExtinguisherController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      * @return array<int, string>
      */
     private function locatorCandidates(array $data): array
@@ -1288,6 +1539,7 @@ class InspectionFireExtinguisherController extends Controller
 
         $normalized = array_values($unique);
         sort($normalized);
+
         return $normalized;
     }
 

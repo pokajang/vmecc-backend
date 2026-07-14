@@ -28,9 +28,33 @@ class RouteServiceProvider extends ServiceProvider
             return Limit::perMinute(120)->by($request->user()?->id ?: $request->ip());
         });
 
-        RateLimiter::for('ai-helper', function (Request $request) {
-            return Limit::perMinute((int) config('ai_helper.rate_limit_per_minute', 12))
-                ->by($request->user()?->id ?: $request->ip());
+        RateLimiter::for('ai-helper-generation', function (Request $request) {
+            $response = fn (Request $request, array $headers) => response()->json([
+                'message' => 'Ask AI is receiving too many generation requests. Wait briefly and retry.',
+                'code' => 'AI_HELPER_RATE_LIMITED',
+                'retry_after' => (int) ($headers['Retry-After'] ?? 60),
+            ], 429, $headers);
+
+            return Limit::perMinute(max(1, (int) config('ai_helper.rate_limit_per_minute', 12)))
+                ->by($request->user()?->id ?: $request->ip())
+                ->response($response);
+        });
+
+        RateLimiter::for('ai-helper-knowledge-upload', function (Request $request) {
+            $response = fn (Request $request, array $headers) => response()->json([
+                'message' => 'Too many Ask AI knowledge uploads. Wait briefly and retry.',
+                'code' => 'AI_HELPER_KNOWLEDGE_UPLOAD_RATE_LIMITED',
+                'retry_after' => (int) ($headers['Retry-After'] ?? 60),
+            ], 429, $headers);
+
+            return [
+                Limit::perMinute(max(1, (int) config('ai_helper.knowledge_upload_rate_limit_per_minute', 6)))
+                    ->by('user:'.($request->user()?->id ?: $request->ip()))
+                    ->response($response),
+                Limit::perMinute(max(1, (int) config('ai_helper.knowledge_upload_ip_rate_limit_per_minute', 30)))
+                    ->by('ip:'.$request->ip())
+                    ->response($response),
+            ];
         });
 
         RateLimiter::for('photo-uploads', function (Request $request) {
@@ -41,6 +65,19 @@ class RouteServiceProvider extends ServiceProvider
 
             return [
                 Limit::perMinute(20)->by('user:'.($request->user()?->id ?: $request->ip()))->response($response),
+                Limit::perMinute(60)->by('ip:'.$request->ip())->response($response),
+            ];
+        });
+
+        RateLimiter::for('report-pdf-downloads', function (Request $request) {
+            $response = fn (Request $request, array $headers) => response()->json([
+                'message' => 'Too many report PDF requests. Wait briefly and retry.',
+                'code' => 'REPORT_PDF_RATE_LIMITED',
+                'retry_after' => (int) ($headers['Retry-After'] ?? 60),
+            ], 429, $headers);
+
+            return [
+                Limit::perMinute(12)->by('user:'.($request->user()?->id ?: $request->ip()))->response($response),
                 Limit::perMinute(60)->by('ip:'.$request->ip())->response($response),
             ];
         });

@@ -4,145 +4,163 @@ namespace Database\Seeders;
 
 use App\Models\InspectionFireExtinguisher;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 class InspectionFireExtinguisherCatalogSeeder extends Seeder
 {
     public function run(): void
     {
-        $path = database_path('seeders/data/fire_extinguishers.json');
-        if (! is_file($path)) {
-            return;
-        }
+        $rows = $this->loadSeedRows();
+        $hasActiveIdentityKey = Schema::hasColumn('inspection_fire_extinguishers', 'active_identity_key');
 
-        $rows = json_decode((string) file_get_contents($path), true);
-        if (! is_array($rows)) {
-            return;
-        }
+        DB::transaction(function () use ($rows, $hasActiveIdentityKey): void {
+            $seededSourceRows = [];
 
-        $deduplicatedRows = $this->deduplicateSeedRows($rows);
-        $seededSourceRows = [];
-        foreach ($deduplicatedRows as $index => $row) {
-            if (! is_array($row)) {
-                continue;
+            foreach ($rows as $index => $row) {
+                $sourceRowNumber = $row['sourceRowNumber'];
+                $seededSourceRows[] = $sourceRowNumber;
+                $attributes = $this->attributes($row, $index, $hasActiveIdentityKey);
+                $existing = InspectionFireExtinguisher::query()
+                    ->where('source_row_number', $sourceRowNumber)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($existing && $existing->source !== 'seed') {
+                    throw new RuntimeException(
+                        "Fire extinguisher source row {$sourceRowNumber} belongs to a non-seed record."
+                    );
+                }
+
+                if ($existing && ! $this->hasSameIdentity($existing, $row)) {
+                    $this->archiveSeedRow($existing, $hasActiveIdentityKey);
+                    $existing = null;
+                }
+
+                if ($existing) {
+                    $existing->fill($attributes)->save();
+
+                    continue;
+                }
+
+                InspectionFireExtinguisher::query()->create([
+                    'source_row_number' => $sourceRowNumber,
+                    ...$attributes,
+                ]);
             }
 
-            $sourceRowNumber = (int) ($row['sourceRowNumber'] ?? 0);
-            if ($sourceRowNumber <= 0) {
-                continue;
-            }
-
-            $seededSourceRows[] = $sourceRowNumber;
-            $attributes = [
-                'zone' => $this->text($row['zone'] ?? '') ?: null,
-                'main_location_name' => $this->text($row['mainLocation'] ?? ''),
-                'sub_location_name' => $this->text($row['subLocation'] ?? '') ?: null,
-                'id_loc_no' => $this->text($row['idLocNo'] ?? '') ?: null,
-                'barcode_no' => $this->text($row['barcodeNo'] ?? '') ?: null,
-                'fe_type' => $this->normalizeFeType($row['feType'] ?? '') ?: null,
-                'certification_validity' => $this->date($row['certificationValidity'] ?? ''),
-                'source' => 'seed',
-                'is_active' => true,
-                'sort_order' => (int) ($row['sortOrder'] ?? ($index + 1)),
+            $staleAttributes = [
+                'source_row_number' => null,
+                'is_active' => false,
             ];
-            if (Schema::hasColumn('inspection_fire_extinguishers', 'active_identity_key')) {
-                $attributes['active_identity_key'] = null;
+            if ($hasActiveIdentityKey) {
+                $staleAttributes['active_identity_key'] = null;
             }
 
-            InspectionFireExtinguisher::query()->updateOrCreate(
-                ['source_row_number' => $sourceRowNumber],
-                $attributes,
-            );
-        }
-
-        if ($seededSourceRows !== []) {
-            $staleSeedQuery = InspectionFireExtinguisher::query()
+            InspectionFireExtinguisher::query()
                 ->where('source', 'seed')
-                ->whereNotIn('source_row_number', $seededSourceRows);
-
-            $staleSeedQuery->update(
-                Schema::hasColumn('inspection_fire_extinguishers', 'active_identity_key')
-                    ? ['is_active' => false, 'active_identity_key' => null]
-                : ['is_active' => false],
-            );
-        }
+                ->whereNotNull('source_row_number')
+                ->whereNotIn('source_row_number', $seededSourceRows)
+                ->update($staleAttributes);
+        });
     }
 
     /**
-     * @param array<int, mixed> $rows
      * @return array<int, array<string, mixed>>
      */
-    private function deduplicateSeedRows(array $rows): array
+    private function loadSeedRows(): array
     {
-        $deduplicated = [];
-        $selectedIndexesByIdentity = [];
+        $path = database_path('seeders/data/fire_extinguishers.json');
+        if (! is_file($path)) {
+            throw new RuntimeException("Fire extinguisher seed data not found at {$path}.");
+        }
 
-        foreach ($rows as $row) {
+        try {
+            $rows = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            throw new RuntimeException('Fire extinguisher seed data is not valid JSON.', 0, $exception);
+        }
+
+        if (! is_array($rows) || ! array_is_list($rows) || $rows === []) {
+            throw new RuntimeException('Fire extinguisher seed data must be a non-empty JSON list.');
+        }
+
+        $sourceRows = [];
+
+        foreach ($rows as $index => $row) {
             if (! is_array($row)) {
-                continue;
+                throw new RuntimeException("Fire extinguisher seed entry {$index} must be an object.");
             }
 
-            $identityKey = $this->identityKey($row);
-            if ($identityKey === '') {
-                $deduplicated[] = $row;
-                continue;
+            $sourceRowNumber = $row['sourceRowNumber'] ?? null;
+            if (! is_int($sourceRowNumber) || $sourceRowNumber <= 0) {
+                throw new RuntimeException("Fire extinguisher seed entry {$index} has an invalid source row.");
+            }
+            if (isset($sourceRows[$sourceRowNumber])) {
+                throw new RuntimeException("Fire extinguisher source row {$sourceRowNumber} is duplicated.");
+            }
+            $sourceRows[$sourceRowNumber] = true;
+
+            foreach (['zone', 'mainLocation', 'idLocNo', 'feType', 'barcodeNo', 'certificationValidity'] as $field) {
+                if ($this->text($row[$field] ?? '') === '') {
+                    throw new RuntimeException(
+                        "Fire extinguisher source row {$sourceRowNumber} is missing {$field}."
+                    );
+                }
             }
 
-            $sourceRowNumber = (int) ($row['sourceRowNumber'] ?? 0);
-            if (! isset($selectedIndexesByIdentity[$identityKey])) {
-                $selectedIndexesByIdentity[$identityKey] = count($deduplicated);
-                $deduplicated[] = $row;
-                continue;
-            }
+            $this->date($row['certificationValidity'], $sourceRowNumber);
 
-            $selectedIndex = $selectedIndexesByIdentity[$identityKey];
-            $existingRow = $deduplicated[$selectedIndex];
-            if ($this->isBetterSeedDuplicateRow($row, $existingRow)) {
-                $deduplicated[$selectedIndex] = $row;
-            } elseif (
-                (int) $sourceRowNumber > 0 &&
-                (int) ($existingRow['sourceRowNumber'] ?? 0) === 0
-            ) {
-                $deduplicated[$selectedIndex] = $row;
+            if (isset($row['sortOrder']) && (! is_int($row['sortOrder']) || $row['sortOrder'] <= 0)) {
+                throw new RuntimeException(
+                    "Fire extinguisher source row {$sourceRowNumber} has an invalid sort order."
+                );
             }
         }
 
-        return $deduplicated;
+        return $rows;
     }
 
-    private function isBetterSeedDuplicateRow(array $candidate, array $existing): bool
+    /**
+     * @param  array<string, mixed>  $row
+     * @return array<string, mixed>
+     */
+    private function attributes(array $row, int $index, bool $hasActiveIdentityKey): array
     {
-        $candidateSourceRow = (int) ($candidate['sourceRowNumber'] ?? 0);
-        $existingSourceRow = (int) ($existing['sourceRowNumber'] ?? 0);
-
-        if ($candidateSourceRow <= 0 && $existingSourceRow <= 0) {
-            return false;
+        $attributes = [
+            'zone' => $this->text($row['zone']),
+            'main_location_name' => $this->text($row['mainLocation']),
+            'sub_location_name' => $this->text($row['subLocation'] ?? '') ?: null,
+            'id_loc_no' => $this->text($row['idLocNo']),
+            'barcode_no' => $this->text($row['barcodeNo']),
+            'fe_type' => $this->normalizeFeType($row['feType']),
+            'certification_validity' => $this->date($row['certificationValidity'], $row['sourceRowNumber']),
+            'source' => 'seed',
+            'is_active' => true,
+            'sort_order' => (int) ($row['sortOrder'] ?? ($index + 1)),
+        ];
+        if ($hasActiveIdentityKey) {
+            $attributes['active_identity_key'] = null;
         }
 
-        if ($candidateSourceRow <= 0) {
-            return false;
+        return $attributes;
+    }
+
+    private function archiveSeedRow(
+        InspectionFireExtinguisher $row,
+        bool $hasActiveIdentityKey
+    ): void {
+        $attributes = [
+            'source_row_number' => null,
+            'is_active' => false,
+        ];
+        if ($hasActiveIdentityKey) {
+            $attributes['active_identity_key'] = null;
         }
 
-        if ($existingSourceRow <= 0) {
-            return true;
-        }
-
-        $candidateDate = $this->date($candidate['certificationValidity'] ?? '');
-        $existingDate = $this->date($existing['certificationValidity'] ?? '');
-
-        if ($candidateDate !== $existingDate) {
-            if ($candidateDate !== null && $existingDate === null) {
-                return true;
-            }
-            if ($candidateDate === null && $existingDate !== null) {
-                return false;
-            }
-
-            return $candidateDate > $existingDate;
-        }
-
-        return $candidateSourceRow > $existingSourceRow;
+        $row->forceFill($attributes)->save();
     }
 
     private function text(mixed $value): string
@@ -152,42 +170,59 @@ class InspectionFireExtinguisherCatalogSeeder extends Seeder
 
     private function normalizeFeType(mixed $value): string
     {
-        return str_replace(['CO²', 'CO�', 'COÂ²', 'COï¿½'], 'CO2', $this->text($value));
+        $text = $this->text($value);
+
+        return preg_replace('/CO(?:\x{00B2}|\x{FFFD})/u', 'CO2', $text) ?? $text;
     }
 
-    private function date(mixed $value): ?string
+    private function date(mixed $value, int $sourceRowNumber): ?string
     {
         $text = $this->text($value);
-        return preg_match('/^\d{4}-\d{2}-\d{2}$/', $text) ? $text : null;
-    }
-
-    private function identityKey(array $row): string
-    {
-        $idLocNo = $this->text($row['idLocNo'] ?? '');
-        $barcodeNo = $this->text($row['barcodeNo'] ?? '');
-
-        if ($idLocNo === '' && $barcodeNo === '') {
-            return '';
+        if ($text === '') {
+            return null;
+        }
+        if (
+            preg_match('/^(\\d{4})-(\\d{2})-(\\d{2})$/', $text, $parts)
+            && checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1])
+        ) {
+            return $text;
         }
 
+        throw new RuntimeException(
+            "Fire extinguisher source row {$sourceRowNumber} has an invalid certification date."
+        );
+    }
+
+    /** @param array<string, mixed> $seedRow */
+    private function hasSameIdentity(
+        InspectionFireExtinguisher $existing,
+        array $seedRow
+    ): bool {
+        return $this->identityKey($seedRow) === implode('|', [
+            $this->identityPart($existing->zone),
+            $this->identityPart($existing->main_location_name),
+            $this->identityPart($existing->sub_location_name),
+            $this->identityPart($existing->id_loc_no),
+            $this->identityPart($existing->barcode_no),
+            $this->identityPart($existing->fe_type),
+        ]);
+    }
+
+    /** @param array<string, mixed> $row */
+    private function identityKey(array $row): string
+    {
         return implode('|', [
             $this->identityPart($row['zone'] ?? ''),
             $this->identityPart($row['mainLocation'] ?? ''),
             $this->identityPart($row['subLocation'] ?? ''),
-            $this->identityPart($idLocNo),
-            $this->identityPart($barcodeNo),
+            $this->identityPart($row['idLocNo'] ?? ''),
+            $this->identityPart($row['barcodeNo'] ?? ''),
             $this->identityPart($this->normalizeFeType($row['feType'] ?? '')),
         ]);
     }
 
     private function identityPart(mixed $value): string
     {
-        return Str::of(
-            str_replace(
-                ['COÂ²', 'COï¿½', 'COÃ‚Â²', 'COÃ¯Â¿Â½'],
-                'CO2',
-                (string) $value,
-            ),
-        )->squish()->lower()->toString();
+        return Str::of($this->normalizeFeType($value))->squish()->lower()->toString();
     }
 }

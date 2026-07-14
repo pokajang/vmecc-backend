@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AuditLog;
 use App\Models\User;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Barryvdh\DomPDF\PDF as DomPdfWrapper;
@@ -44,7 +45,7 @@ class ErcoReportPdfTest extends TestCase
                 ],
             ]),
         ]);
-        $create->assertCreated();
+        $create->assertCreated()->assertJsonPath('data.canDownloadPdf', true);
         $reportUid = (string) $create->json('data.id');
 
         $this->actingAs($reviewer);
@@ -84,6 +85,16 @@ class ErcoReportPdfTest extends TestCase
         ]);
         $response->assertOk();
         $response->assertHeader('Content-Type', 'application/pdf');
+        $response->assertHeader('X-Report-Version', (string) $currentVersion);
+        $this->assertDatabaseHas('audit_logs', [
+            'actor_user_id' => $user->id,
+            'action' => 'report_pdf_downloaded',
+        ]);
+        $audit = AuditLog::query()->where('action', 'report_pdf_downloaded')->latest('id')->firstOrFail();
+        $this->assertSame($reportUid, data_get($audit->metadata, 'report_uid'));
+        $this->assertSame('erco', data_get($audit->metadata, 'report_type'));
+        $this->assertSame($currentVersion, data_get($audit->metadata, 'report_version'));
+        $this->assertSame($user->id, data_get($audit->metadata, 'owner_user_id'));
 
         $this->assertIsArray($capturedRecord);
         $this->assertSame('Approved', $capturedRecord['status'] ?? null);
@@ -100,7 +111,7 @@ class ErcoReportPdfTest extends TestCase
         $this->assertCount(3, $actions);
     }
 
-    public function test_pdf_download_is_scoped_to_owner_for_report_uid_requests(): void
+    public function test_pdf_download_allows_module_viewers_and_rejects_users_without_permission(): void
     {
         $owner = User::factory()->create(['status' => 'active']);
         $otherUser = User::factory()->create(['status' => 'active']);
@@ -124,7 +135,13 @@ class ErcoReportPdfTest extends TestCase
         $response = $this->postJson('/api/reports/erco/pdf', [
             'report_uid' => $reportUid,
         ]);
-        $response->assertStatus(404);
+        $response->assertOk()->assertHeader('Content-Type', 'application/pdf');
+
+        $unauthorizedUser = User::factory()->create(['status' => 'active']);
+        $this->actingAs($unauthorizedUser);
+        $this->postJson('/api/reports/erco/pdf', [
+            'report_uid' => $reportUid,
+        ])->assertForbidden();
     }
 
     public function test_pdf_download_requires_report_uid(): void
@@ -147,6 +164,21 @@ class ErcoReportPdfTest extends TestCase
             'report_uid' => 'any-report',
         ]);
         $response->assertStatus(403);
+    }
+
+    public function test_pdf_download_route_is_rate_limited_before_rendering(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantErcoPermission($user);
+        $this->actingAs($user);
+
+        foreach (range(1, 12) as $attempt) {
+            $this->postJson('/api/reports/erco/pdf', [])->assertStatus(422);
+        }
+
+        $this->postJson('/api/reports/erco/pdf', [])
+            ->assertStatus(429)
+            ->assertJsonPath('code', 'REPORT_PDF_RATE_LIMITED');
     }
 
     public function test_pdf_template_maps_reviewed_action_to_checked_by_signoff(): void

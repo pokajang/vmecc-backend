@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
+use App\Models\AiHelperKnowledgePage;
+use App\Services\AiHelper\PdfKnowledgeExtractionResult;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -13,9 +15,10 @@ use Throwable;
 
 class AiHelperKnowledgeProcessingService
 {
-    public function __construct(private readonly AiHelperPdfKnowledgeExtractor $pdfExtractor)
-    {
-    }
+    public function __construct(
+        private readonly AiHelperPdfKnowledgeExtractor $pdfExtractor,
+        private readonly AiHelperKnowledgeRuntimeService $runtime,
+    ) {}
 
     public function process(int $entryId, ?string $expectedRunId = null): void
     {
@@ -27,6 +30,7 @@ class AiHelperKnowledgeProcessingService
         try {
             if (str_starts_with((string) $entry->source_path, 'seed:') || $entry->source_mime === 'text/markdown') {
                 $this->processTextEntry($entry, (string) $entry->content, $entry->summary, [], $expectedRunId);
+
                 return;
             }
 
@@ -35,15 +39,37 @@ class AiHelperKnowledgeProcessingService
                 throw new RuntimeException('The original source file is unavailable for ingestion.');
             }
 
-            $extraction = $this->pdfExtractor->extract(
+            $this->runtime->assertPdfIngestionReady();
+            $extractionResult = $this->pdfExtractor->extract(
                 Storage::disk('local')->path($sourcePath),
                 (int) config('ai_helper.knowledge_extract_max_characters', 0),
             );
+            $extraction = $extractionResult instanceof PdfKnowledgeExtractionResult
+                ? $extractionResult->toArray()
+                : $extractionResult;
             if (trim((string) ($extraction['text'] ?? '')) === '') {
                 throw new RuntimeException('No readable text could be extracted from this PDF, including OCR.');
             }
             if (! ($extraction['extraction_complete'] ?? trim((string) ($extraction['text'] ?? '')) !== '')) {
-                throw new RuntimeException('PDF extraction did not complete for every page. The document was not partially indexed.');
+                if ($this->hasPreviousUsableIndex($entry)) {
+                    $this->retainPreviousIndex($entry->id, $expectedRunId, $extraction);
+
+                    return;
+                }
+
+                $this->processTextEntry(
+                    $entry,
+                    (string) $extraction['text'],
+                    null,
+                    $this->pdfMetadata($extraction),
+                    $expectedRunId,
+                    $extraction['pages'] ?? [],
+                    (string) ($extraction['extraction_mode'] ?? 'native'),
+                    false,
+                    false,
+                );
+
+                return;
             }
 
             $this->processTextEntry(
@@ -54,6 +80,8 @@ class AiHelperKnowledgeProcessingService
                 $expectedRunId,
                 $extraction['pages'] ?? [],
                 (string) ($extraction['extraction_mode'] ?? 'native'),
+                true,
+                true,
             );
         } catch (Throwable $e) {
             Log::warning('Ask AI knowledge processing failed', [
@@ -62,6 +90,7 @@ class AiHelperKnowledgeProcessingService
             ]);
             if ($e instanceof RuntimeException) {
                 $this->markFailed($entryId, $expectedRunId, $e->getMessage());
+
                 return;
             }
 
@@ -70,7 +99,7 @@ class AiHelperKnowledgeProcessingService
     }
 
     /**
-     * @param array<int, array{number: int, text: string, extraction_mode: string}> $pages
+     * @param  array<int, array{number: int, text: string, extraction_mode: string}>  $pages
      */
     public function processTextEntry(
         AiHelperKnowledgeEntry $entry,
@@ -80,22 +109,26 @@ class AiHelperKnowledgeProcessingService
         ?string $expectedRunId = null,
         array $pages = [],
         string $extractionMode = 'native',
+        bool $activate = true,
+        bool $extractionComplete = true,
     ): bool {
         $content = $this->normalizeText($content);
         $chunks = $this->chunkPages($pages, $content, $extractionMode);
         if ($chunks === []) {
             $this->markFailed($entry->id, $expectedRunId, 'Could not prepare readable guidance from this knowledge source.');
+
             return false;
         }
 
         try {
-            return DB::transaction(function () use ($entry, $content, $summary, $metadata, $expectedRunId, $chunks, $extractionMode) {
+            return DB::transaction(function () use ($entry, $content, $summary, $metadata, $expectedRunId, $chunks, $pages, $extractionMode, $activate, $extractionComplete) {
                 $locked = AiHelperKnowledgeEntry::query()->lockForUpdate()->find($entry->id);
                 if (! $locked || ! $this->canProcess($locked, $expectedRunId)) {
                     return false;
                 }
 
                 $locked->chunks()->delete();
+                $locked->pages()->delete();
                 $ingestionVersion = max(1, (int) $locked->ingestion_version);
                 foreach ($chunks as $index => $chunk) {
                     AiHelperKnowledgeChunk::create([
@@ -108,9 +141,28 @@ class AiHelperKnowledgeProcessingService
                         'token_estimate' => $this->estimateTokens($chunk['content']),
                         'module_key' => $locked->module_key,
                         'route_key' => $locked->route_key,
-                        'active' => true,
+                        'active' => $activate,
                         'extraction_mode' => $chunk['extraction_mode'],
                         'ingestion_version' => $ingestionVersion,
+                    ]);
+                }
+                foreach ($pages as $page) {
+                    if (! isset($page['outcome'])) {
+                        continue;
+                    }
+                    AiHelperKnowledgePage::create([
+                        'knowledge_entry_id' => $locked->id,
+                        'ingestion_version' => $ingestionVersion,
+                        'page_number' => max(1, (int) ($page['number'] ?? 1)),
+                        'outcome' => (string) $page['outcome'],
+                        'native_character_count' => max(0, (int) ($page['native_character_count'] ?? 0)),
+                        'native_word_count' => max(0, (int) ($page['native_word_count'] ?? 0)),
+                        'ocr_character_count' => max(0, (int) ($page['ocr_character_count'] ?? 0)),
+                        'ocr_word_count' => max(0, (int) ($page['ocr_word_count'] ?? 0)),
+                        'image_count' => max(0, (int) ($page['image_count'] ?? 0)),
+                        'ocr_attempted' => (bool) ($page['ocr_attempted'] ?? false),
+                        'ocr_succeeded' => (bool) ($page['ocr_succeeded'] ?? false),
+                        'findings' => $this->processingFindings($page['findings'] ?? []),
                     ]);
                 }
 
@@ -120,12 +172,15 @@ class AiHelperKnowledgeProcessingService
                         ? Str::limit($this->normalizeText($summary), 320, '')
                         : $this->buildSummary($content),
                     'content_hash' => hash('sha256', $content),
-                    'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
-                    'active' => true,
+                    'status' => $activate
+                        ? AiHelperKnowledgeEntry::STATUS_ACTIVE
+                        : AiHelperKnowledgeEntry::STATUS_DISABLED,
+                    'active' => $activate,
                     'processed_at' => now(),
                     'ingestion_completed_at' => now(),
                     'extraction_mode' => $extractionMode,
-                    'extraction_complete' => true,
+                    'extraction_complete' => $extractionComplete,
+                    'quality_status' => $metadata['quality_status'] ?? ($extractionComplete ? 'ready' : 'review_required'),
                     'extracted_characters' => Str::length($content),
                     'error' => null,
                 ] + $metadata)->save();
@@ -220,7 +275,18 @@ class AiHelperKnowledgeProcessingService
             if (! $entry || ! $this->canProcess($entry, $expectedRunId)) {
                 return;
             }
+            if ($this->hasPreviousUsableIndex($entry)) {
+                $entry->forceFill([
+                    'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+                    'active' => true,
+                    'ingestion_completed_at' => now(),
+                    'error' => Str::limit('Re-index failed; the previous index remains active. '.$message, 1000, ''),
+                ])->save();
+
+                return;
+            }
             $entry->chunks()->delete();
+            $entry->pages()->delete();
             $entry->forceFill([
                 'status' => AiHelperKnowledgeEntry::STATUS_FAILED,
                 'active' => false,
@@ -229,6 +295,7 @@ class AiHelperKnowledgeProcessingService
                 'processed_at' => now(),
                 'ingestion_completed_at' => now(),
                 'extraction_complete' => false,
+                'quality_status' => 'failed',
                 'extracted_characters' => 0,
                 'error' => Str::limit($message, 1000, ''),
             ])->save();
@@ -243,6 +310,7 @@ class AiHelperKnowledgeProcessingService
     private function buildSummary(string $content): string
     {
         $sentences = preg_split('/(?<=[.!?])\s+/', $content, 4) ?: [];
+
         return Str::limit(trim(implode(' ', array_slice(array_filter($sentences), 0, 2))) ?: $content, 320, '');
     }
 
@@ -266,7 +334,44 @@ class AiHelperKnowledgeProcessingService
             'pdf_readable_word_count' => max(0, (int) ($extraction['readable_word_count'] ?? 0)),
             'pdf_image_coverage_estimate' => min(100, max(0, (int) ($extraction['image_coverage_estimate'] ?? 0))),
             'processing_warnings' => $this->processingWarnings($extraction['warnings'] ?? []),
+            'processing_findings' => $this->processingFindings($extraction['findings'] ?? []),
+            'quality_status' => (string) ($extraction['quality_status'] ?? 'ready'),
+            'pages_indexed' => max(0, (int) ($extraction['pages_indexed'] ?? 0)),
+            'pages_native' => max(0, (int) ($extraction['pages_native'] ?? 0)),
+            'pages_ocr' => max(0, (int) ($extraction['pages_ocr'] ?? 0)),
+            'pages_blank' => max(0, (int) ($extraction['pages_blank'] ?? 0)),
+            'pages_visual_only' => max(0, (int) ($extraction['pages_visual_only'] ?? 0)),
+            'pages_unreadable' => max(0, (int) ($extraction['pages_unreadable'] ?? 0)),
         ];
+    }
+
+    private function hasPreviousUsableIndex(AiHelperKnowledgeEntry $entry): bool
+    {
+        return (bool) $entry->active
+            && (bool) $entry->extraction_complete
+            && trim((string) $entry->content) !== ''
+            && $entry->chunks()->where('active', true)->exists();
+    }
+
+    private function retainPreviousIndex(int $entryId, ?string $expectedRunId, array $extraction): void
+    {
+        DB::transaction(function () use ($entryId, $expectedRunId, $extraction) {
+            $entry = AiHelperKnowledgeEntry::query()->lockForUpdate()->find($entryId);
+            if (! $entry || ! $this->canProcess($entry, $expectedRunId) || ! $this->hasPreviousUsableIndex($entry)) {
+                return;
+            }
+
+            $warnings = $this->processingWarnings($extraction['warnings'] ?? []);
+            $message = $warnings
+                ? 'Re-index requires review; the previous index remains active. '.implode(' ', $warnings)
+                : 'Re-index requires review; the previous index remains active.';
+            $entry->forceFill([
+                'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+                'active' => true,
+                'ingestion_completed_at' => now(),
+                'error' => Str::limit($message, 1000, ''),
+            ])->save();
+        });
     }
 
     private function processingWarnings(mixed $warnings): ?array
@@ -278,6 +383,30 @@ class AiHelperKnowledgeProcessingService
             ->filter(static fn ($warning) => is_string($warning) && trim($warning) !== '')
             ->map(static fn (string $warning) => Str::limit(trim($warning), 500, ''))
             ->unique()
+            ->values()
+            ->all();
+
+        return $clean === [] ? null : $clean;
+    }
+
+    private function processingFindings(mixed $findings): ?array
+    {
+        if (! is_array($findings)) {
+            return null;
+        }
+
+        $clean = collect($findings)
+            ->filter(static fn ($finding) => is_array($finding)
+                && in_array($finding['severity'] ?? null, ['notice', 'warning', 'error'], true)
+                && is_string($finding['code'] ?? null)
+                && is_string($finding['message'] ?? null))
+            ->map(static fn (array $finding) => [
+                'severity' => $finding['severity'],
+                'code' => Str::limit(trim($finding['code']), 64, ''),
+                'page' => isset($finding['page']) ? max(1, (int) $finding['page']) : null,
+                'message' => Str::limit(trim($finding['message']), 500, ''),
+            ])
+            ->unique(fn (array $finding) => implode('|', $finding))
             ->values()
             ->all();
 

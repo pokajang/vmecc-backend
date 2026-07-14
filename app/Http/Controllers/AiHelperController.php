@@ -11,35 +11,37 @@ use App\Http\Requests\AiHelper\UpdateAiHelperKnowledgeRequest;
 use App\Http\Requests\AiHelper\UpdateAiHelperReportRequest;
 use App\Http\Requests\AiHelper\UploadAiHelperKnowledgeRequest;
 use App\Http\Requests\AiHelper\UploadAiHelperMarkdownKnowledgeRequest;
-use App\Models\AiHelperMessage;
+use App\Jobs\ProcessAiHelperKnowledgeEntry;
 use App\Models\AiHelperKnowledgeEntry;
+use App\Models\AiHelperMessage;
 use App\Models\AiHelperResponseReport;
 use App\Models\AiHelperThread;
 use App\Models\User;
-use App\Jobs\ProcessAiHelperKnowledgeEntry;
 use App\Services\AiHelperApiResponder;
 use App\Services\AiHelperAuthorizationService;
 use App\Services\AiHelperConversationService;
-use App\Services\AiHelperKnowledgeService;
-use App\Services\AiHelperOpenAiService;
-use App\Services\AiHelperMarkdownKnowledgeParser;
+use App\Services\AiHelperKnowledgeLifecycleService;
 use App\Services\AiHelperKnowledgeProcessingService;
 use App\Services\AiHelperKnowledgeQuotaService;
-use App\Services\AiHelperKnowledgeLifecycleService;
 use App\Services\AiHelperKnowledgeRuntimeService;
+use App\Services\AiHelperKnowledgeService;
+use App\Services\AiHelperMarkdownKnowledgeParser;
+use App\Services\AiHelperOpenAiService;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Symfony\Component\HttpFoundation\ResponseHeaderBag;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
 
 class AiHelperController extends Controller
 {
     private const CONVERSATION_PURPOSE_CHAT = 'chat';
+
     private const CONVERSATION_PURPOSE_EMBEDDED_HELPER = 'embedded_helper';
 
     public function __construct(
@@ -53,13 +55,13 @@ class AiHelperController extends Controller
         private readonly AiHelperKnowledgeRuntimeService $knowledgeRuntime,
         private readonly AiHelperConversationService $conversation,
         private readonly AiHelperApiResponder $responder,
-    ) {
-    }
+    ) {}
 
     public function context(Request $request): JsonResponse
     {
         try {
             $payload = $request->only(['path', 'route_path', 'route_name', 'title', 'search', 'params']);
+
             return response()->json(['data' => $this->knowledge->buildContext($payload, $request->user())]);
         } catch (Throwable $e) {
             return $this->safeFailure($request, $e, 'context');
@@ -117,6 +119,7 @@ class AiHelperController extends Controller
                 ->take(30)
                 ->map(function (AiHelperThread $thread) {
                     $lastMessage = $thread->messages->first();
+
                     return [
                         ...$this->formatThread($thread),
                         'last_message' => $lastMessage ? Str::limit((string) $lastMessage->content, 90, '') : '',
@@ -203,7 +206,11 @@ class AiHelperController extends Controller
                 ], 404);
             }
 
-            $entry->loadMissing(['uploader:id,name,email', 'reviewer:id,name,email']);
+            $entry->loadMissing([
+                'uploader:id,name,email',
+                'reviewer:id,name,email',
+                'pages' => fn ($query) => $query->orderBy('page_number'),
+            ]);
 
             return response()->json(['data' => $this->formatUserKnowledgeDetail($entry)]);
         } catch (Throwable $e) {
@@ -242,12 +249,17 @@ class AiHelperController extends Controller
                 ? sprintf('%s; charset=UTF-8', $entry->source_mime ?: 'text/plain')
                 : ((string) $entry->source_mime ?: 'application/octet-stream');
 
-            return response()->file(
+            $filename = basename(str_replace('\\', '/', (string) ($entry->source_filename ?: 'knowledge')));
+            $fallbackFilename = preg_replace('/[^\x20-\x7E]|%/', '-', Str::ascii($filename)) ?: 'knowledge';
+            $response = response()->file(
                 Storage::disk('local')->path($sourcePath),
-                [
-                    'Content-Type' => $contentType,
-                    'Content-Disposition' => 'inline; filename="' . ($entry->source_filename ?: 'knowledge') . '"',
-                ],
+                ['Content-Type' => $contentType],
+            );
+
+            return $response->setContentDisposition(
+                ResponseHeaderBag::DISPOSITION_INLINE,
+                $filename,
+                $fallbackFilename,
             );
         } catch (Throwable $e) {
             return $this->safeFailure($request, $e, 'knowledge_file');
@@ -257,6 +269,10 @@ class AiHelperController extends Controller
     public function uploadKnowledge(UploadAiHelperKnowledgeRequest $request): JsonResponse
     {
         $validated = $request->validated();
+        $storedPath = null;
+        $entry = null;
+        $ingestionRunId = null;
+        $queued = false;
 
         try {
             $actor = $request->user();
@@ -322,6 +338,7 @@ class AiHelperController extends Controller
 
             $ingestionRunId = $this->knowledgeLifecycle->beginIngestion($entry);
             ProcessAiHelperKnowledgeEntry::dispatch($entry->id, $ingestionRunId);
+            $queued = true;
             $entry = $entry->fresh(['uploader', 'reviewer']);
             AuditLogger::log($request, 'ai_helper_knowledge_uploaded', $actor, [
                 'knowledge_entry_id' => $entry->id,
@@ -346,6 +363,16 @@ class AiHelperController extends Controller
                 ['runtime' => $this->knowledgeRuntime->diagnostics()],
             );
         } catch (Throwable $e) {
+            if ($storedPath !== null && $entry === null) {
+                Storage::disk('local')->delete($storedPath);
+            } elseif ($entry !== null && ! $queued) {
+                $this->knowledgeProcessor->markFailedForRun(
+                    $entry->id,
+                    $ingestionRunId,
+                    'The knowledge file was stored but could not be queued for processing.',
+                );
+            }
+
             return $this->safeFailure($request, $e, 'knowledge_upload');
         }
     }
@@ -535,6 +562,12 @@ class AiHelperController extends Controller
             }
 
             $status = (string) $validated['status'];
+            if ($status === AiHelperKnowledgeEntry::STATUS_ACTIVE && ! $entry->extraction_complete) {
+                return response()->json([
+                    'message' => 'Knowledge extraction must be complete before it can be enabled.',
+                    'code' => 'AI_HELPER_KNOWLEDGE_NOT_READY',
+                ], 422);
+            }
             if (
                 $status === AiHelperKnowledgeEntry::STATUS_ACTIVE &&
                 $entry->review_status !== AiHelperKnowledgeEntry::REVIEW_APPROVED
@@ -680,7 +713,12 @@ class AiHelperController extends Controller
                 ->with(['reporter', 'thread', 'reviewer'])
                 ->latest('created_at');
 
-            if ($status !== '' && $status !== 'all' && in_array($status, AiHelperResponseReport::STATUSES, true)) {
+            if ($status === 'actionable') {
+                $query->whereIn('status', [
+                    AiHelperResponseReport::STATUS_NEW,
+                    AiHelperResponseReport::STATUS_REVIEWING,
+                ]);
+            } elseif ($status !== '' && $status !== 'all' && in_array($status, AiHelperResponseReport::STATUSES, true)) {
                 $query->where('status', $status);
             }
 
@@ -705,6 +743,8 @@ class AiHelperController extends Controller
                         'reviewing' => (int) ($countsByStatus['reviewing'] ?? 0),
                         'resolved' => (int) ($countsByStatus['resolved'] ?? 0),
                         'dismissed' => (int) ($countsByStatus['dismissed'] ?? 0),
+                        'actionable' => (int) ($countsByStatus['new'] ?? 0)
+                            + (int) ($countsByStatus['reviewing'] ?? 0),
                         'all' => array_sum(array_map('intval', $countsByStatus)),
                     ],
                 ],
@@ -888,7 +928,12 @@ class AiHelperController extends Controller
 
         try {
             $entry = AiHelperKnowledgeEntry::query()
-                ->with(['uploader:id,name,email', 'reviewer:id,name,email', 'chunks' => fn ($query) => $query->orderBy('chunk_index')->limit(12)])
+                ->with([
+                    'uploader:id,name,email',
+                    'reviewer:id,name,email',
+                    'chunks' => fn ($query) => $query->orderBy('chunk_index')->limit(12),
+                    'pages' => fn ($query) => $query->orderBy('page_number'),
+                ])
                 ->withCount('chunks')
                 ->find($knowledgeId);
 
@@ -939,6 +984,7 @@ class AiHelperController extends Controller
 
                 if (
                     $reviewStatus === AiHelperKnowledgeEntry::REVIEW_APPROVED &&
+                    $entry->extraction_complete &&
                     ! in_array($entry->status, [AiHelperKnowledgeEntry::STATUS_PROCESSING, AiHelperKnowledgeEntry::STATUS_FAILED], true)
                 ) {
                     $updates['status'] = AiHelperKnowledgeEntry::STATUS_ACTIVE;
@@ -948,6 +994,12 @@ class AiHelperController extends Controller
 
             if (($validated['status'] ?? null) !== null) {
                 $status = (string) $validated['status'];
+                if ($status === AiHelperKnowledgeEntry::STATUS_ACTIVE && ! $entry->extraction_complete) {
+                    return response()->json([
+                        'message' => 'Knowledge extraction must be complete before it can be enabled.',
+                        'code' => 'AI_HELPER_KNOWLEDGE_NOT_READY',
+                    ], 422);
+                }
                 if ($status === AiHelperKnowledgeEntry::STATUS_ACTIVE && $entry->review_status !== AiHelperKnowledgeEntry::REVIEW_APPROVED && ($updates['review_status'] ?? null) !== AiHelperKnowledgeEntry::REVIEW_APPROVED) {
                     return response()->json([
                         'message' => 'Knowledge must be approved before it can be enabled.',
@@ -973,7 +1025,7 @@ class AiHelperController extends Controller
 
             return response()->json([
                 'message' => 'Knowledge review updated.',
-                'data' => $this->formatKnowledgeDetail($entry->fresh(['uploader', 'reviewer', 'chunks'])),
+                'data' => $this->formatKnowledgeDetail($entry->fresh(['uploader', 'reviewer', 'chunks', 'pages'])),
                 'request_id' => $this->responder->requestId($request),
             ]);
         } catch (Throwable $e) {
@@ -1271,8 +1323,7 @@ class AiHelperController extends Controller
         string $message,
         array $pageContext,
         string $conversationPurpose = self::CONVERSATION_PURPOSE_CHAT,
-    ): AiHelperThread
-    {
+    ): AiHelperThread {
         if ($threadId) {
             $thread = AiHelperThread::query()
                 ->where('user_id', $userId)
@@ -1486,6 +1537,7 @@ class AiHelperController extends Controller
 
         if (is_string($pageContext)) {
             $decoded = json_decode($pageContext, true);
+
             return is_array($decoded) ? $decoded : [];
         }
 
@@ -1519,7 +1571,10 @@ class AiHelperController extends Controller
                         $shared
                             ->where('visibility', AiHelperKnowledgeEntry::VISIBILITY_SHARED)
                             ->where('review_status', AiHelperKnowledgeEntry::REVIEW_APPROVED)
-                            ->where('status', AiHelperKnowledgeEntry::STATUS_ACTIVE)
+                            ->whereIn('status', [
+                                AiHelperKnowledgeEntry::STATUS_ACTIVE,
+                                AiHelperKnowledgeEntry::STATUS_PROCESSING,
+                            ])
                             ->where('active', true);
                     });
             });
@@ -1563,12 +1618,20 @@ class AiHelperController extends Controller
             'pdf_readable_word_count' => $entry->pdf_readable_word_count,
             'pdf_image_coverage_estimate' => $entry->pdf_image_coverage_estimate,
             'processing_warnings' => $entry->processing_warnings ?: [],
+            'processing_findings' => $entry->processing_findings ?: [],
             'ingestion_run_id' => $entry->ingestion_run_id,
             'ingestion_version' => $entry->ingestion_version,
             'ingestion_started_at' => optional($entry->ingestion_started_at)->toIso8601String(),
             'ingestion_completed_at' => optional($entry->ingestion_completed_at)->toIso8601String(),
             'extraction_mode' => $entry->extraction_mode,
             'extraction_complete' => (bool) $entry->extraction_complete,
+            'quality_status' => $entry->quality_status,
+            'pages_indexed' => (int) ($entry->pages_indexed ?? 0),
+            'pages_native' => (int) ($entry->pages_native ?? 0),
+            'pages_ocr' => (int) ($entry->pages_ocr ?? 0),
+            'pages_blank' => (int) ($entry->pages_blank ?? 0),
+            'pages_visual_only' => (int) ($entry->pages_visual_only ?? 0),
+            'pages_unreadable' => (int) ($entry->pages_unreadable ?? 0),
             'extracted_characters' => (int) ($entry->extracted_characters ?? 0),
             'error' => $entry->error,
             'acknowledged_at' => optional($entry->acknowledged_at)->toIso8601String(),
@@ -1595,6 +1658,7 @@ class AiHelperController extends Controller
                     'extraction_mode' => $chunk->extraction_mode,
                 ])->values()
                 : [],
+            'pages' => $this->formatKnowledgePages($entry),
         ];
     }
 
@@ -1611,7 +1675,28 @@ class AiHelperController extends Controller
             'extracted_content' => $extractedContent,
             'extracted_content_available' => trim($extractedContent) !== '',
             'original_available' => $originalAvailable,
+            'pages' => $this->formatKnowledgePages($entry),
         ];
+    }
+
+    private function formatKnowledgePages(AiHelperKnowledgeEntry $entry): array
+    {
+        if (! $entry->relationLoaded('pages')) {
+            return [];
+        }
+
+        return $entry->pages->map(fn ($page) => [
+            'page_number' => $page->page_number,
+            'outcome' => $page->outcome,
+            'native_character_count' => $page->native_character_count,
+            'native_word_count' => $page->native_word_count,
+            'ocr_character_count' => $page->ocr_character_count,
+            'ocr_word_count' => $page->ocr_word_count,
+            'image_count' => $page->image_count,
+            'ocr_attempted' => (bool) $page->ocr_attempted,
+            'ocr_succeeded' => (bool) $page->ocr_succeeded,
+            'findings' => $page->findings ?: [],
+        ])->values()->all();
     }
 
     private function authorizeSystemAdministrator(Request $request): ?JsonResponse

@@ -160,8 +160,10 @@ class InspectionLocationCatalogSeeder extends Seeder
             unset($zone['_areaKeys']);
             $zone['children'] = array_values(array_map(function (array $area): array {
                 unset($area['_locationKeys']);
+
                 return $area;
             }, $zone['children']));
+
             return $zone;
         }, $tree));
     }
@@ -191,11 +193,12 @@ class InspectionLocationCatalogSeeder extends Seeder
         }
         $slice = substr($content, $startPos + strlen($start));
         $endPos = strpos($slice, $nextMarker);
+
         return $endPos === false ? $slice : substr($slice, 0, $endPos);
     }
 
     /**
-     * @param array<int, string> $values
+     * @param  array<int, string>  $values
      * @return array<int, array<string, mixed>>
      */
     private function simpleLocations(array $values): array
@@ -211,7 +214,7 @@ class InspectionLocationCatalogSeeder extends Seeder
     }
 
     /**
-     * @param array<int, string> $values
+     * @param  array<int, string>  $values
      * @return array<int, string>
      */
     private function dedupeStrings(array $values): array
@@ -235,8 +238,8 @@ class InspectionLocationCatalogSeeder extends Seeder
     }
 
     /**
-     * @param array<int, string> $values
-     * @param array<int, string> $preferredOrder
+     * @param  array<int, string>  $values
+     * @param  array<int, string>  $preferredOrder
      * @return array<int, string>
      */
     private function orderByPreferredSequence(array $values, array $preferredOrder): array
@@ -265,7 +268,7 @@ class InspectionLocationCatalogSeeder extends Seeder
     }
 
     /**
-     * @param array<string, mixed> $row
+     * @param  array<string, mixed>  $row
      */
     private function upsertLocation(array $row, ?int $parentId, int $sortOrder): InspectionLocation
     {
@@ -288,6 +291,7 @@ class InspectionLocationCatalogSeeder extends Seeder
         if ($location->source === 'seed' || ! $location->exists) {
             $location->fill([
                 'name' => $name,
+                'normalized_name' => $normalized,
                 'description' => trim((string) ($row['description'] ?? '')) ?: null,
                 'icon_key' => trim((string) ($row['iconKey'] ?? '')) ?: null,
                 'sort_order' => $sortOrder,
@@ -322,7 +326,7 @@ class InspectionLocationCatalogSeeder extends Seeder
     }
 
     /**
-     * @param array<string, mixed> $row
+     * @param  array<string, mixed>  $row
      * @return array<int, int>
      */
     private function upsertLocationTree(
@@ -350,7 +354,7 @@ class InspectionLocationCatalogSeeder extends Seeder
     }
 
     /**
-     * @param array<int, int> $seededLocationIds
+     * @param  array<int, int>  $seededLocationIds
      */
     private function pruneMissingSeedLinks(string $typeKey, array $seededLocationIds): void
     {

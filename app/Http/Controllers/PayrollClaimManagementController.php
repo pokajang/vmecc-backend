@@ -3,15 +3,37 @@
 namespace App\Http\Controllers;
 
 use App\Models\PayrollClaim;
+use App\Services\AssignmentAuthorizationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class PayrollClaimManagementController extends Controller
 {
+    public function __construct(private readonly AssignmentAuthorizationService $authorizationService) {}
+
     public function index(Request $request): JsonResponse
     {
         $actor = $request->user();
         $query = PayrollClaim::query()->with(['user', 'items.attachment', 'attachment', 'paidByUser'])->orderByDesc('submitted_at')->orderByDesc('id');
+        $action = strtolower(trim((string) $request->input('action', '')));
+        if ($action !== '' && ! in_array($action, ['check', 'review', 'approve', 'mark_paid'], true)) {
+            throw ValidationException::withMessages([
+                'action' => ['Action must be check, review, approve, or mark_paid.'],
+            ]);
+        }
+        if ($action === 'mark_paid') {
+            if (! $this->authorizationService->hasPermission($actor, 'staff.salary.pay')) {
+                abort(403, 'You are not allowed to process salary payments.');
+            }
+            $query->where('claim_type', 'salary')->where('status', 'Approved')->whereNull('paid_at');
+        } elseif ($action !== '') {
+            $roles = $this->authorizationService->getActiveRoleNames($actor);
+            $query->where('status', 'Pending')->where('workflow_stage', $action);
+            if (! $roles->contains('System Administrator')) {
+                $query->whereIn('next_action_role', $roles->all());
+            }
+        }
 
         if ($request->filled('status') && $request->input('status') !== 'All') {
             $query->where('status', $request->input('status'));

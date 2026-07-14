@@ -17,6 +17,7 @@ use App\Services\InspectionPolicy;
 use App\Services\InspectionSessionReportPayloadBuilder;
 use App\Services\ReportingWorkflowService;
 use App\Services\ReportMediaService;
+use App\Services\ReportReadAuthorizationService;
 use App\Services\RoleCatalog;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Database\QueryException;
@@ -38,6 +39,7 @@ class ReportController extends Controller
         private readonly InspectionPayloadService $inspectionPayloadService,
         private readonly InspectionSessionReportPayloadBuilder $inspectionSessionReportPayloadBuilder,
         private readonly ReportMediaService $reportMediaService,
+        private readonly ReportReadAuthorizationService $reportReadAuthorizationService,
         private readonly DrillPayloadService $drillPayloadService,
         private readonly ErcoPayloadService $ercoPayloadService,
         private readonly FitnessTestPayloadService $fitnessTestPayloadService,
@@ -58,23 +60,23 @@ class ReportController extends Controller
 
     private const STATUS_CANCELLED = 'Cancelled';
 
-    private const REPORTING_WORKFLOW_PERMISSIONS = [
-        'inspection' => 'reports.inspection.view',
-        'erco' => 'reports.erco.view',
-        'drill' => 'reports.drill.view',
-        'fitness-test' => 'reports.fitness.view',
-    ];
-
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
         $reportTypeFilter = $this->normalizeReportType($request->input('reportType', ''));
         $scope = strtolower(trim((string) $request->input('scope', 'mine')));
-        if ($scope === 'all' && $this->isManagedReportingWorkflowType($reportTypeFilter)) {
+        $action = strtolower(trim((string) $request->input('action', '')));
+        $isActionableScope = $scope === 'actionable';
+        if ($isActionableScope && ! in_array($action, ['review', 'approve'], true)) {
+            throw ValidationException::withMessages([
+                'action' => ['Actionable report scope requires action=review or action=approve.'],
+            ]);
+        }
+        if (in_array($scope, ['all', 'actionable'], true) && $this->isManagedReportingWorkflowType($reportTypeFilter)) {
             $this->ensureReportingModulePermission($request, $reportTypeFilter);
         }
         $isAllManagedScope =
-            $scope === 'all'
+            in_array($scope, ['all', 'actionable'], true)
             && $this->isManagedReportingWorkflowType($reportTypeFilter)
             && $this->hasReportingModulePermission($user, $reportTypeFilter);
 
@@ -88,6 +90,15 @@ class ReportController extends Controller
         }
         if ($request->filled('status') && $request->input('status') !== 'All') {
             $query->where('status', trim((string) $request->input('status')));
+        }
+        if ($isActionableScope) {
+            $query
+                ->where('status', $action === 'review' ? self::STATUS_SUBMITTED : self::STATUS_REVIEWED)
+                ->where(function ($builder) use ($action) {
+                    $builder
+                        ->where('workflow_stage', $action)
+                        ->orWhereNull('workflow_stage');
+                });
         }
         if ($reportTypeFilter === 'inspection') {
             if ($request->filled('has_checklist')) {
@@ -118,6 +129,11 @@ class ReportController extends Controller
         $dir = strtolower($dir) === 'asc' ? 'asc' : 'desc';
 
         $rows = $query->orderBy($col, $dir)->orderByDesc('id')->get();
+        if ($isActionableScope) {
+            $rows = $rows->filter(fn (Report $report) => $action === 'review'
+                ? $this->reportingWorkflowService->canReview($report, $user)
+                : $this->reportingWorkflowService->canApprove($report, $user))->values();
+        }
 
         return response()->json([
             'data' => $rows->map(fn (Report $report) => $this->formatReport($report)),
@@ -994,6 +1010,7 @@ class ReportController extends Controller
             'canReview' => $this->formatCanReview($report),
             'canApprove' => $this->formatCanApprove($report),
             'canReject' => $this->formatCanReject($report),
+            'canDownloadPdf' => $this->formatCanDownloadPdf($report),
             'timeline' => $history,
             'createdAt' => optional($report->created_at)->toIso8601String(),
             'updatedAt' => optional($report->updated_at)->toIso8601String(),
@@ -1070,6 +1087,15 @@ class ReportController extends Controller
             ? ($this->isInspectionReport($report)
                 ? $this->inspectionPolicy->canTransition($report, $user, 'reject')->allowed
                 : $this->reportingWorkflowService->canReject($report, $user))
+            : false;
+    }
+
+    private function formatCanDownloadPdf(Report $report): bool
+    {
+        $user = request()?->user();
+
+        return $user
+            ? $this->reportReadAuthorizationService->canDownloadPdf($user, $report)
             : false;
     }
 
@@ -1182,12 +1208,7 @@ class ReportController extends Controller
             return false;
         }
 
-        $permission = self::REPORTING_WORKFLOW_PERMISSIONS[$this->normalizeReportType($reportType)] ?? null;
-        if (! $permission) {
-            return false;
-        }
-
-        return $this->authorizationService->hasPermission($user, "reports.manage|{$permission}");
+        return $this->reportReadAuthorizationService->canViewModule($user, $reportType);
     }
 
     private function isManagedReportingWorkflowType(?string $reportType): bool

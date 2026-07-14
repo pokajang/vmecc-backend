@@ -18,11 +18,15 @@ class ProcessAiHelperKnowledgeEntry implements ShouldQueue
 
     public array $backoff = [30, 120];
 
+    public int $timeout;
+
+    public bool $failOnTimeout = true;
+
     public function __construct(
         private readonly int $knowledgeEntryId,
         private readonly ?string $ingestionRunId = null,
-    )
-    {
+    ) {
+        $this->timeout = max(60, (int) config('ai_helper.knowledge_job_timeout_seconds', 900));
     }
 
     public function handle(AiHelperKnowledgeProcessingService $processor): void

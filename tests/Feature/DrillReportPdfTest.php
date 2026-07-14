@@ -52,7 +52,7 @@ class DrillReportPdfTest extends TestCase
                 ],
             ]),
         ]);
-        $create->assertCreated();
+        $create->assertCreated()->assertJsonPath('data.canDownloadPdf', true);
         $reportUid = (string) $create->json('data.id');
 
         $this->actingAs($reviewer);
@@ -92,6 +92,11 @@ class DrillReportPdfTest extends TestCase
         ]);
         $response->assertOk();
         $response->assertHeader('Content-Type', 'application/pdf');
+        $response->assertHeader('X-Report-Version', (string) $currentVersion);
+        $this->assertDatabaseHas('audit_logs', [
+            'actor_user_id' => $user->id,
+            'action' => 'report_pdf_downloaded',
+        ]);
 
         $this->assertIsArray($capturedRecord);
         $this->assertSame('Approved', $capturedRecord['status'] ?? null);
@@ -106,7 +111,7 @@ class DrillReportPdfTest extends TestCase
         $this->assertNotContains('Stale Payload User', array_column($capturedRecord['timeline'], 'by'));
     }
 
-    public function test_pdf_download_is_scoped_to_owner_for_report_uid_requests(): void
+    public function test_pdf_download_allows_module_viewers_and_rejects_users_without_permission(): void
     {
         $owner = User::factory()->create(['status' => 'active']);
         $otherUser = User::factory()->create(['status' => 'active']);
@@ -130,7 +135,13 @@ class DrillReportPdfTest extends TestCase
         $response = $this->postJson('/api/reports/drill/pdf', [
             'report_uid' => $reportUid,
         ]);
-        $response->assertStatus(404);
+        $response->assertOk()->assertHeader('Content-Type', 'application/pdf');
+
+        $unauthorizedUser = User::factory()->create(['status' => 'active']);
+        $this->actingAs($unauthorizedUser);
+        $this->postJson('/api/reports/drill/pdf', [
+            'report_uid' => $reportUid,
+        ])->assertForbidden();
     }
 
     public function test_pdf_download_requires_report_uid(): void

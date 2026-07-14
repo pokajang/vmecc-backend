@@ -6,6 +6,7 @@ use App\Models\InspectionCheckRow;
 use App\Models\InspectionFireExtinguisher;
 use App\Models\Report;
 use App\Models\User;
+use App\Services\InspectionSiteLocationCatalogService;
 use Database\Seeders\InspectionFireExtinguisherCatalogSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -26,7 +27,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
         $response->assertOk();
         $this->assertSame('database', $response->json('meta.source'));
-        $this->assertCount(17, $response->json('data'));
+        $this->assertCount(18, $response->json('data'));
         $this->assertSame(true, $response->json('data.0.canEdit'));
         $this->assertSame('Manjung Hub', $response->json('data.0.mainLocation'));
         $this->assertSame('catalog:'.(string) $response->json('data.0.catalogId'), $response->json('data.0.canonicalAssetKey'));
@@ -38,28 +39,105 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         $this->assertSame('CO2 5KG', $search->json('data.0.feType'));
         $this->assertSame($user->id, auth()->id());
 
-        $this->assertSame(1, InspectionFireExtinguisher::query()
-            ->where('id_loc_no', 'ADO-007')
-            ->where('barcode_no', 'SR072015Y133879')
+        $this->assertSame(529, InspectionFireExtinguisher::query()
+            ->where('source', 'seed')
+            ->where('is_active', true)
             ->count());
-        $this->assertSame(2, InspectionFireExtinguisher::query()->whereNull('id_loc_no')->count());
+        $this->assertSame(5, InspectionFireExtinguisher::query()
+            ->where('id_loc_no', 'MSL1-010')
+            ->count());
+        $this->assertSame(0, InspectionFireExtinguisher::query()->whereNull('id_loc_no')->count());
         $this->assertGreaterThan(0, InspectionFireExtinguisher::query()->where('fe_type', 'like', 'CO2%')->count());
         $this->assertSame(0, InspectionFireExtinguisher::query()->where('fe_type', 'like', "%CO\u{00B2}%")->count());
 
-        $removed = InspectionFireExtinguisher::query()->where('source_row_number', 517)->firstOrFail();
-        $this->assertNull($removed->certification_validity);
+        $sourceRows = InspectionFireExtinguisher::query()
+            ->where('source', 'seed')
+            ->where('is_active', true)
+            ->orderBy('source_row_number')
+            ->pluck('source_row_number')
+            ->all();
+        $this->assertSame(range(7, 535), $sourceRows);
+
+        $row258 = InspectionFireExtinguisher::query()->where('source_row_number', 258)->firstOrFail();
+        $this->assertSame('UF012023Z202896/UF062025Y910984', $row258->barcode_no);
+
+        $row426 = InspectionFireExtinguisher::query()->where('source_row_number', 426)->firstOrFail();
+        $this->assertSame("SR042024Z025545\n(SR012019Z005858)", $row426->barcode_no);
+
+        $row517 = InspectionFireExtinguisher::query()->where('source_row_number', 517)->firstOrFail();
+        $this->assertSame('2026-07-16', $row517->certification_validity?->format('Y-m-d'));
         $this->assertArrayNotHasKey('certificationValidityRaw', $response->json('data.0'));
+    }
+
+    public function test_fire_extinguisher_catalog_reseed_is_idempotent_and_archives_stale_rows(): void
+    {
+        $this->seed(InspectionFireExtinguisherCatalogSeeder::class);
+        $idsBySourceRow = InspectionFireExtinguisher::query()
+            ->where('source', 'seed')
+            ->where('is_active', true)
+            ->orderBy('source_row_number')
+            ->pluck('id', 'source_row_number')
+            ->all();
+
+        $stale = InspectionFireExtinguisher::query()->create([
+            'source_row_number' => 9999,
+            'zone' => 'Legacy',
+            'main_location_name' => 'Legacy Location',
+            'sub_location_name' => 'Legacy Sub-location',
+            'id_loc_no' => 'LEGACY-9999',
+            'barcode_no' => 'LEGACY-BARCODE-9999',
+            'fe_type' => 'DP 9KG',
+            'certification_validity' => '2026-12-31',
+            'source' => 'seed',
+            'is_active' => true,
+            'sort_order' => 9999,
+        ]);
+
+        $this->seed(InspectionFireExtinguisherCatalogSeeder::class);
+
+        $this->assertSame($idsBySourceRow, InspectionFireExtinguisher::query()
+            ->where('source', 'seed')
+            ->where('is_active', true)
+            ->orderBy('source_row_number')
+            ->pluck('id', 'source_row_number')
+            ->all());
+        $this->assertSame(529, InspectionFireExtinguisher::query()
+            ->where('source', 'seed')
+            ->where('is_active', true)
+            ->count());
+        $this->assertFalse($stale->fresh()->is_active);
+        $this->assertNull($stale->fresh()->source_row_number);
+    }
+
+    public function test_fire_extinguisher_reseed_does_not_repurpose_a_changed_catalog_id(): void
+    {
+        $this->seed(InspectionFireExtinguisherCatalogSeeder::class);
+        $legacy = InspectionFireExtinguisher::query()->where('source_row_number', 7)->firstOrFail();
+        $legacy->forceFill(['barcode_no' => 'LEGACY-BARCODE-ROW-7'])->save();
+
+        $this->seed(InspectionFireExtinguisherCatalogSeeder::class);
+
+        $current = InspectionFireExtinguisher::query()->where('source_row_number', 7)->firstOrFail();
+        $this->assertNotSame($legacy->id, $current->id);
+        $this->assertSame('UF062025Y910860', $current->barcode_no);
+        $this->assertTrue($current->is_active);
+
+        $legacy->refresh();
+        $this->assertSame('LEGACY-BARCODE-ROW-7', $legacy->barcode_no);
+        $this->assertFalse($legacy->is_active);
+        $this->assertNull($legacy->source_row_number);
     }
 
     public function test_custom_fire_extinguisher_can_be_created_updated_and_archived(): void
     {
-        $this->actingAsInspectionUser();
+        $user = $this->actingAsInspectionUser();
 
         $created = $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload());
 
         $created->assertCreated();
         $created->assertJsonPath('data.equipmentSource', 'custom');
         $id = (int) $created->json('data.id');
+        $this->assertSame($user->id, InspectionFireExtinguisher::query()->findOrFail($id)->created_by);
 
         $this->patchJson("/api/inspection/fire-extinguishers/{$id}", [
             'zone' => 'QA',
@@ -253,7 +331,213 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             ->assertJsonPath('data.barcodeNo', 'SR-SCAN-NEW-001');
     }
 
-    public function test_scan_registration_rejects_duplicate_active_locator(): void
+    public function test_fire_extinguisher_creation_requires_a_location_and_locator(): void
+    {
+        $this->actingAsInspectionUser();
+
+        $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
+            'mainLocation' => '   ',
+        ]))->assertUnprocessable()->assertJsonValidationErrors(['mainLocation']);
+
+        $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
+            'idLocNo' => '',
+            'barcodeNo' => '',
+        ]))->assertUnprocessable()->assertJsonValidationErrors(['idLocNo', 'barcodeNo']);
+    }
+
+    public function test_fire_extinguisher_creation_rejects_unregistered_or_incomplete_site_paths_without_writes(): void
+    {
+        $this->actingAsInspectionUser();
+
+        $this->postJson('/api/inspection/fire-extinguishers', [
+            'zone' => 'Unregistered Zone',
+            'mainLocation' => 'Unregistered Area',
+            'subLocation' => 'Unregistered Location',
+            'idLocNo' => 'UNREGISTERED-001',
+        ])->assertUnprocessable()->assertJsonValidationErrors(['location']);
+
+        $this->postJson('/api/inspection/fire-extinguishers/batch', [
+            'zone' => '1',
+            'mainLocation' => 'Manjung Hub',
+            'subLocation' => '',
+            'items' => [['idLocNo' => 'INCOMPLETE-BATCH-001']],
+        ])->assertUnprocessable()->assertJsonValidationErrors(['subLocation']);
+
+        $this->assertDatabaseMissing('inspection_fire_extinguishers', [
+            'id_loc_no' => 'UNREGISTERED-001',
+        ]);
+        $this->assertDatabaseMissing('inspection_fire_extinguishers', [
+            'id_loc_no' => 'INCOMPLETE-BATCH-001',
+        ]);
+    }
+
+    public function test_fire_extinguisher_creation_requires_inspection_access(): void
+    {
+        $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload())
+            ->assertUnauthorized();
+
+        $this->actingAs(User::factory()->create(['status' => 'active']));
+        $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload())
+            ->assertForbidden();
+    }
+
+    public function test_fire_extinguisher_batch_creation_requires_inspection_access(): void
+    {
+        $payload = [
+            'mainLocation' => 'Batch Authorization Yard',
+            'items' => [['idLocNo' => 'BATCH-AUTH-001']],
+        ];
+
+        $this->postJson('/api/inspection/fire-extinguishers/batch', $payload)
+            ->assertUnauthorized();
+
+        $this->actingAs(User::factory()->create(['status' => 'active']));
+        $this->postJson('/api/inspection/fire-extinguishers/batch', $payload)
+            ->assertForbidden();
+    }
+
+    public function test_inspection_user_can_create_an_atomic_fire_extinguisher_batch(): void
+    {
+        $user = $this->actingAsInspectionUser();
+
+        $response = $this->postJson('/api/inspection/fire-extinguishers/batch', [
+            'zone' => '1',
+            'mainLocation' => 'Batch QA Yard',
+            'subLocation' => 'Pump Bay',
+            ...$this->registeredSitePathPayload('1', 'Batch QA Yard', 'Pump Bay'),
+            'items' => [
+                [
+                    'idLocNo' => 'BATCH-001',
+                    'barcodeNo' => 'BAR-BATCH-001',
+                    'feType' => 'DP 6KG',
+                    'certificationValidity' => '2027-12-31',
+                ],
+                [
+                    'idLocNo' => 'BATCH-002',
+                    'barcodeNo' => 'BAR-BATCH-002',
+                    'feType' => 'CO2 5KG',
+                    'certificationValidity' => '',
+                ],
+            ],
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('meta.count', 2)
+            ->assertJsonPath('data.0.mainLocation', 'Batch QA Yard')
+            ->assertJsonPath('data.0.idLocNo', 'BATCH-001')
+            ->assertJsonPath('data.1.idLocNo', 'BATCH-002');
+        $this->assertSame(2, InspectionFireExtinguisher::query()
+            ->where('main_location_name', 'Batch QA Yard')
+            ->where('created_by', $user->id)
+            ->count());
+    }
+
+    public function test_fire_extinguisher_batch_validation_rejects_invalid_rows_without_writes(): void
+    {
+        $this->actingAsInspectionUser();
+
+        $this->postJson('/api/inspection/fire-extinguishers/batch', [
+            'mainLocation' => '   ',
+            'items' => [['idLocNo' => '', 'barcodeNo' => '']],
+        ])->assertUnprocessable()->assertJsonValidationErrors(['mainLocation']);
+
+        $this->postJson('/api/inspection/fire-extinguishers/batch', [
+            'zone' => '1',
+            'mainLocation' => 'Batch Validation Yard',
+            'subLocation' => 'Pump Bay',
+            ...$this->registeredSitePathPayload('1', 'Batch Validation Yard', 'Pump Bay'),
+            'items' => [
+                ['idLocNo' => 'BATCH-VALID-001'],
+                ['idLocNo' => '', 'barcodeNo' => ''],
+            ],
+        ])->assertUnprocessable()->assertJsonValidationErrors([
+            'items.1.idLocNo',
+            'items.1.barcodeNo',
+        ]);
+
+        $this->assertDatabaseMissing('inspection_fire_extinguishers', [
+            'id_loc_no' => 'BATCH-VALID-001',
+        ]);
+    }
+
+    public function test_unconfirmed_batch_duplicate_reports_database_and_batch_matches_atomically(): void
+    {
+        $this->actingAsInspectionUser();
+        $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
+            'idLocNo' => 'EXISTING-BATCH-001',
+            'barcodeNo' => 'BAR-EXISTING-BATCH-001',
+        ]))->assertCreated();
+
+        $response = $this->postJson('/api/inspection/fire-extinguishers/batch', [
+            'zone' => '1',
+            'mainLocation' => 'Batch Conflict Yard',
+            'subLocation' => 'Pump Bay',
+            ...$this->registeredSitePathPayload('1', 'Batch Conflict Yard', 'Pump Bay'),
+            'items' => [
+                ['idLocNo' => 'NEW-BATCH-001', 'barcodeNo' => 'bar-existing-batch-001'],
+                ['idLocNo' => 'NEW-BATCH-002', 'barcodeNo' => 'BAR-INTERNAL-BATCH-001'],
+                ['idLocNo' => 'bar-internal-batch-001', 'barcodeNo' => 'BAR-INTERNAL-BATCH-002'],
+            ],
+        ]);
+
+        $response->assertConflict()
+            ->assertJsonPath('code', 'FIRE_EXTINGUISHER_DUPLICATE_LOCATOR')
+            ->assertJsonPath('meta.count', 3)
+            ->assertJsonPath('data.conflicts.0.index', 0)
+            ->assertJsonPath('data.conflicts.0.matches.0.barcodeNo', 'BAR-EXISTING-BATCH-001')
+            ->assertJsonPath('data.conflicts.1.batchMatches.0.index', 2)
+            ->assertJsonPath('data.conflicts.2.batchMatches.0.index', 1);
+        $this->assertDatabaseMissing('inspection_fire_extinguishers', [
+            'main_location_name' => 'Batch Conflict Yard',
+        ]);
+    }
+
+    public function test_confirmed_batch_duplicates_create_distinct_catalog_rows(): void
+    {
+        $this->actingAsInspectionUser();
+        $payload = $this->customFireExtinguisherPayload([
+            'mainLocation' => 'Batch Confirm Yard',
+            'idLocNo' => 'BATCH-CONFIRM-001',
+            'barcodeNo' => 'BAR-BATCH-CONFIRM-001',
+        ]);
+        $this->postJson('/api/inspection/fire-extinguishers', $payload)->assertCreated();
+
+        $response = $this->postJson('/api/inspection/fire-extinguishers/batch', [
+            'zone' => $payload['zone'],
+            'zoneId' => $payload['zoneId'],
+            'mainLocation' => $payload['mainLocation'],
+            'mainLocationId' => $payload['mainLocationId'],
+            'subLocation' => $payload['subLocation'],
+            'subLocationId' => $payload['subLocationId'],
+            'items' => [
+                [
+                    'idLocNo' => $payload['idLocNo'],
+                    'barcodeNo' => $payload['barcodeNo'],
+                    'feType' => $payload['feType'],
+                    'confirmDuplicate' => true,
+                ],
+                [
+                    'idLocNo' => $payload['idLocNo'],
+                    'barcodeNo' => $payload['barcodeNo'],
+                    'feType' => $payload['feType'],
+                    'confirmDuplicate' => true,
+                ],
+            ],
+        ])->assertCreated()->assertJsonPath('meta.count', 2);
+
+        $createdIds = collect($response->json('data'))->pluck('id');
+        $this->assertCount(2, $createdIds->unique());
+        $this->assertTrue(InspectionFireExtinguisher::query()
+            ->whereIn('id', $createdIds)
+            ->get()
+            ->every(fn (InspectionFireExtinguisher $row): bool => $row->active_identity_key === null));
+        $this->assertSame(3, InspectionFireExtinguisher::query()
+            ->where('barcode_no', $payload['barcodeNo'])
+            ->where('is_active', true)
+            ->count());
+    }
+
+    public function test_scan_registration_warns_about_duplicate_active_locator(): void
     {
         $this->actingAsInspectionUser();
 
@@ -261,15 +545,22 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             'barcodeNo' => 'SR-SCAN-DUP-001',
         ]))->assertCreated();
 
-        $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
+        $response = $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
             'mainLocation' => 'Other QA Yard',
             'idLocNo' => '',
             'barcodeNo' => 'sr-scan-dup-001',
-        ]))->assertStatus(422)
-            ->assertJsonValidationErrors(['barcodeNo']);
+        ]));
+
+        $response->assertConflict()
+            ->assertJsonPath('code', 'FIRE_EXTINGUISHER_DUPLICATE_LOCATOR')
+            ->assertJsonPath('meta.count', 1)
+            ->assertJsonPath('data.matches.0.barcodeNo', 'SR-SCAN-DUP-001');
+        $this->assertSame(1, InspectionFireExtinguisher::query()
+            ->whereRaw('LOWER(barcode_no) = ?', ['sr-scan-dup-001'])
+            ->count());
     }
 
-    public function test_scan_registration_rejects_duplicate_active_locator_across_barcode_and_id_location(): void
+    public function test_scan_registration_warns_about_duplicate_active_locator_across_barcode_and_id_location(): void
     {
         $this->actingAsInspectionUser();
 
@@ -282,11 +573,12 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             'mainLocation' => 'Other QA Yard',
             'idLocNo' => '',
             'barcodeNo' => 'sr-cross-dup-001',
-        ]))->assertStatus(422)
-            ->assertJsonValidationErrors(['barcodeNo']);
+        ]))->assertConflict()
+            ->assertJsonPath('code', 'FIRE_EXTINGUISHER_DUPLICATE_LOCATOR')
+            ->assertJsonPath('data.matches.0.idLocNo', 'SR-CROSS-DUP-001');
     }
 
-    public function test_custom_fire_extinguisher_rejects_duplicate_active_identity_on_create(): void
+    public function test_custom_fire_extinguisher_warns_about_duplicate_active_identity_on_create(): void
     {
         $this->actingAsInspectionUser();
 
@@ -303,10 +595,40 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             'idLocNo' => 'qa-dup-001',
             'barcodeNo' => 'bar-qa-dup-001',
             'feType' => 'CO2 5KG',
-        ]))->assertStatus(422)->assertJsonValidationErrors([
-            'idLocNo',
-            'barcodeNo',
+        ]))->assertConflict()
+            ->assertJsonPath('code', 'FIRE_EXTINGUISHER_DUPLICATE_LOCATOR')
+            ->assertJsonPath('meta.count', 1);
+    }
+
+    public function test_confirmed_duplicate_identity_creates_a_distinct_active_catalog_row(): void
+    {
+        $this->actingAsInspectionUser();
+
+        $payload = $this->customFireExtinguisherPayload([
+            'mainLocation' => 'QA Confirmed Duplicate Yard',
+            'subLocation' => 'Pump Bay',
+            'idLocNo' => 'QA-CONFIRM-001',
+            'barcodeNo' => 'BAR-QA-CONFIRM-001',
         ]);
+        $first = $this->postJson('/api/inspection/fire-extinguishers', $payload)->assertCreated();
+
+        $second = $this->postJson('/api/inspection/fire-extinguishers', array_merge($payload, [
+            'confirmDuplicate' => true,
+        ]))->assertCreated();
+
+        $this->assertNotSame($first->json('data.id'), $second->json('data.id'));
+        $this->assertSame('catalog:'.$first->json('data.id'), $first->json('data.canonicalAssetKey'));
+        $this->assertSame('catalog:'.$second->json('data.id'), $second->json('data.canonicalAssetKey'));
+        $this->assertNotNull(InspectionFireExtinguisher::query()
+            ->findOrFail((int) $first->json('data.id'))
+            ->active_identity_key);
+        $this->assertNull(InspectionFireExtinguisher::query()
+            ->findOrFail((int) $second->json('data.id'))
+            ->active_identity_key);
+        $this->assertSame(2, InspectionFireExtinguisher::query()
+            ->where('is_active', true)
+            ->where('barcode_no', 'BAR-QA-CONFIRM-001')
+            ->count());
     }
 
     public function test_custom_fire_extinguisher_rejects_duplicate_active_identity_on_update(): void
@@ -768,7 +1090,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
     }
 
     /**
-     * @param array<int, array<string, mixed>> $operationalPhotos
+     * @param  array<int, array<string, mixed>>  $operationalPhotos
      */
     private function createCoverageInspectionRows(
         User $owner,
@@ -865,12 +1187,12 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $overrides
+     * @param  array<string, mixed>  $overrides
      * @return array<string, mixed>
      */
     private function customFireExtinguisherPayload(array $overrides = []): array
     {
-        return array_merge([
+        $payload = array_merge([
             'zone' => 'QA',
             'mainLocation' => 'QA Yard',
             'subLocation' => 'Pump Bay',
@@ -879,6 +1201,44 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             'feType' => 'DP 6KG',
             'certificationValidity' => '2026-12-31',
         ], $overrides);
+
+        return array_merge($payload, $this->registeredSitePathPayload(
+            (string) ($payload['zone'] ?? ''),
+            (string) ($payload['mainLocation'] ?? $payload['main_location'] ?? ''),
+            (string) ($payload['subLocation'] ?? $payload['sub_location'] ?? ''),
+        ));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function registeredSitePathPayload(string $zone, string $area, string $location): array
+    {
+        $zone = trim($zone);
+        $area = trim($area);
+        $location = trim($location);
+        if ($zone === '' || $area === '' || $location === '') {
+            return [];
+        }
+
+        $catalog = app(InspectionSiteLocationCatalogService::class);
+        $zoneResult = $catalog->create(['level' => 'zone', 'name' => $zone], auth()->id());
+        $areaResult = $catalog->create([
+            'level' => 'area',
+            'parentId' => $zoneResult['row']->id,
+            'name' => $area,
+        ], auth()->id());
+        $locationResult = $catalog->create([
+            'level' => 'location',
+            'parentId' => $areaResult['row']->id,
+            'name' => $location,
+        ], auth()->id());
+
+        return [
+            'zoneId' => $zoneResult['row']->id,
+            'mainLocationId' => $areaResult['row']->id,
+            'subLocationId' => $locationResult['row']->id,
+        ];
     }
 
     private function createSubmittedFireExtinguisherCheckRow(

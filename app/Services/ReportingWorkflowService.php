@@ -402,10 +402,7 @@ class ReportingWorkflowService
             return [];
         }
 
-        $scopeTeamId = null;
-        if ($nextRole === trim((string) ($workflow['workflow_snapshot']['reviewRole'] ?? '')) && ($workflow['scope_team_id'] ?? null)) {
-            $scopeTeamId = (int) $workflow['scope_team_id'];
-        }
+        $scopeTeamId = $this->teamScopeForCurrentAction($workflow);
 
         return $this->activeUserIdsForRole($nextRole, $scopeTeamId, (int) $report->owner_user_id)
             ->values()
@@ -498,12 +495,26 @@ class ReportingWorkflowService
             return false;
         }
 
-        $snapshot = is_array($workflow['workflow_snapshot'] ?? null) ? $workflow['workflow_snapshot'] : [];
-        $reviewRole = trim((string) ($snapshot['reviewRole'] ?? self::MODULE_DEFAULTS['inspection']['reviewRole']));
-        $scopeTeamId = $workflow['scope_team_id'] ?? null;
-        $isTeamScopedReview = $scopeTeamId && strcasecmp($role, $reviewRole) === 0;
+        return $this->actorHasActiveRole($actor, $role, $this->teamScopeForCurrentAction($workflow));
+    }
 
-        return $this->actorHasActiveRole($actor, $role, $isTeamScopedReview ? (int) $scopeTeamId : null);
+    private function teamScopeForCurrentAction(array $workflow): ?int
+    {
+        if (($workflow['workflow_stage'] ?? null) !== 'review') {
+            return null;
+        }
+
+        $snapshot = is_array($workflow['workflow_snapshot'] ?? null) ? $workflow['workflow_snapshot'] : [];
+        $options = is_array($snapshot['options'] ?? null) ? $snapshot['options'] : [];
+        $scopeTeamId = $workflow['scope_team_id'] ?? null;
+        $usesFallback = ($snapshot['usedFallbackReview'] ?? false) === true;
+        $teamScopedReviewEnabled = ($options['useTeamScopedAic'] ?? true) !== false;
+
+        if ($usesFallback || ! $teamScopedReviewEnabled || ! $scopeTeamId) {
+            return null;
+        }
+
+        return (int) $scopeTeamId;
     }
 
     private function actorHasActiveRole(User $actor, string $role, ?int $teamId = null): bool

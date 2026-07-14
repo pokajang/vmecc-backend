@@ -10,21 +10,37 @@ use Illuminate\Support\Str;
 class InspectionCheckRowSyncService
 {
     private const REPORT_TYPE_INSPECTION = 'inspection';
+
     private const STATUS_DRAFT = 'Draft';
+
     private const ER_AUX_INSPECTION_TYPE_KEY = 'er-aux-equipment-inspection';
+
     private const ER_AUX_SOURCE_PAYLOAD_KEY = 'erAuxChecks';
+
     private const FIRE_EXTINGUISHER_INSPECTION_TYPE_KEY = 'fire-extinguisher-inspection';
+
     private const FIRE_EXTINGUISHER_SOURCE_PAYLOAD_KEY = 'fireExtinguisherChecks';
+
     private const FRT_DAILY_INSPECTION_TYPE_KEY = 'frt-daily-inspection';
+
     private const FRT_DAILY_SOURCE_PAYLOAD_KEY = 'frtDailyChecks';
+
     private const FRT_ONE_OFF_SOURCE_PAYLOAD_KEY = 'frtOneOffChecks';
+
     private const HIGH_ANGLE_INSPECTION_TYPE_KEY = 'high-angle-rescue-equipment-inspection';
+
     private const HIGH_ANGLE_SOURCE_PAYLOAD_KEY = 'highAngleChecks';
+
     private const HSE_INSPECTION_TYPE_KEY = 'health-safety-environment-inspection';
+
     private const HSE_SOURCE_PAYLOAD_KEY = 'hseSelections';
+
     private const HYDRAULIC_INSPECTION_TYPE_KEY = 'hydraulic-rescue-tools-inspection';
+
     private const HYDRAULIC_SOURCE_PAYLOAD_KEY = 'hydraulicChecks';
+
     private const SCBA_INSPECTION_TYPE_KEY = 'scba-inspection';
+
     private const SCBA_SECTION_META = [
         'backPlate' => [
             'payloadKey' => 'scbaBackPlateChecks',
@@ -69,6 +85,7 @@ class InspectionCheckRowSyncService
             ],
         ],
     ];
+
     private const HYDRAULIC_CHECK_FIELDS = [
         'physicalCondition' => [
             'key' => 'physical-condition',
@@ -95,6 +112,7 @@ class InspectionCheckRowSyncService
             'photos' => 'functionTestPhotos',
         ],
     ];
+
     private const FIRE_EXTINGUISHER_CHECK_FIELDS = [
         'physicalCondition' => [
             'key' => 'physical-condition',
@@ -285,7 +303,9 @@ class InspectionCheckRowSyncService
         $locationParts = $this->resolveLocationParts($payload, []);
         $inspectedBy = trim((string) ($payload['hseInspectedBy'] ?? $payload['hse_inspected_by'] ?? ''));
         $inspectionDate = trim((string) ($payload['hseInspectionDate'] ?? $payload['hse_inspection_date'] ?? ''));
+        $inspectedAt = trim((string) ($payload['inspectedAt'] ?? $payload['inspected_at'] ?? ''));
         $severity = trim((string) ($payload['hseSeverity'] ?? $payload['hse_severity'] ?? ''));
+        $isVersion2 = (int) ($payload['hsePayloadVersion'] ?? $payload['hse_payload_version'] ?? 0) === 2;
         $followUp = [
             'Immediate Action' => trim((string) ($payload['hseImmediateAction'] ?? $payload['hse_immediate_action'] ?? '')),
             'Corrective Action' => trim((string) ($payload['hseCorrectiveAction'] ?? $payload['hse_corrective_action'] ?? '')),
@@ -306,7 +326,7 @@ class InspectionCheckRowSyncService
             if ($detail !== '') {
                 $parts[] = 'Details: '.$detail;
             }
-            if ($severity !== '' && $meta['defect']) {
+            if (! $isVersion2 && $severity !== '' && $meta['defect']) {
                 $parts[] = 'Severity: '.$severity;
             }
             if ($inspectedBy !== '') {
@@ -314,6 +334,9 @@ class InspectionCheckRowSyncService
             }
             if ($inspectionDate !== '') {
                 $parts[] = 'Inspection Date: '.$inspectionDate;
+            }
+            if ($isVersion2 && $inspectedAt !== '') {
+                $parts[] = 'Observed At: '.$inspectedAt;
             }
             if ($meta['defect']) {
                 foreach ($followUp as $label => $value) {
@@ -334,7 +357,7 @@ class InspectionCheckRowSyncService
                 equipmentSource: 'report',
                 checkKey: $meta['key'],
                 checkName: $meta['name'],
-                checkValue: $meta['defect'] && $severity !== '' ? $severity : $meta['name'],
+                checkValue: ! $isVersion2 && $meta['defect'] && $severity !== '' ? $severity : $meta['name'],
                 remarks: implode('; ', $parts),
                 evidenceCount: $this->countEvidencePhotos($payload['photos'] ?? []),
                 sourceRowId: 'hse:'.$selection,

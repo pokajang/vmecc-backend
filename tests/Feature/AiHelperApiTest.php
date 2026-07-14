@@ -2,20 +2,23 @@
 
 namespace Tests\Feature;
 
-use App\Models\AiHelperMessage;
+use App\Jobs\ProcessAiHelperKnowledgeEntry;
 use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
+use App\Models\AiHelperMessage;
 use App\Models\AiHelperThread;
 use App\Models\User;
-use App\Jobs\ProcessAiHelperKnowledgeEntry;
-use App\Services\AiHelperKnowledgeProcessingService;
-use App\Services\AiHelperKnowledgeService;
 use App\Services\AiHelperConversationService;
+use App\Services\AiHelperKnowledgeLifecycleService;
+use App\Services\AiHelperKnowledgeProcessingService;
+use App\Services\AiHelperKnowledgeRuntimeService;
+use App\Services\AiHelperKnowledgeService;
 use App\Services\AiHelperOpenAiService;
 use App\Services\AiHelperPdfKnowledgeExtractor;
 use Database\Seeders\AiHelperKnowledgeSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Spatie\Permission\Models\Role;
@@ -147,6 +150,7 @@ class AiHelperApiTest extends TestCase
             $mock->shouldReceive('isAvailable')->andReturnTrue();
             $mock->shouldReceive('streamResponse')->once()->andReturnUsing(function ($instructions, $input, $onDelta) {
                 $onDelta('Refer to the plan.');
+
                 return ['response_id' => 'resp_sources_123'];
             });
         });
@@ -339,13 +343,62 @@ class AiHelperApiTest extends TestCase
         ]);
     }
 
-    public function test_helper_rate_limit_is_applied(): void
+    public function test_generation_rate_limit_does_not_block_knowledge_deletion(): void
     {
-        config(['ai_helper.rate_limit_per_minute' => 1]);
-        $this->actingAs(User::factory()->create(['status' => 'active']));
+        config([
+            'ai_helper.enabled' => false,
+            'ai_helper.api_key' => null,
+            'ai_helper.rate_limit_per_minute' => 1,
+        ]);
+        $user = User::factory()->create(['status' => 'active']);
+        $entry = AiHelperKnowledgeEntry::create([
+            'uploaded_by' => $user->id,
+            'title' => 'Temporary personal guidance',
+            'content' => 'Temporary guidance.',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_PERSONAL,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+            'active' => true,
+        ]);
+        $this->actingAs($user);
+
+        $this->postJson('/api/ai-helper/messages/stream', ['message' => 'First request'])
+            ->assertStatus(503);
+        $this->postJson('/api/ai-helper/messages/stream', ['message' => 'Second request'])
+            ->assertStatus(429)
+            ->assertJsonPath('code', 'AI_HELPER_RATE_LIMITED')
+            ->assertJsonStructure(['retry_after']);
 
         $this->getJson('/api/ai-helper/context?path=/dashboard')->assertOk();
-        $this->getJson('/api/ai-helper/context?path=/dashboard')->assertStatus(429);
+        $this->deleteJson("/api/ai-helper/knowledge/{$entry->id}")
+            ->assertOk()
+            ->assertJsonPath('message', 'Knowledge deleted.');
+    }
+
+    public function test_knowledge_upload_rate_limit_does_not_block_knowledge_deletion(): void
+    {
+        config(['ai_helper.knowledge_upload_rate_limit_per_minute' => 1]);
+        $user = User::factory()->create(['status' => 'active']);
+        $entry = AiHelperKnowledgeEntry::create([
+            'uploaded_by' => $user->id,
+            'title' => 'Disposable personal guidance',
+            'content' => 'Disposable guidance.',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_PERSONAL,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+            'active' => true,
+        ]);
+        $this->actingAs($user);
+
+        $this->postJson('/api/ai-helper/knowledge')->assertStatus(422);
+        $this->postJson('/api/ai-helper/knowledge')
+            ->assertStatus(429)
+            ->assertJsonPath('code', 'AI_HELPER_KNOWLEDGE_UPLOAD_RATE_LIMITED')
+            ->assertJsonStructure(['retry_after']);
+
+        $this->deleteJson("/api/ai-helper/knowledge/{$entry->id}")
+            ->assertOk()
+            ->assertJsonPath('message', 'Knowledge deleted.');
     }
 
     public function test_pending_shared_knowledge_is_not_retrieved(): void
@@ -910,6 +963,244 @@ MD;
         $this->assertGreaterThan(0, $entry->chunks()->count());
     }
 
+    public function test_pdf_processing_persists_page_quality_and_does_not_activate_content_gaps(): void
+    {
+        $entry = AiHelperKnowledgeEntry::create([
+            'uploaded_by' => User::factory()->create(['status' => 'active'])->id,
+            'title' => 'Visual Gap PDF',
+            'content' => '',
+            'source_path' => 'ai-helper/knowledge/test/visual-gap.pdf',
+            'source_mime' => 'application/pdf',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_PERSONAL,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'status' => AiHelperKnowledgeEntry::STATUS_PROCESSING,
+            'active' => false,
+        ]);
+
+        $finding = [
+            'severity' => 'warning',
+            'code' => 'VISUAL_ONLY_PAGE',
+            'page' => 2,
+            'message' => 'Page 2 contains visual content but no readable text after OCR.',
+        ];
+        $this->mock(AiHelperPdfKnowledgeExtractor::class, function ($mock) use ($finding) {
+            $mock->shouldReceive('extract')->once()->andReturn([
+                ...$this->pdfExtractionResult(
+                    text: str_repeat('Readable response guidance. ', 20),
+                    pageCount: 2,
+                    imageCount: 1,
+                    pagesWithImages: 1,
+                    imageCoverage: 50,
+                    warnings: [$finding['message']],
+                ),
+                'extraction_complete' => false,
+                'quality_status' => 'review_required',
+                'findings' => [$finding],
+                'pages_indexed' => 1,
+                'pages_native' => 1,
+                'pages_ocr' => 0,
+                'pages_blank' => 0,
+                'pages_visual_only' => 1,
+                'pages_unreadable' => 0,
+                'pages' => [
+                    [
+                        'number' => 1,
+                        'text' => str_repeat('Readable response guidance. ', 20),
+                        'extraction_mode' => 'native',
+                        'outcome' => 'native',
+                    ],
+                    [
+                        'number' => 2,
+                        'text' => '',
+                        'extraction_mode' => 'native',
+                        'outcome' => 'visual_only',
+                        'image_count' => 1,
+                        'ocr_attempted' => true,
+                        'ocr_succeeded' => false,
+                        'findings' => [$finding],
+                    ],
+                ],
+            ]);
+        });
+
+        app(AiHelperKnowledgeProcessingService::class)->process($entry->id);
+
+        $entry->refresh();
+        $this->assertSame(AiHelperKnowledgeEntry::STATUS_DISABLED, $entry->status);
+        $this->assertFalse($entry->active);
+        $this->assertFalse($entry->extraction_complete);
+        $this->assertSame('review_required', $entry->quality_status);
+        $this->assertSame(1, $entry->pages_indexed);
+        $this->assertSame(1, $entry->pages_visual_only);
+        $this->assertSame('VISUAL_ONLY_PAGE', $entry->processing_findings[0]['code']);
+        $this->assertSame('visual_only', $entry->pages()->where('page_number', 2)->value('outcome'));
+        $this->assertSame(0, $entry->chunks()->where('active', true)->count());
+    }
+
+    public function test_failed_reindex_keeps_the_previous_usable_index_active(): void
+    {
+        $entry = AiHelperKnowledgeEntry::create([
+            'uploaded_by' => User::factory()->create(['status' => 'active'])->id,
+            'title' => 'Existing PDF',
+            'content' => 'Existing indexed guidance.',
+            'source_path' => 'ai-helper/knowledge/test/existing.pdf',
+            'source_mime' => 'application/pdf',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+            'active' => true,
+            'extraction_complete' => true,
+            'extracted_characters' => 26,
+        ]);
+        $chunk = AiHelperKnowledgeChunk::create([
+            'knowledge_entry_id' => $entry->id,
+            'chunk_index' => 0,
+            'content' => 'Existing indexed guidance.',
+            'content_hash' => hash('sha256', 'Existing indexed guidance.'),
+            'active' => true,
+        ]);
+        $runId = app(AiHelperKnowledgeLifecycleService::class)->beginIngestion($entry);
+
+        $this->mock(AiHelperPdfKnowledgeExtractor::class, function ($mock) {
+            $mock->shouldReceive('extract')->once()->andReturn([
+                ...$this->pdfExtractionResult(text: 'Only part of the replacement.', pageCount: 2),
+                'extraction_complete' => false,
+                'quality_status' => 'review_required',
+                'warnings' => ['Page 2 has no readable content.'],
+            ]);
+        });
+
+        app(AiHelperKnowledgeProcessingService::class)->process($entry->id, $runId);
+
+        $entry->refresh();
+        $this->assertSame(AiHelperKnowledgeEntry::STATUS_ACTIVE, $entry->status);
+        $this->assertTrue($entry->active);
+        $this->assertTrue($entry->extraction_complete);
+        $this->assertSame('Existing indexed guidance.', $entry->content);
+        $this->assertDatabaseHas('ai_helper_knowledge_chunks', [
+            'id' => $chunk->id,
+            'active' => true,
+        ]);
+        $this->assertStringContainsString('previous index remains active', (string) $entry->error);
+    }
+
+    public function test_review_required_knowledge_cannot_be_manually_activated(): void
+    {
+        config(['ai_helper.rate_limit_per_minute' => 60]);
+        $user = User::factory()->create(['status' => 'active']);
+        $this->actingAs($user);
+        $entry = AiHelperKnowledgeEntry::create([
+            'uploaded_by' => $user->id,
+            'title' => 'Incomplete PDF',
+            'content' => 'Only part of the document was readable.',
+            'source_mime' => 'application/pdf',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_PERSONAL,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'status' => AiHelperKnowledgeEntry::STATUS_DISABLED,
+            'active' => false,
+            'extraction_complete' => false,
+            'quality_status' => 'review_required',
+        ]);
+
+        $this->patchJson("/api/ai-helper/knowledge/{$entry->id}", [
+            'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+        ])
+            ->assertUnprocessable()
+            ->assertJsonPath('code', 'AI_HELPER_KNOWLEDGE_NOT_READY');
+
+        $entry->refresh();
+        $this->assertSame(AiHelperKnowledgeEntry::STATUS_DISABLED, $entry->status);
+        $this->assertFalse($entry->active);
+    }
+
+    public function test_synchronous_reindex_returns_failure_when_a_document_requires_review(): void
+    {
+        $entry = AiHelperKnowledgeEntry::create([
+            'uploaded_by' => User::factory()->create(['status' => 'active'])->id,
+            'title' => 'Incomplete reindex PDF',
+            'content' => '',
+            'source_path' => 'ai-helper/knowledge/test/incomplete-reindex.pdf',
+            'source_mime' => 'application/pdf',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_PERSONAL,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'status' => AiHelperKnowledgeEntry::STATUS_DISABLED,
+            'active' => false,
+        ]);
+        $this->mock(AiHelperPdfKnowledgeExtractor::class, function ($mock) {
+            $mock->shouldReceive('extract')->once()->andReturn([
+                ...$this->pdfExtractionResult(text: 'Partial text.', pageCount: 2),
+                'extraction_complete' => false,
+                'quality_status' => 'review_required',
+                'warnings' => ['Page 2 requires visual review.'],
+            ]);
+        });
+
+        $this->artisan('ai-helper:reindex-knowledge', ['--sync' => true])
+            ->assertFailed();
+
+        $entry->refresh();
+        $this->assertSame(AiHelperKnowledgeEntry::STATUS_DISABLED, $entry->status);
+        $this->assertFalse($entry->active);
+    }
+
+    public function test_knowledge_pruner_removes_stale_ocr_temporary_directories(): void
+    {
+        config(['ai_helper.knowledge_ocr_temporary_retention_hours' => 1]);
+        $directory = storage_path('app/ai-helper/knowledge-ocr/test-stale-directory');
+        File::ensureDirectoryExists($directory);
+        touch($directory, now()->subHours(2)->getTimestamp());
+
+        try {
+            $this->artisan('ai-helper:prune-knowledge-files', ['--dry-run' => true])
+                ->assertSuccessful();
+            $this->assertDirectoryExists($directory);
+
+            $this->artisan('ai-helper:prune-knowledge-files')
+                ->assertSuccessful();
+            $this->assertDirectoryDoesNotExist($directory);
+        } finally {
+            File::deleteDirectory($directory);
+        }
+    }
+
+    public function test_knowledge_readiness_command_succeeds_only_for_migrated_ready_documents(): void
+    {
+        AiHelperKnowledgeEntry::create([
+            'uploaded_by' => User::factory()->create(['status' => 'active'])->id,
+            'title' => 'Ready PDF',
+            'content' => 'Complete indexed content.',
+            'source_mime' => 'application/pdf',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_PERSONAL,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+            'active' => true,
+            'extraction_complete' => true,
+            'quality_status' => 'ready',
+        ]);
+        $this->mock(AiHelperKnowledgeRuntimeService::class, function ($mock) {
+            $mock->shouldReceive('diagnostics')->once()->andReturn([
+                'ready' => true,
+                'queue_ready' => true,
+                'queue_connection' => 'database',
+                'queue_driver' => 'database',
+                'queue_retry_after' => 960,
+                'job_timeout' => 900,
+                'tools' => [
+                    'pdftotext' => true,
+                    'pdfinfo' => true,
+                    'pdftoppm' => true,
+                    'tesseract' => true,
+                    'gd' => true,
+                ],
+                'missing_languages' => [],
+            ]);
+        });
+
+        $this->artisan('ai-helper:knowledge-readiness', ['--json' => true])
+            ->expectsOutputToContain('"ready":true')
+            ->assertSuccessful();
+    }
+
     public function test_knowledge_list_exposes_safe_pdf_metrics_without_full_content(): void
     {
         config(['ai_helper.rate_limit_per_minute' => 60]);
@@ -1175,7 +1466,7 @@ MD;
         $this->get("/api/ai-helper/knowledge/{$entry->id}/file")
             ->assertOk()
             ->assertHeader('content-type', 'application/pdf')
-            ->assertHeader('content-disposition', 'inline; filename="processing.pdf"');
+            ->assertHeader('content-disposition', 'inline; filename=processing.pdf');
     }
 
     public function test_pdf_file_endpoint_streams_inline_for_visible_knowledge(): void
@@ -1202,7 +1493,7 @@ MD;
         $this->get("/api/ai-helper/knowledge/{$entry->id}/file")
             ->assertOk()
             ->assertHeader('content-type', 'application/pdf')
-            ->assertHeader('content-disposition', 'inline; filename="guide.pdf"');
+            ->assertHeader('content-disposition', 'inline; filename=guide.pdf');
     }
 
     public function test_markdown_file_endpoint_streams_inline_for_visible_knowledge(): void
@@ -1229,7 +1520,7 @@ MD;
         $this->get("/api/ai-helper/knowledge/{$entry->id}/file")
             ->assertOk()
             ->assertHeader('content-type', 'text/markdown; charset=UTF-8')
-            ->assertHeader('content-disposition', 'inline; filename="guide.md"');
+            ->assertHeader('content-disposition', 'inline; filename=guide.md');
     }
 
     public function test_seeded_markdown_file_endpoint_is_not_available(): void

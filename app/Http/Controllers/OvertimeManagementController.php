@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 class OvertimeManagementController extends Controller
 {
@@ -33,6 +34,12 @@ class OvertimeManagementController extends Controller
         $team = trim((string) $request->input('team', 'All'));
         $period = trim((string) $request->input('period', 'all'));
         $requestedSort = trim((string) $request->input('sort', 'appliedAt:desc'));
+        $action = strtolower(trim((string) $request->input('action', '')));
+        if ($action !== '' && ! in_array($action, ['review', 'recommend', 'approve'], true)) {
+            throw ValidationException::withMessages([
+                'action' => ['Action must be review, recommend, or approve.'],
+            ]);
+        }
         [$sortField, $sortDirection, $sortValue] = $this->normalizeSort($requestedSort);
 
         $page = max(1, (int) $request->input('page', 1));
@@ -50,7 +57,11 @@ class OvertimeManagementController extends Controller
             'overtime_type' => $overtimeType,
             'team' => $team,
             'period' => $period,
+            'action' => $action,
         ]);
+        if ($action !== '') {
+            $this->restrictToActionableRecords($filteredQuery, $request->user(), $action);
+        }
 
         $totalCount = (clone $baseQuery)->count();
         $filteredCount = (clone $filteredQuery)->count();
@@ -86,6 +97,7 @@ class OvertimeManagementController extends Controller
                     'overtime_type' => $overtimeType,
                     'team' => $team,
                     'period' => $period,
+                    'action' => $action,
                     'page' => $paginator->currentPage(),
                     'per_page' => $paginator->perPage(),
                 ],
@@ -133,6 +145,11 @@ class OvertimeManagementController extends Controller
 
     private function applyFilters(Builder $query, array $filters): void
     {
+        $action = trim((string) ($filters['action'] ?? ''));
+        if ($action !== '') {
+            $query->where('status', 'Pending')->where('workflow_stage', $action);
+        }
+
         $status = trim((string) ($filters['status'] ?? 'All'));
         if ($status !== '' && strcasecmp($status, 'All') !== 0) {
             $query->where('status', $status);
@@ -362,7 +379,7 @@ class OvertimeManagementController extends Controller
         $requiredRole = trim((string) ($row->next_action_role ?? ''));
         $canProcess = $status === 'Pending' && ($isSystemAdmin || (
             $requiredRole !== '' && $this->scopeService->canPerformWorkflowRole($actor, $row, $requiredRole)
-        ));
+        )) && ($isSystemAdmin || ! $this->violatesDistinctApprovers($row, $actor));
 
         return [
             'review' => $canProcess && $stage === 'review',
@@ -372,6 +389,37 @@ class OvertimeManagementController extends Controller
             'request_correction' => $canProcess,
             'cancel' => ($status === 'Pending' || $status === 'Approved') && $isSystemAdmin,
         ];
+    }
+
+    private function restrictToActionableRecords(Builder $query, $actor, string $action): void
+    {
+        $eligibleIds = (clone $query)
+            ->get()
+            ->filter(fn (OvertimeRecord $record) => ($this->resolvePermittedActions($record, $actor)[$action] ?? false) === true)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        if ($eligibleIds === []) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        $query->whereIntegerInRaw('id', $eligibleIds);
+    }
+
+    private function violatesDistinctApprovers(OvertimeRecord $row, $actor): bool
+    {
+        $snapshot = is_array($row->workflow_snapshot) ? $row->workflow_snapshot : [];
+        if (($snapshot['enforceDistinctApprovers'] ?? false) !== true) {
+            return false;
+        }
+
+        return collect($row->approval_history ?: [])->contains(
+            fn ($entry) => (string) ($entry['byUserId'] ?? '') === (string) $actor->id
+                && in_array((string) ($entry['action'] ?? ''), ['Reviewed', 'Recommended', 'Approved'], true),
+        );
     }
 
     private function buildFilterOptions(Builder $baseQuery): array

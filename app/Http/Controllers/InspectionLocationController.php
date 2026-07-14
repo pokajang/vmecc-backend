@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\InspectionLocation;
 use App\Models\InspectionLocationTypeLink;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\InspectionSiteLocationCatalogService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -17,8 +18,8 @@ class InspectionLocationController extends Controller
 {
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
-    ) {
-    }
+        private readonly InspectionSiteLocationCatalogService $siteLocationCatalog,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -74,6 +75,32 @@ class InspectionLocationController extends Controller
             ]);
         }
 
+        if ($this->isSiteType($type['key'])) {
+            try {
+                $result = $this->siteLocationCatalog->create([
+                    'level' => $this->siteLocationCatalog->childLevel($parentId),
+                    'parentId' => $parentId,
+                    'name' => $data['name'],
+                    'description' => $data['description'] ?? '',
+                    'iconKey' => $data['iconKey'] ?? $data['icon_key'] ?? '',
+                ], $request->user()?->id);
+            } catch (\InvalidArgumentException $error) {
+                throw ValidationException::withMessages(['parentId' => $error->getMessage()]);
+            }
+
+            if (! $result['created']) {
+                throw ValidationException::withMessages([
+                    'name' => [($result['scopeConflict'] ?? false)
+                        ? 'This name is already used by a separate inspection catalogue.'
+                        : 'This site location already exists under the selected parent.'],
+                ]);
+            }
+
+            return response()->json([
+                'data' => $this->formatLocation($result['row']->load('activeChildren')),
+            ], Response::HTTP_CREATED);
+        }
+
         $name = Str::of((string) $data['name'])->squish()->toString();
         $normalized = $this->normalizeName($name);
         $duplicate = InspectionLocation::query()
@@ -85,6 +112,7 @@ class InspectionLocationController extends Controller
         if ($duplicate) {
             if (! $this->isLocationLinkedToType($duplicate, $type['key'])) {
                 $this->linkLocationToType($duplicate, $type);
+
                 return response()->json(['data' => $this->formatLocation($duplicate->load('activeChildren'))], 201);
             }
 
@@ -126,6 +154,24 @@ class InspectionLocationController extends Controller
             'icon_key' => ['nullable', 'string', 'max:80'],
         ]);
 
+        if ($this->isCanonicalSiteLocation($location)) {
+            $siteData = ['name' => $data['name']];
+            if (array_key_exists('description', $data)) {
+                $siteData['description'] = $data['description'];
+            }
+            if (array_key_exists('iconKey', $data) || array_key_exists('icon_key', $data)) {
+                $siteData['iconKey'] = $data['iconKey'] ?? $data['icon_key'];
+            }
+            $result = $this->siteLocationCatalog->update($location->id, $siteData);
+            if ($result['duplicate']) {
+                throw ValidationException::withMessages(['name' => 'This site location already exists under the selected parent.']);
+            }
+
+            return response()->json([
+                'data' => $this->formatLocation($result['row']->load('activeChildren')),
+            ]);
+        }
+
         $name = Str::of((string) $data['name'])->squish()->toString();
         $normalized = $this->normalizeName($name);
         $duplicate = InspectionLocation::query()
@@ -155,6 +201,12 @@ class InspectionLocationController extends Controller
         $this->ensureInspectionPermission($request);
         $location = $this->findActiveLocation($locationId);
 
+        if ($this->isCanonicalSiteLocation($location)) {
+            $this->siteLocationCatalog->archive($location->id);
+
+            return response()->noContent();
+        }
+
         DB::transaction(function () use ($location) {
             $this->archiveLocationTree($location);
         });
@@ -170,7 +222,7 @@ class InspectionLocationController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      * @return array{key: string, label: string}
      */
     private function resolveInspectionType(Request $request, array $payload = []): array
@@ -218,6 +270,19 @@ class InspectionLocationController extends Controller
             ->where('inspection_location_id', $location->id)
             ->where('inspection_type_key', $typeKey)
             ->exists();
+    }
+
+    private function isSiteType(string $typeKey): bool
+    {
+        return array_key_exists($typeKey, InspectionSiteLocationCatalogService::SITE_TYPES);
+    }
+
+    private function isCanonicalSiteLocation(InspectionLocation $location): bool
+    {
+        return $this->isLocationLinkedToType(
+            $location,
+            InspectionSiteLocationCatalogService::FIRE_TYPE_KEY,
+        );
     }
 
     private function nextSortOrder(?int $parentId): int

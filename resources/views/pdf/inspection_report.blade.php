@@ -17,6 +17,7 @@
     $location = $viewData['location'];
     $description = $viewData['description'];
     $reportEvidence = $viewData['reportEvidence'];
+    $hse = $viewData['hse'];
     $sectionData = $viewData['sections'];
     $inspectionTypeKey = $viewData['inspectionTypeKey'];
     $isErAuxInspection = $viewData['isErAuxInspection'];
@@ -58,30 +59,12 @@
     $highAngleInspectionDate = trim((string) ($record['highAngleInspectionDate'] ?? $record['high_angle_inspection_date'] ?? ''));
     $scbaInspectedBy = trim((string) ($record['scbaInspectedBy'] ?? $record['scba_inspected_by'] ?? ''));
     $scbaInspectionDate = trim((string) ($record['scbaInspectionDate'] ?? $record['scba_inspection_date'] ?? ''));
-    $hseInspectedBy = trim((string) ($record['hseInspectedBy'] ?? $record['hse_inspected_by'] ?? ''));
-    $hseInspectionDate = trim((string) ($record['hseInspectionDate'] ?? $record['hse_inspection_date'] ?? ''));
-    $hseSelections = $sectionData['hseSelections'];
-    $hseSelectionLabels = [
-        'areaSatisfactory' => 'Area Satisfactory',
-        'unsafeAct' => 'Unsafe Act',
-        'unsafeCondition' => 'Unsafe Condition',
-        'environmental' => 'Environmental',
-    ];
-    $hseDetailFields = [
-        'areaSatisfactory' => ['label' => 'Area Condition Remarks', 'camel' => 'hseAreaConditionRemarks', 'snake' => 'hse_area_condition_remarks'],
-        'unsafeAct' => ['label' => 'Unsafe Act Details', 'camel' => 'hseUnsafeActDetails', 'snake' => 'hse_unsafe_act_details'],
-        'unsafeCondition' => ['label' => 'Unsafe Condition Details', 'camel' => 'hseUnsafeConditionDetails', 'snake' => 'hse_unsafe_condition_details'],
-        'environmental' => ['label' => 'Environmental Details', 'camel' => 'hseEnvironmentalDetails', 'snake' => 'hse_environmental_details'],
-    ];
-    $hseSeverity = trim((string) ($record['hseSeverity'] ?? $record['hse_severity'] ?? ''));
-    $hseOptionalFields = [
-        ['label' => 'Immediate Action', 'camel' => 'hseImmediateAction', 'snake' => 'hse_immediate_action'],
-        ['label' => 'Corrective Action', 'camel' => 'hseCorrectiveAction', 'snake' => 'hse_corrective_action'],
-        ['label' => 'Responsible Person', 'camel' => 'hseResponsiblePerson', 'snake' => 'hse_responsible_person'],
-        ['label' => 'Target Date', 'camel' => 'hseTargetDate', 'snake' => 'hse_target_date'],
-        ['label' => 'General HSE Remarks', 'camel' => 'hseRemarks', 'snake' => 'hse_remarks'],
-    ];
-    $hasHseObservation = $isHseInspection && (count($hseSelections) > 0 || $hseInspectedBy !== '' || $hseInspectionDate !== '');
+    $hseInspectedBy = $hse['inspectedBy'];
+    $hseInspectionDate = $hse['inspectionDate'];
+    $hseSelections = $hse['selections'];
+    $hseSelectionLabels = $hse['selectionLabels'];
+    $hseSeverity = $hse['severity'];
+    $hasHseObservation = $isHseInspection && $hse['hasObservation'];
     $submittedBy = trim((string) ($record['submittedBy'] ?? ''));
     $submittedAtRaw = trim((string) ($record['submittedAt'] ?? ''));
     $inspectionActor = is_array($record['inspectionActor'] ?? null) ? $record['inspectionActor'] : [];

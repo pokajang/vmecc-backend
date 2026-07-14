@@ -3,13 +3,17 @@
 namespace App\Services;
 
 use App\Models\ReportMedia;
-
+use App\Services\Inspection\HsePayloadService;
 use App\Support\Inspection\FrtDailyReference;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class InspectionPayloadService
 {
+    public function __construct(
+        private readonly HsePayloadService $hsePayloadService,
+    ) {}
+
     private const INSPECTION_MAX_PHOTO_COUNT = 10;
 
     private const INSPECTION_MAX_PHOTO_BYTES = 1572864; // 1.5 MB
@@ -31,10 +35,6 @@ class InspectionPayloadService
     private const INSPECTION_HYDRAULIC_STATUS_VALUES = ['OK', 'Defect', 'N/A'];
 
     private const INSPECTION_SCBA_STATUS_VALUES = ['Good', 'Not Good'];
-
-    private const INSPECTION_HSE_SELECTION_VALUES = ['areaSatisfactory', 'unsafeAct', 'unsafeCondition', 'environmental'];
-
-    private const INSPECTION_HSE_SEVERITY_VALUES = ['Low', 'Medium', 'High', 'Critical'];
 
     private const INSPECTION_FIRE_EXTINGUISHER_STATUS_VALUES = [
         'physicalCondition' => ['Good', 'Not Good', 'N/A'],
@@ -392,49 +392,7 @@ class InspectionPayloadService
             unset($payload['scba_custom_sections']);
         }
 
-        $payload = $this->normalizeInspectionHsePayload($payload);
-
-        return $payload;
-    }
-
-    private function normalizeInspectionHsePayload(array $payload): array
-    {
-        $fields = [
-            'hseInspectedBy',
-            'hseInspectionDate',
-            'hseAreaConditionRemarks',
-            'hseUnsafeActDetails',
-            'hseUnsafeConditionDetails',
-            'hseEnvironmentalDetails',
-            'hseImmediateAction',
-            'hseCorrectiveAction',
-            'hseResponsiblePerson',
-            'hseTargetDate',
-            'hseRemarks',
-        ];
-
-        foreach ($fields as $field) {
-            $snakeField = Str::snake($field);
-            if (array_key_exists($field, $payload) || array_key_exists($snakeField, $payload)) {
-                $payload[$field] = trim((string) ($payload[$field] ?? $payload[$snakeField] ?? ''));
-                unset($payload[$snakeField]);
-            }
-        }
-
-        if (array_key_exists('hseSelections', $payload) || array_key_exists('hse_selections', $payload)) {
-            $payload['hseSelections'] = $this->normalizeInspectionHseSelections(
-                $payload['hseSelections'] ?? $payload['hse_selections']
-            );
-            unset($payload['hse_selections']);
-        }
-
-        if (array_key_exists('hseSeverity', $payload) || array_key_exists('hse_severity', $payload)) {
-            $payload['hseSeverity'] = $this->normalizeInspectionHseSeverity(
-                $payload['hseSeverity'] ?? $payload['hse_severity'] ?? '',
-                'payload.hseSeverity'
-            );
-            unset($payload['hse_severity']);
-        }
+        $payload = $this->hsePayloadService->normalize($payload);
 
         return $payload;
     }
@@ -1067,8 +1025,7 @@ class InspectionPayloadService
         mixed $sections,
         string $fieldPath,
         bool $validateCompleteness = true
-    ): array
-    {
+    ): array {
         if (! is_array($sections)) {
             throw ValidationException::withMessages([
                 $fieldPath => ['SCBA custom sections must be an array.'],
@@ -1385,76 +1342,20 @@ class InspectionPayloadService
         return Str::of($inspectionType)->squish()->lower()->toString() === 'health safety environment inspection';
     }
 
+    private function hasExplicitHsePayloadVersion(array $payload): bool
+    {
+        if (! array_key_exists('hsePayloadVersion', $payload) && ! array_key_exists('hse_payload_version', $payload)) {
+            return false;
+        }
+
+        $value = $payload['hsePayloadVersion'] ?? $payload['hse_payload_version'] ?? null;
+
+        return ! in_array($value, [null, '', 0, '0'], true);
+    }
+
     private function isGeneralInspectionType(string $inspectionType): bool
     {
         return Str::of($inspectionType)->squish()->lower()->toString() === 'general inspection';
-    }
-
-    private function validateInspectionHsePayload(array $payload): void
-    {
-        $inspectedBy = trim((string) ($payload['hseInspectedBy'] ?? $payload['hse_inspected_by'] ?? ''));
-        $inspectionDate = trim((string) ($payload['hseInspectionDate'] ?? $payload['hse_inspection_date'] ?? ''));
-        $selections = $this->normalizeInspectionHseSelections($payload['hseSelections'] ?? $payload['hse_selections'] ?? []);
-        $severity = $this->normalizeInspectionHseSeverity($payload['hseSeverity'] ?? $payload['hse_severity'] ?? '', 'payload.hseSeverity');
-
-        if ($inspectedBy === '') {
-            throw ValidationException::withMessages([
-                'payload.hseInspectedBy' => ['HSE inspected by is required.'],
-            ]);
-        }
-
-        if ($inspectionDate === '') {
-            throw ValidationException::withMessages([
-                'payload.hseInspectionDate' => ['HSE inspection date is required.'],
-            ]);
-        }
-
-        if ($selections === []) {
-            throw ValidationException::withMessages([
-                'payload.hseSelections' => ['Select Area Satisfactory or at least one HSE finding.'],
-            ]);
-        }
-
-        if (in_array('areaSatisfactory', $selections, true) && count($selections) > 1) {
-            throw ValidationException::withMessages([
-                'payload.hseSelections' => ['Area Satisfactory cannot be combined with HSE findings.'],
-            ]);
-        }
-
-        if (in_array('areaSatisfactory', $selections, true)) {
-            $remarks = trim((string) ($payload['hseAreaConditionRemarks'] ?? $payload['hse_area_condition_remarks'] ?? ''));
-            if ($remarks === '') {
-                throw ValidationException::withMessages([
-                    'payload.hseAreaConditionRemarks' => ['Area condition remarks are required for Area Satisfactory.'],
-                ]);
-            }
-
-            return;
-        }
-
-        if ($severity === '') {
-            throw ValidationException::withMessages([
-                'payload.hseSeverity' => ['HSE severity is required when findings are selected.'],
-            ]);
-        }
-
-        $detailFields = [
-            'unsafeAct' => ['field' => 'hseUnsafeActDetails', 'snake' => 'hse_unsafe_act_details', 'message' => 'Unsafe act details are required.'],
-            'unsafeCondition' => ['field' => 'hseUnsafeConditionDetails', 'snake' => 'hse_unsafe_condition_details', 'message' => 'Unsafe condition details are required.'],
-            'environmental' => ['field' => 'hseEnvironmentalDetails', 'snake' => 'hse_environmental_details', 'message' => 'Environmental details are required.'],
-        ];
-
-        foreach ($detailFields as $selection => $meta) {
-            if (! in_array($selection, $selections, true)) {
-                continue;
-            }
-
-            if (trim((string) ($payload[$meta['field']] ?? $payload[$meta['snake']] ?? '')) === '') {
-                throw ValidationException::withMessages([
-                    'payload.'.$meta['field'] => [$meta['message']],
-                ]);
-            }
-        }
     }
 
     private function validateInspectionHighAngleSessionMeta(array $payload): void
@@ -1671,64 +1572,6 @@ class InspectionPayloadService
 
         throw ValidationException::withMessages([
             $fieldPath => ['Fire extinguisher status value is not valid for this check.'],
-        ]);
-    }
-
-    private function normalizeInspectionHseSelections(mixed $value): array
-    {
-        $source = is_array($value) ? $value : [$value];
-        $rows = [];
-
-        foreach ($source as $item) {
-            $normalized = $this->normalizeInspectionHseSelection($item);
-            if ($normalized !== '' && ! in_array($normalized, $rows, true)) {
-                $rows[] = $normalized;
-            }
-        }
-
-        return $rows;
-    }
-
-    private function normalizeInspectionHseSelection(mixed $value): string
-    {
-        $key = strtolower((string) preg_replace('/[^a-z0-9]+/i', '', trim((string) $value)));
-        $aliases = [
-            'areasatisfactory' => 'areaSatisfactory',
-            'satisfactory' => 'areaSatisfactory',
-            'unsafeact' => 'unsafeAct',
-            'unsafecondition' => 'unsafeCondition',
-            'environmental' => 'environmental',
-            'environment' => 'environmental',
-        ];
-
-        if (isset($aliases[$key])) {
-            return $aliases[$key];
-        }
-
-        if (in_array((string) $value, self::INSPECTION_HSE_SELECTION_VALUES, true)) {
-            return (string) $value;
-        }
-
-        throw ValidationException::withMessages([
-            'payload.hseSelections' => ['HSE selection value is not valid.'],
-        ]);
-    }
-
-    private function normalizeInspectionHseSeverity(mixed $value, string $fieldPath): string
-    {
-        $severity = trim((string) $value);
-        if ($severity === '') {
-            return '';
-        }
-
-        foreach (self::INSPECTION_HSE_SEVERITY_VALUES as $allowed) {
-            if (strcasecmp($severity, $allowed) === 0) {
-                return $allowed;
-            }
-        }
-
-        throw ValidationException::withMessages([
-            $fieldPath => ['HSE severity must be Low, Medium, High, or Critical.'],
         ]);
     }
 
@@ -2004,8 +1847,9 @@ class InspectionPayloadService
         if (
             $this->isHseInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
             || $this->hasInspectionRows($payload, 'hseSelections', 'hse_selections')
+            || $this->hasExplicitHsePayloadVersion($payload)
         ) {
-            $this->validateInspectionHsePayload($payload);
+            $this->hsePayloadService->validateForSubmit($payload);
         }
 
         $payloadJson = json_encode($payload);
@@ -2035,6 +1879,7 @@ class InspectionPayloadService
             $managedPhotoBytes = $this->managedInspectionPhotoBytes($photo, $fieldPath);
             if ($managedPhotoBytes !== null) {
                 $totalPhotoBytes += $managedPhotoBytes;
+
                 continue;
             }
 
@@ -2161,15 +2006,13 @@ class InspectionPayloadService
             );
         }
 
-        if ($this->hasInspectionRows($payload, 'hseSelections', 'hse_selections')) {
-            $this->normalizeInspectionHseSelections($payload['hseSelections'] ?? $payload['hse_selections']);
-        }
-
-        if (array_key_exists('hseSeverity', $payload) || array_key_exists('hse_severity', $payload)) {
-            $this->normalizeInspectionHseSeverity(
-                $payload['hseSeverity'] ?? $payload['hse_severity'] ?? '',
-                'payload.hseSeverity'
-            );
+        if (
+            $this->isHseInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
+            || $this->hasInspectionRows($payload, 'hseSelections', 'hse_selections')
+            || array_key_exists('hsePayloadVersion', $payload)
+            || array_key_exists('hse_payload_version', $payload)
+        ) {
+            $this->hsePayloadService->validateForDraft($payload);
         }
 
         $payloadJson = json_encode($payload);
@@ -2199,6 +2042,7 @@ class InspectionPayloadService
             $managedPhotoBytes = $this->managedInspectionPhotoBytes($photo, $fieldPath);
             if ($managedPhotoBytes !== null) {
                 $totalPhotoBytes += $managedPhotoBytes;
+
                 continue;
             }
 

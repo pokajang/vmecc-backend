@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\AssignmentAuthorizationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class LeaveManagementController extends Controller
 {
@@ -19,6 +20,15 @@ class LeaveManagementController extends Controller
     public function index(Request $request): JsonResponse
     {
         $query = Leave::with(['user', 'attachment'])->orderByDesc('applied_at')->orderByDesc('id');
+        $action = strtolower(trim((string) $request->input('action', '')));
+        if ($action !== '' && ! in_array($action, ['review', 'recommend', 'approve'], true)) {
+            throw ValidationException::withMessages([
+                'action' => ['Action must be review, recommend, or approve.'],
+            ]);
+        }
+        if ($action !== '') {
+            $query->where('status', 'Pending')->where('workflow_stage', $action);
+        }
 
         if ($request->filled('status') && $request->input('status') !== 'All') {
             $query->where('status', $request->input('status'));
@@ -51,7 +61,11 @@ class LeaveManagementController extends Controller
         $dir = $dir === 'asc' ? 'asc' : 'desc';
         $query->orderBy($col, $dir);
 
-        $rows = $query->get()->map(fn ($leave) => $this->formatLeaveWithOwner($leave, $request->user()));
+        $rows = $query->get()
+            ->map(fn ($leave) => $this->formatLeaveWithOwner($leave, $request->user()))
+            ->when($action !== '', fn ($rows) => $rows->filter(
+                fn (array $row) => in_array($action, $row['permitted_actions'] ?? [], true),
+            )->values());
 
         return response()->json(['data' => $rows]);
     }
@@ -114,6 +128,17 @@ class LeaveManagementController extends Controller
         };
         if (! $primaryAction) {
             return [];
+        }
+
+        $snapshot = is_array($leave->workflow_snapshot) ? $leave->workflow_snapshot : [];
+        if (($snapshot['enforceDistinctApprovers'] ?? false) === true) {
+            $hasActed = collect($leave->approval_history ?: [])->contains(
+                fn ($entry) => (string) ($entry['byUserId'] ?? '') === (string) $actor->id
+                    && in_array((string) ($entry['action'] ?? ''), ['Reviewed', 'Recommended', 'Approved'], true),
+            );
+            if ($hasActed) {
+                return [];
+            }
         }
 
         return [$primaryAction, 'reject', 'request_correction', 'cancel'];

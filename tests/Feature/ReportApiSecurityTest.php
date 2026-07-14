@@ -57,10 +57,32 @@ class ReportApiSecurityTest extends TestCase
 
         $all = $this->getJson('/api/reports?reportType=inspection&scope=all');
         $all->assertOk();
+        $this->assertNotContains(false, collect($all->json('data'))->pluck('canDownloadPdf')->all(), true);
         $this->assertEqualsCanonicalizing(
             ['INS-OWNER-001', 'INS-OTHER-001'],
             collect($all->json('data'))->pluck('displayId')->all(),
         );
+    }
+
+    public function test_owner_without_module_permission_receives_no_pdf_capability(): void
+    {
+        $owner = User::factory()->create(['status' => 'active']);
+        $report = Report::query()->create([
+            'report_uid' => 'erco-owner-without-module-permission',
+            'display_id' => 'ERCO-NO-PERMISSION',
+            'owner_user_id' => $owner->id,
+            'report_type' => 'erco',
+            'status' => 'Submitted',
+            'version' => 1,
+            'revision' => 1,
+            'payload' => $this->validErcoPayload('Zone N'),
+            'submitted_at' => now(),
+        ]);
+
+        $this->actingAs($owner)
+            ->getJson("/api/reports/{$report->report_uid}")
+            ->assertOk()
+            ->assertJsonPath('data.canDownloadPdf', false);
     }
 
     public function test_user_cannot_transition_other_users_report(): void

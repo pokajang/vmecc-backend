@@ -74,4 +74,45 @@ class InspectionReportViewDataBuilderTest extends TestCase
         $this->assertSame('Portable Pump', $viewData['sections']['erAuxChecks'][0]['equipment']);
         $this->assertCount(1, $viewData['sections']['erAuxChecks']);
     }
+
+    public function test_it_builds_a_versioned_hse_view_model_that_owns_report_evidence(): void
+    {
+        $viewData = app(InspectionReportViewDataBuilder::class)->build([
+            'incidentType' => 'Health Safety Environment Inspection',
+            'hsePayloadVersion' => 2,
+            'selectedLocation' => 'Zone A > Dock',
+            'inspectedAt' => '2026-07-14T09:30:00+08:00',
+            'hseSelections' => ['unsafeCondition'],
+            'hseUnsafeConditionDetails' => 'Open edge without protection.',
+            'hseImmediateAction' => 'Access was stopped.',
+            'hseSeverity' => 'Critical',
+            'photos' => [[
+                'description' => 'Open edge',
+                'url' => 'data:image/png;base64,AA==',
+            ]],
+        ]);
+
+        $this->assertTrue($viewData['hse']['isVersion2']);
+        $this->assertTrue($viewData['hse']['consumesReportEvidence']);
+        $this->assertSame('', $viewData['hse']['severity']);
+        $this->assertSame('Description', $viewData['hse']['details'][0]['label']);
+        $this->assertSame('Immediate Corrective Action', $viewData['hse']['optional'][0]['label']);
+        $this->assertSame(1, $viewData['hse']['photoCount']);
+    }
+
+    public function test_hse_v2_keeps_generic_evidence_fallback_when_no_photo_can_render(): void
+    {
+        $viewData = app(InspectionReportViewDataBuilder::class)->build([
+            'incidentType' => 'Health Safety Environment Inspection',
+            'hsePayloadVersion' => 2,
+            'hseSelections' => ['unsafeAct'],
+            'hseUnsafeActDetails' => 'Unsafe act imported from an incomplete historical record.',
+            'reportRemarks' => 'The original image is unavailable; see the source record.',
+            'photos' => [],
+        ]);
+
+        $this->assertFalse($viewData['hse']['consumesReportEvidence']);
+        $this->assertTrue($viewData['reportEvidence']['visible']);
+        $this->assertSame(0, $viewData['hse']['photoCount']);
+    }
 }

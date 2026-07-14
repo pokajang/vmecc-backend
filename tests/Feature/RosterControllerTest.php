@@ -123,6 +123,25 @@ class RosterControllerTest extends TestCase
         $this->assertNotContains('2026-05-02', $dates);
     }
 
+    public function test_draft_attention_filter_returns_complete_days_without_omitting_published_shifts(): void
+    {
+        $this->actingAsRosterManager();
+        $teamAlpha = $this->makeTeam('Alpha');
+        $teamBeta = $this->makeTeam('Beta');
+
+        Roster::create(['date' => '2026-05-01', 'shift' => 'day', 'team_id' => $teamAlpha->id, 'status' => 'draft']);
+        Roster::create(['date' => '2026-05-01', 'shift' => 'night', 'team_id' => $teamBeta->id, 'status' => 'published']);
+        Roster::create(['date' => '2026-05-02', 'shift' => 'day', 'team_id' => $teamAlpha->id, 'status' => 'published']);
+
+        $this->getJson('/api/rosters?attention=draft')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.date', '2026-05-01')
+            ->assertJsonPath('data.0.status', 'draft')
+            ->assertJsonPath('data.0.shifts.day.status', 'draft')
+            ->assertJsonPath('data.0.shifts.night.status', 'published');
+    }
+
     public function test_index_rejects_range_over_366_days(): void
     {
         $this->actingAsRosterManager();

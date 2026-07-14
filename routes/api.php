@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ActionQueueController;
 use App\Http\Controllers\AiHelperController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthController;
@@ -13,6 +14,7 @@ use App\Http\Controllers\InspectionEquipmentController;
 use App\Http\Controllers\InspectionFireExtinguisherController;
 use App\Http\Controllers\InspectionFireTruckController;
 use App\Http\Controllers\InspectionLocationController;
+use App\Http\Controllers\InspectionSiteLocationController;
 use App\Http\Controllers\InspectionReportPdfController;
 use App\Http\Controllers\InspectionScbaCatalogController;
 use App\Http\Controllers\InspectionSessionController;
@@ -92,8 +94,10 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->prefi
     Route::get('reports', [DashboardController::class, 'reportStats'])
         ->middleware(['permission.assignment:self.dashboard', 'permission.assignment:dashboard.reports.view']);
 });
+Route::get('dashboard/action-queue', ActionQueueController::class)
+    ->middleware(['session.auth', 'session.csrf', 'system.maintenance', 'permission.assignment:self.dashboard']);
 
-Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'throttle:ai-helper'])
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])
     ->prefix('ai-helper')
     ->group(function () {
         Route::get('context', [AiHelperController::class, 'context']);
@@ -103,14 +107,17 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'thrott
         Route::get('knowledge', [AiHelperController::class, 'knowledge']);
         Route::get('knowledge/{knowledgeId}', [AiHelperController::class, 'knowledgeDetail']);
         Route::get('knowledge/{knowledgeId}/file', [AiHelperController::class, 'knowledgeFile']);
-        Route::post('knowledge', [AiHelperController::class, 'uploadKnowledge']);
+        Route::post('knowledge', [AiHelperController::class, 'uploadKnowledge'])
+            ->middleware('throttle:ai-helper-knowledge-upload');
         Route::patch('knowledge/{knowledgeId}', [AiHelperController::class, 'updateKnowledge']);
         Route::delete('knowledge/{knowledgeId}', [AiHelperController::class, 'destroyKnowledge']);
         Route::post('messages/{messageId}/report', [AiHelperController::class, 'reportMessage']);
-        Route::post('messages/stream', [AiHelperController::class, 'stream']);
+        Route::post('messages/stream', [AiHelperController::class, 'stream'])
+            ->middleware('throttle:ai-helper-generation');
         Route::middleware('permission.assignment:*')->group(function () {
             Route::get('diagnostics', [AiHelperController::class, 'diagnostics']);
-            Route::post('knowledge/markdown', [AiHelperController::class, 'uploadMarkdownKnowledge']);
+            Route::post('knowledge/markdown', [AiHelperController::class, 'uploadMarkdownKnowledge'])
+                ->middleware('throttle:ai-helper-knowledge-upload');
             Route::get('knowledge-review', [AiHelperController::class, 'adminKnowledge']);
             Route::get('knowledge-review/{knowledgeId}', [AiHelperController::class, 'adminKnowledgeDetail']);
             Route::patch('knowledge-review/{knowledgeId}', [AiHelperController::class, 'updateAdminKnowledge']);
@@ -217,9 +224,11 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::delete('workflow/notifications', [WorkflowNotificationController::class, 'dismissAll']);
     Route::delete('workflow/notifications/{id}', [WorkflowNotificationController::class, 'dismiss']);
 
-    Route::post('reports/erco/pdf', [ErcoReportPdfController::class, 'download']);
-    Route::post('reports/drill/pdf', [DrillReportPdfController::class, 'download']);
-    Route::post('reports/inspection/pdf', [InspectionReportPdfController::class, 'download']);
+    Route::middleware('throttle:report-pdf-downloads')->group(function () {
+        Route::post('reports/erco/pdf', [ErcoReportPdfController::class, 'download']);
+        Route::post('reports/drill/pdf', [DrillReportPdfController::class, 'download']);
+        Route::post('reports/inspection/pdf', [InspectionReportPdfController::class, 'download']);
+    });
     Route::get('report-media/health', [ReportMediaController::class, 'health']);
     Route::post('report-media', [ReportMediaController::class, 'store'])->middleware(['throttle:photo-uploads', LimitPhotoUploadConcurrency::class]);
     Route::get('report-media/{mediaId}', [ReportMediaController::class, 'show']);
@@ -232,6 +241,10 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::post('inspection/locations', [InspectionLocationController::class, 'store']);
     Route::patch('inspection/locations/{locationId}', [InspectionLocationController::class, 'update']);
     Route::delete('inspection/locations/{locationId}', [InspectionLocationController::class, 'destroy']);
+    Route::get('inspection/site-locations', [InspectionSiteLocationController::class, 'index']);
+    Route::post('inspection/site-locations', [InspectionSiteLocationController::class, 'store']);
+    Route::patch('inspection/site-locations/{locationId}', [InspectionSiteLocationController::class, 'update']);
+    Route::delete('inspection/site-locations/{locationId}', [InspectionSiteLocationController::class, 'destroy']);
     Route::get('inspection/equipment-options', [InspectionEquipmentController::class, 'index']);
     Route::post('inspection/equipment', [InspectionEquipmentController::class, 'store']);
     Route::patch('inspection/equipment/{equipmentId}', [InspectionEquipmentController::class, 'update']);
@@ -240,6 +253,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::get('inspection/fire-extinguishers/coverage', [InspectionFireExtinguisherController::class, 'coverage']);
     Route::get('inspection/fire-extinguishers/coverage/{extinguisherId}', [InspectionFireExtinguisherController::class, 'coverageDetail']);
     Route::get('inspection/fire-extinguishers/lookup', [InspectionFireExtinguisherController::class, 'lookup']);
+    Route::post('inspection/fire-extinguishers/batch', [InspectionFireExtinguisherController::class, 'storeBatch']);
     Route::post('inspection/fire-extinguishers', [InspectionFireExtinguisherController::class, 'store']);
     Route::patch('inspection/fire-extinguishers/{extinguisherId}', [InspectionFireExtinguisherController::class, 'update']);
     Route::delete('inspection/fire-extinguishers/{extinguisherId}', [InspectionFireExtinguisherController::class, 'destroy']);
