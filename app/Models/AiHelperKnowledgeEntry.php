@@ -75,6 +75,7 @@ class AiHelperKnowledgeEntry extends Model
 
     protected $fillable = [
         'uploaded_by',
+        'source_document_id',
         'module_key',
         'route_key',
         'title',
@@ -154,6 +155,11 @@ class AiHelperKnowledgeEntry extends Model
     public function uploader(): BelongsTo
     {
         return $this->belongsTo(User::class, 'uploaded_by');
+    }
+
+    public function sourceDocument(): BelongsTo
+    {
+        return $this->belongsTo(AiHelperDocument::class, 'source_document_id');
     }
 
     public function reviewer(): BelongsTo

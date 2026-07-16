@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AiHelperDocument;
 use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Models\User;
@@ -58,7 +59,7 @@ class AiHelperKnowledgeService
         $limit = max(1, (int) config('ai_helper.knowledge_retrieval_limit', 6));
 
         $chunks = AiHelperKnowledgeChunk::query()
-            ->with('knowledgeEntry:id,title,source_mime,module_key,route_key,tags,version,uploaded_by,visibility,review_status,status,active,deleted_at')
+            ->with('knowledgeEntry.sourceDocument:id,title')
             ->where('active', true)
             ->where(function ($query) use ($moduleKey, $routeKey) {
                 $this->applyScopeFilter($query, $moduleKey, $routeKey);
@@ -86,6 +87,7 @@ class AiHelperKnowledgeService
                 })
                 ->latest('updated_at')
                 ->limit($limit - $ranked->count())
+                ->with('sourceDocument:id,title')
                 ->get()
                 ->map(fn (AiHelperKnowledgeEntry $entry) => $this->formatEntryGuidance($entry, $moduleKey, $routeKey, $message));
 
@@ -100,14 +102,14 @@ class AiHelperKnowledgeService
 
     /**
      * @param  array<int, array<string, mixed>>  $guidance
-     * @return array<int, array{knowledge_id: int, title: string, source_mime: string, page_start: ?int, page_end: ?int}>
+     * @return array<int, array{document_id: int, title: string, source_mime: string, page_start: ?int, page_end: ?int}>
      */
     public function citationsForGuidance(array $guidance): array
     {
         return collect($guidance)
-            ->filter(fn (array $entry) => (int) ($entry['id'] ?? 0) > 0)
+            ->filter(fn (array $entry) => (int) ($entry['source_document_id'] ?? 0) > 0)
             ->groupBy(fn (array $entry) => implode(':', [
-                (int) $entry['id'],
+                (int) $entry['source_document_id'],
                 (int) ($entry['page_start'] ?? 0),
                 (int) ($entry['page_end'] ?? 0),
             ]))
@@ -115,9 +117,9 @@ class AiHelperKnowledgeService
                 $entry = $entries->first();
 
                 return [
-                    'knowledge_id' => (int) $entry['id'],
-                    'title' => Str::limit(trim((string) ($entry['title'] ?? 'Knowledge source')), 140, ''),
-                    'source_mime' => trim((string) ($entry['source_mime'] ?? 'application/pdf')),
+                    'document_id' => (int) $entry['source_document_id'],
+                    'title' => Str::limit(trim((string) ($entry['title'] ?? 'Reference document')), 140, ''),
+                    'source_mime' => 'application/pdf',
                     'page_start' => isset($entry['page_start']) ? (int) $entry['page_start'] : null,
                     'page_end' => isset($entry['page_end']) ? (int) $entry['page_end'] : null,
                 ];
@@ -190,12 +192,14 @@ TEXT;
     public function corpusReadiness(): array
     {
         $counts = AiHelperKnowledgeEntry::query()
+            ->where('source_mime', 'text/markdown')
             ->selectRaw('status, count(*) as aggregate')
             ->groupBy('status')
             ->pluck('aggregate', 'status')
             ->map(static fn ($count) => (int) $count)
             ->all();
         $blocking = AiHelperKnowledgeEntry::query()
+            ->where('source_mime', 'text/markdown')
             ->where('status', AiHelperKnowledgeEntry::STATUS_PROCESSING)
             ->where('active', false)
             ->count();
@@ -207,25 +211,25 @@ TEXT;
         ];
     }
 
-    /** @return array{total: int, truncated: bool, entries: array<int, array{id: int, title: string, status: string, scope_type: ?string, module_key: ?string}>} */
+    /** @return array{total: int, truncated: bool, entries: array<int, array{document_id: int, title: string}>} */
     public function catalogueForUser(?User $user): array
     {
         $limit = max(1, (int) config('ai_helper.knowledge_catalogue_limit', 250));
-        $query = AiHelperKnowledgeEntry::query()
+        $query = AiHelperDocument::query()
             ->where(function ($query) use ($user) {
-                $this->applyUsableEntryFilter($query, $user);
+                $query->where('visibility', AiHelperDocument::VISIBILITY_SHARED);
+                if ($user) {
+                    $query->orWhere('uploaded_by', $user->id);
+                }
             });
         $total = (clone $query)->count();
         $entries = $query
             ->orderBy('title')
             ->limit($limit)
-            ->get(['id', 'title', 'status', 'scope_type', 'module_key'])
-            ->map(static fn (AiHelperKnowledgeEntry $entry) => [
-                'id' => $entry->id,
-                'title' => $entry->title,
-                'status' => $entry->status,
-                'scope_type' => $entry->scope_type,
-                'module_key' => $entry->module_key,
+            ->get(['id', 'title'])
+            ->map(static fn (AiHelperDocument $document) => [
+                'document_id' => $document->id,
+                'title' => $document->title,
             ])
             ->all();
 
@@ -274,6 +278,7 @@ TEXT;
     private function applyUsableEntryFilter($query, ?User $user): void
     {
         $query
+            ->where('source_mime', 'text/markdown')
             ->where('active', true)
             ->whereIn('status', [
                 AiHelperKnowledgeEntry::STATUS_ACTIVE,
@@ -298,11 +303,11 @@ TEXT;
 
         return [
             'id' => $entry?->id,
+            'source_document_id' => $entry?->source_document_id,
             'chunk_id' => $chunk->id,
             'module_key' => $chunk->module_key,
             'route_key' => $chunk->route_key,
-            'title' => $entry?->title ?: 'Knowledge source',
-            'source_mime' => $entry?->source_mime ?: 'application/pdf',
+            'title' => $entry?->sourceDocument?->title ?: 'Internal VMECC guidance',
             'content' => $chunk->content,
             'tags' => $entry?->tags ?: [],
             'version' => $entry?->version ?: 1,
@@ -319,10 +324,10 @@ TEXT;
 
         return [
             'id' => $entry->id,
+            'source_document_id' => $entry->source_document_id,
             'module_key' => $entry->module_key,
             'route_key' => $entry->route_key,
-            'title' => $entry->title,
-            'source_mime' => $entry->source_mime ?: 'application/pdf',
+            'title' => $entry->sourceDocument?->title ?: 'Internal VMECC guidance',
             'content' => $content,
             'tags' => $entry->tags ?: [],
             'version' => $entry->version,

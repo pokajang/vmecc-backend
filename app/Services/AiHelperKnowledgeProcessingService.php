@@ -5,21 +5,14 @@ namespace App\Services;
 use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Models\AiHelperKnowledgePage;
-use App\Services\AiHelper\PdfKnowledgeExtractionResult;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
 
 class AiHelperKnowledgeProcessingService
 {
-    public function __construct(
-        private readonly AiHelperPdfKnowledgeExtractor $pdfExtractor,
-        private readonly AiHelperKnowledgeRuntimeService $runtime,
-    ) {}
-
     public function process(int $entryId, ?string $expectedRunId = null): void
     {
         $entry = AiHelperKnowledgeEntry::query()->find($entryId);
@@ -34,55 +27,7 @@ class AiHelperKnowledgeProcessingService
                 return;
             }
 
-            $sourcePath = trim((string) $entry->source_path);
-            if ($sourcePath === '') {
-                throw new RuntimeException('The original source file is unavailable for ingestion.');
-            }
-
-            $this->runtime->assertPdfIngestionReady();
-            $extractionResult = $this->pdfExtractor->extract(
-                Storage::disk('local')->path($sourcePath),
-                (int) config('ai_helper.knowledge_extract_max_characters', 0),
-            );
-            $extraction = $extractionResult instanceof PdfKnowledgeExtractionResult
-                ? $extractionResult->toArray()
-                : $extractionResult;
-            if (trim((string) ($extraction['text'] ?? '')) === '') {
-                throw new RuntimeException('No readable text could be extracted from this PDF, including OCR.');
-            }
-            if (! ($extraction['extraction_complete'] ?? trim((string) ($extraction['text'] ?? '')) !== '')) {
-                if ($this->hasPreviousUsableIndex($entry)) {
-                    $this->retainPreviousIndex($entry->id, $expectedRunId, $extraction);
-
-                    return;
-                }
-
-                $this->processTextEntry(
-                    $entry,
-                    (string) $extraction['text'],
-                    null,
-                    $this->pdfMetadata($extraction),
-                    $expectedRunId,
-                    $extraction['pages'] ?? [],
-                    (string) ($extraction['extraction_mode'] ?? 'native'),
-                    false,
-                    false,
-                );
-
-                return;
-            }
-
-            $this->processTextEntry(
-                $entry,
-                (string) $extraction['text'],
-                null,
-                $this->pdfMetadata($extraction),
-                $expectedRunId,
-                $extraction['pages'] ?? [],
-                (string) ($extraction['extraction_mode'] ?? 'native'),
-                true,
-                true,
-            );
+            throw new RuntimeException('PDF ingestion is disabled. Upload PDFs to the reference document library and index approved Markdown instead.');
         } catch (Throwable $e) {
             Log::warning('Ask AI knowledge processing failed', [
                 'knowledge_entry_id' => $entryId,

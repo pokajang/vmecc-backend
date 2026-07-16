@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AiHelperDocument;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Models\AiHelperThread;
 use App\Models\User;
@@ -9,9 +10,7 @@ use Illuminate\Support\Str;
 
 class AiHelperAuthorizationService
 {
-    public function __construct(private readonly AssignmentAuthorizationService $authorization)
-    {
-    }
+    public function __construct(private readonly AssignmentAuthorizationService $authorization) {}
 
     public function isSystemAdministrator(?User $user): bool
     {
@@ -35,5 +34,10 @@ class AiHelperAuthorizationService
     public function canManageKnowledge(User $user, AiHelperKnowledgeEntry $entry): bool
     {
         return (int) $entry->uploaded_by === (int) $user->id || $this->isSystemAdministrator($user);
+    }
+
+    public function canManageDocument(User $user, AiHelperDocument $document): bool
+    {
+        return (int) $document->uploaded_by === (int) $user->id || $this->isSystemAdministrator($user);
     }
 }

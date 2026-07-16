@@ -57,6 +57,23 @@ class RouteServiceProvider extends ServiceProvider
             ];
         });
 
+        RateLimiter::for('ai-helper-document-upload', function (Request $request) {
+            $response = fn (Request $request, array $headers) => response()->json([
+                'message' => 'Too many reference document uploads. Wait briefly and retry.',
+                'code' => 'AI_HELPER_DOCUMENT_UPLOAD_RATE_LIMITED',
+                'retry_after' => (int) ($headers['Retry-After'] ?? 60),
+            ], 429, $headers);
+
+            return [
+                Limit::perMinute(max(1, (int) config('ai_helper.knowledge_upload_rate_limit_per_minute', 6)))
+                    ->by('user:'.($request->user()?->id ?: $request->ip()))
+                    ->response($response),
+                Limit::perMinute(max(1, (int) config('ai_helper.knowledge_upload_ip_rate_limit_per_minute', 30)))
+                    ->by('ip:'.$request->ip())
+                    ->response($response),
+            ];
+        });
+
         RateLimiter::for('photo-uploads', function (Request $request) {
             $response = fn (Request $request, array $headers) => response()->json([
                 'message' => 'Too many photo uploads. Wait briefly and retry.',

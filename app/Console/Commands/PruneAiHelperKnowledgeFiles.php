@@ -4,7 +4,6 @@ namespace App\Console\Commands;
 
 use App\Models\AiHelperKnowledgeEntry;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 
 class PruneAiHelperKnowledgeFiles extends Command
@@ -60,33 +59,7 @@ class PruneAiHelperKnowledgeFiles extends Command
                 }
             });
 
-        $temporaryPruned = 0;
-        $temporaryCutoff = now()->subHours(max(1, (int) config(
-            'ai_helper.knowledge_ocr_temporary_retention_hours',
-            24,
-        )))->getTimestamp();
-        $temporaryRoot = storage_path('app/ai-helper/knowledge-ocr');
-        if (File::isDirectory($temporaryRoot)) {
-            foreach (File::directories($temporaryRoot) as $directory) {
-                $modifiedAt = File::lastModified($directory);
-                if ($modifiedAt > $temporaryCutoff) {
-                    continue;
-                }
-
-                $this->line(sprintf(
-                    '%s stale OCR temporary directory: %s',
-                    $dryRun ? 'Would prune' : 'Pruning',
-                    basename($directory),
-                ));
-                if (! $dryRun) {
-                    File::deleteDirectory($directory);
-                }
-                $temporaryPruned++;
-            }
-        }
-
         $this->info(($dryRun ? 'Matched' : 'Pruned').' '.$pruned.' Ask AI knowledge file(s).');
-        $this->info(($dryRun ? 'Matched' : 'Pruned').' '.$temporaryPruned.' stale OCR temporary item(s).');
 
         return self::SUCCESS;
     }

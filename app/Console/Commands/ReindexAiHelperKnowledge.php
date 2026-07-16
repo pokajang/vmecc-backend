@@ -6,7 +6,6 @@ use App\Jobs\ProcessAiHelperKnowledgeEntry;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Services\AiHelperKnowledgeLifecycleService;
 use App\Services\AiHelperKnowledgeProcessingService;
-use App\Services\AiHelperKnowledgeRuntimeService;
 use Illuminate\Console\Command;
 
 class ReindexAiHelperKnowledge extends Command
@@ -17,18 +16,11 @@ class ReindexAiHelperKnowledge extends Command
 
     public function handle(
         AiHelperKnowledgeLifecycleService $lifecycle,
-        AiHelperKnowledgeRuntimeService $runtime,
     ): int {
-        if (AiHelperKnowledgeEntry::query()
-            ->where('source_mime', 'application/pdf')
-            ->whereNotNull('source_path')
-            ->exists()) {
-            $runtime->assertPdfIngestionReady();
-        }
-
         $processed = 0;
         $failed = 0;
         AiHelperKnowledgeEntry::query()
+            ->where('source_mime', 'text/markdown')
             ->whereNotNull('source_path')
             ->where('status', '!=', AiHelperKnowledgeEntry::STATUS_DELETING)
             ->orderBy('id')

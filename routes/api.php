@@ -105,13 +105,12 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])
         Route::get('threads', [AiHelperController::class, 'threads']);
         Route::get('thread', [AiHelperController::class, 'thread']);
         Route::delete('threads/{threadId}', [AiHelperController::class, 'destroyThread']);
-        Route::get('knowledge', [AiHelperController::class, 'knowledge']);
-        Route::get('knowledge/{knowledgeId}', [AiHelperController::class, 'knowledgeDetail']);
-        Route::get('knowledge/{knowledgeId}/file', [AiHelperController::class, 'knowledgeFile']);
-        Route::post('knowledge', [AiHelperController::class, 'uploadKnowledge'])
-            ->middleware('throttle:ai-helper-knowledge-upload');
-        Route::patch('knowledge/{knowledgeId}', [AiHelperController::class, 'updateKnowledge']);
-        Route::delete('knowledge/{knowledgeId}', [AiHelperController::class, 'destroyKnowledge']);
+        Route::get('documents', [AiHelperController::class, 'documents']);
+        Route::get('documents/{documentId}', [AiHelperController::class, 'documentDetail']);
+        Route::get('documents/{documentId}/file', [AiHelperController::class, 'documentFile']);
+        Route::post('documents', [AiHelperController::class, 'uploadDocument'])
+            ->middleware('throttle:ai-helper-document-upload');
+        Route::delete('documents/{documentId}', [AiHelperController::class, 'destroyDocument']);
         Route::post('messages/{messageId}/report', [AiHelperController::class, 'reportMessage']);
         Route::post('messages/stream', [AiHelperController::class, 'stream'])
             ->middleware('throttle:ai-helper-generation');

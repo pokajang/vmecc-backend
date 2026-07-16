@@ -7,11 +7,10 @@ use App\Http\Requests\AiHelper\ListAiHelperReportsRequest;
 use App\Http\Requests\AiHelper\ReportAiHelperMessageRequest;
 use App\Http\Requests\AiHelper\StreamAiHelperMessageRequest;
 use App\Http\Requests\AiHelper\UpdateAiHelperAdminKnowledgeRequest;
-use App\Http\Requests\AiHelper\UpdateAiHelperKnowledgeRequest;
 use App\Http\Requests\AiHelper\UpdateAiHelperReportRequest;
-use App\Http\Requests\AiHelper\UploadAiHelperKnowledgeRequest;
+use App\Http\Requests\AiHelper\UploadAiHelperDocumentRequest;
 use App\Http\Requests\AiHelper\UploadAiHelperMarkdownKnowledgeRequest;
-use App\Jobs\ProcessAiHelperKnowledgeEntry;
+use App\Models\AiHelperDocument;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Models\AiHelperMessage;
 use App\Models\AiHelperResponseReport;
@@ -20,10 +19,10 @@ use App\Models\User;
 use App\Services\AiHelperApiResponder;
 use App\Services\AiHelperAuthorizationService;
 use App\Services\AiHelperConversationService;
+use App\Services\AiHelperDocumentQuotaService;
 use App\Services\AiHelperKnowledgeLifecycleService;
 use App\Services\AiHelperKnowledgeProcessingService;
 use App\Services\AiHelperKnowledgeQuotaService;
-use App\Services\AiHelperKnowledgeRuntimeService;
 use App\Services\AiHelperKnowledgeService;
 use App\Services\AiHelperMarkdownKnowledgeParser;
 use App\Services\AiHelperOpenAiService;
@@ -50,9 +49,9 @@ class AiHelperController extends Controller
         private readonly AiHelperAuthorizationService $authorization,
         private readonly AiHelperKnowledgeProcessingService $knowledgeProcessor,
         private readonly AiHelperMarkdownKnowledgeParser $markdownParser,
+        private readonly AiHelperDocumentQuotaService $documentQuota,
         private readonly AiHelperKnowledgeQuotaService $knowledgeQuota,
         private readonly AiHelperKnowledgeLifecycleService $knowledgeLifecycle,
-        private readonly AiHelperKnowledgeRuntimeService $knowledgeRuntime,
         private readonly AiHelperConversationService $conversation,
         private readonly AiHelperApiResponder $responder,
     ) {}
@@ -61,8 +60,13 @@ class AiHelperController extends Controller
     {
         try {
             $payload = $request->only(['path', 'route_path', 'route_name', 'title', 'search', 'params']);
+            $context = $this->knowledge->buildContext($payload, $request->user());
 
-            return response()->json(['data' => $this->knowledge->buildContext($payload, $request->user())]);
+            return response()->json(['data' => [
+                'page' => $context['page'],
+                'available' => (bool) ($context['available'] ?? false),
+                'corpus' => $context['corpus'] ?? ['ready' => true, 'counts' => []],
+            ]]);
         } catch (Throwable $e) {
             return $this->safeFailure($request, $e, 'context');
         }
@@ -156,104 +160,61 @@ class AiHelperController extends Controller
         }
     }
 
-    public function knowledge(Request $request): JsonResponse
+    public function documents(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'route_key' => ['nullable', 'string', 'max:255'],
-            'module_key' => ['nullable', 'string', 'max:255'],
-        ]);
-
         try {
-            $routeKey = trim((string) ($validated['route_key'] ?? ''));
-            $moduleKey = trim((string) ($validated['module_key'] ?? ''));
-
-            $entries = $this->visibleKnowledgeEntriesQuery($request->user())
-                ->with(['uploader:id,name,email', 'reviewer:id,name,email'])
-                ->when($routeKey !== '' || $moduleKey !== '', function ($query) use ($routeKey, $moduleKey) {
-                    $query->where(function ($inner) use ($routeKey, $moduleKey) {
-                        if ($routeKey !== '') {
-                            $inner->orWhere('route_key', $routeKey);
-                        }
-                        if ($moduleKey !== '') {
-                            $inner->orWhere('module_key', $moduleKey);
-                        }
-                        $inner->orWhere(function ($global) {
-                            $global->whereNull('module_key')->whereNull('route_key');
-                        });
-                    });
-                })
+            $documents = $this->visibleDocumentsQuery($request->user())
+                ->with('uploader:id,name,email')
                 ->orderByRaw('CASE WHEN uploaded_by = ? THEN 0 ELSE 1 END', [$request->user()->id])
                 ->latest('created_at')
                 ->limit(max(1, (int) config('ai_helper.knowledge_catalogue_limit', 250)))
                 ->get()
-                ->map(fn (AiHelperKnowledgeEntry $entry) => $this->formatKnowledgeEntry($entry))
+                ->map(fn (AiHelperDocument $document) => $this->formatDocument($document))
                 ->values();
 
-            return response()->json(['data' => $entries]);
+            return response()->json(['data' => $documents]);
         } catch (Throwable $e) {
-            return $this->safeFailure($request, $e, 'knowledge');
+            return $this->safeFailure($request, $e, 'documents');
         }
     }
 
-    public function knowledgeDetail(Request $request, int $knowledgeId): JsonResponse
+    public function documentDetail(Request $request, int $documentId): JsonResponse
     {
         try {
-            $entry = $this->resolveVisibleKnowledgeEntry($request->user(), $knowledgeId);
-            if (! $entry) {
+            $document = $this->resolveVisibleDocument($request->user(), $documentId);
+            if (! $document) {
                 return response()->json([
-                    'message' => 'Knowledge entry not found.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_NOT_FOUND',
+                    'message' => 'Reference document not found.',
+                    'code' => 'AI_HELPER_DOCUMENT_NOT_FOUND',
                 ], 404);
             }
 
-            $entry->loadMissing([
-                'uploader:id,name,email',
-                'reviewer:id,name,email',
-                'pages' => fn ($query) => $query->orderBy('page_number'),
+            return response()->json([
+                'data' => $this->formatDocument($document->loadMissing('uploader:id,name,email')),
             ]);
-
-            return response()->json(['data' => $this->formatUserKnowledgeDetail($entry)]);
         } catch (Throwable $e) {
-            return $this->safeFailure($request, $e, 'knowledge_detail');
+            return $this->safeFailure($request, $e, 'document_detail');
         }
     }
 
-    public function knowledgeFile(Request $request, int $knowledgeId)
+    public function documentFile(Request $request, int $documentId)
     {
         try {
-            $entry = $this->resolveVisibleKnowledgeEntry($request->user(), $knowledgeId);
-            if (! $entry) {
+            $document = $this->resolveVisibleDocument($request->user(), $documentId);
+            $sourcePath = trim((string) ($document?->source_path ?? ''));
+
+            if (! $document || $sourcePath === '' || ! Storage::disk('local')->exists($sourcePath)) {
                 return response()->json([
-                    'message' => 'Knowledge entry not found.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_NOT_FOUND',
+                    'message' => 'Reference document file not found.',
+                    'code' => 'AI_HELPER_DOCUMENT_FILE_NOT_FOUND',
                 ], 404);
             }
 
-            $sourcePath = trim((string) ($entry->source_path ?? ''));
-
-            if ($sourcePath === '' || str_starts_with($sourcePath, 'seed:')) {
-                return response()->json([
-                    'message' => 'Knowledge file not found.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_FILE_NOT_FOUND',
-                ], 404);
-            }
-
-            if (! Storage::disk('local')->exists($sourcePath)) {
-                return response()->json([
-                    'message' => 'Knowledge file not found.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_FILE_NOT_FOUND',
-                ], 404);
-            }
-
-            $contentType = Str::startsWith((string) $entry->source_mime, 'text/')
-                ? sprintf('%s; charset=UTF-8', $entry->source_mime ?: 'text/plain')
-                : ((string) $entry->source_mime ?: 'application/octet-stream');
-
-            $filename = basename(str_replace('\\', '/', (string) ($entry->source_filename ?: 'knowledge')));
-            $fallbackFilename = preg_replace('/[^\x20-\x7E]|%/', '-', Str::ascii($filename)) ?: 'knowledge';
+            $filename = basename(str_replace('\\', '/', (string) ($document->source_filename ?: 'document.pdf')));
+            $fallbackFilename = preg_replace('/[^\x20-\x7E]|%/', '-', Str::ascii($filename)) ?: 'document.pdf';
             $response = response()->file(
                 Storage::disk('local')->path($sourcePath),
-                ['Content-Type' => $contentType],
+                ['Content-Type' => 'application/pdf'],
             );
 
             return $response->setContentDisposition(
@@ -262,118 +223,114 @@ class AiHelperController extends Controller
                 $fallbackFilename,
             );
         } catch (Throwable $e) {
-            return $this->safeFailure($request, $e, 'knowledge_file');
+            return $this->safeFailure($request, $e, 'document_file');
         }
     }
 
-    public function uploadKnowledge(UploadAiHelperKnowledgeRequest $request): JsonResponse
+    public function uploadDocument(UploadAiHelperDocumentRequest $request): JsonResponse
     {
         $validated = $request->validated();
         $storedPath = null;
-        $entry = null;
-        $ingestionRunId = null;
-        $queued = false;
 
         try {
             $actor = $request->user();
-            $this->knowledgeRuntime->assertPdfIngestionReady();
-            $scopeType = (string) $validated['scope_type'];
-            $visibility = (string) ($validated['visibility'] ?? AiHelperKnowledgeEntry::VISIBILITY_PERSONAL);
-            $routeKey = '';
-            $moduleKey = $scopeType === AiHelperKnowledgeEntry::SCOPE_MODULE
-                ? trim((string) ($validated['module_key'] ?? ''))
-                : '';
-
-            if (
-                $scopeType === AiHelperKnowledgeEntry::SCOPE_MODULE &&
-                ! in_array($moduleKey, AiHelperKnowledgeEntry::USER_UPLOAD_MODULE_KEYS, true)
-            ) {
-                return response()->json([
-                    'message' => 'Choose a valid module for this knowledge source.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_INVALID_MODULE',
-                ], 422);
-            }
-
             $file = $request->file('file');
-            $quota = $this->knowledgeQuota->checkUpload($actor, $file);
+            $quota = $this->documentQuota->checkUpload($actor, $file);
             if (! ($quota['ok'] ?? false)) {
                 return $this->responder->error(
                     $request,
-                    $quota['message'] ?? 'Ask AI knowledge upload limit reached.',
-                    $quota['code'] ?? 'AI_HELPER_KNOWLEDGE_UPLOAD_LIMIT',
+                    $quota['message'] ?? 'Reference document upload limit reached.',
+                    $quota['code'] ?? 'AI_HELPER_DOCUMENT_UPLOAD_LIMIT',
                     422,
                 );
             }
 
-            $sourceFilename = $file->getClientOriginalName() ?: 'knowledge.pdf';
-            $storedPath = $file->store("ai-helper/knowledge/{$actor->id}", 'local');
+            $handle = fopen($file->getPathname(), 'rb');
+            $signature = $handle !== false ? fread($handle, 5) : false;
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+            if ($signature !== '%PDF-') {
+                return response()->json([
+                    'message' => 'Upload a valid PDF document.',
+                    'code' => 'AI_HELPER_DOCUMENT_INVALID_PDF',
+                ], 422);
+            }
+
+            $sourceFilename = $file->getClientOriginalName() ?: 'document.pdf';
+            $storedPath = $file->store("ai-helper/documents/{$actor->id}", 'local');
+            if (! is_string($storedPath) || $storedPath === '') {
+                throw new RuntimeException('The reference document could not be stored.');
+            }
+
             $title = trim((string) ($validated['title'] ?? ''));
             if ($title === '') {
-                $title = pathinfo($sourceFilename, PATHINFO_FILENAME) ?: 'Uploaded knowledge';
+                $title = pathinfo($sourceFilename, PATHINFO_FILENAME) ?: 'Reference document';
             }
-            $title = Str::limit($title, 140, '');
-            $reviewStatus = AiHelperKnowledgeEntry::REVIEW_APPROVED;
 
-            $entry = AiHelperKnowledgeEntry::create([
+            $document = AiHelperDocument::create([
                 'uploaded_by' => $actor->id,
-                'module_key' => $moduleKey !== '' ? $moduleKey : null,
-                'route_key' => $routeKey !== '' ? $routeKey : null,
-                'title' => $title,
-                'content' => '',
-                'summary' => null,
+                'title' => Str::limit($title, 140, ''),
                 'source_filename' => Str::limit($sourceFilename, 255, ''),
-                'source_mime' => Str::limit((string) ($file->getClientMimeType() ?: 'application/pdf'), 120, ''),
+                'source_mime' => 'application/pdf',
                 'source_size' => $file->getSize(),
                 'source_path' => $storedPath,
-                'scope_type' => $scopeType,
-                'visibility' => $visibility,
-                'status' => AiHelperKnowledgeEntry::STATUS_PROCESSING,
-                'review_status' => $reviewStatus,
-                'active' => false,
+                'source_hash' => hash_file('sha256', Storage::disk('local')->path($storedPath)) ?: null,
+                'visibility' => (string) ($validated['visibility'] ?? AiHelperDocument::VISIBILITY_PERSONAL),
                 'acknowledged_at' => now(),
-                'error' => null,
-                'tags' => array_values(array_filter(['uploaded', $scopeType, $routeKey, $moduleKey])),
-                'version' => 1,
             ]);
 
-            $ingestionRunId = $this->knowledgeLifecycle->beginIngestion($entry);
-            ProcessAiHelperKnowledgeEntry::dispatch($entry->id, $ingestionRunId);
-            $queued = true;
-            $entry = $entry->fresh(['uploader', 'reviewer']);
-            AuditLogger::log($request, 'ai_helper_knowledge_uploaded', $actor, [
-                'knowledge_entry_id' => $entry->id,
-                'scope_type' => $entry->scope_type,
-                'visibility' => $entry->visibility,
-                'source_filename' => $entry->source_filename,
-                'source_size' => $entry->source_size,
+            AuditLogger::log($request, 'ai_helper_document_uploaded', $actor, [
+                'document_id' => $document->id,
+                'visibility' => $document->visibility,
+                'source_filename' => $document->source_filename,
+                'source_size' => $document->source_size,
                 'request_id' => $this->responder->requestId($request),
             ]);
 
             return response()->json([
-                'message' => 'Knowledge uploaded. Ask AI can use the extracted text after processing. System administrators may audit shared guidance later.',
-                'data' => $this->formatKnowledgeEntry($entry),
+                'message' => 'PDF added to the reference document library. It is available for viewing only and was not ingested by Ask AI.',
+                'data' => $this->formatDocument($document->loadMissing('uploader:id,name,email')),
                 'request_id' => $this->responder->requestId($request),
             ], 201);
-        } catch (RuntimeException $e) {
-            return $this->responder->error(
-                $request,
-                $e->getMessage(),
-                'AI_HELPER_KNOWLEDGE_RUNTIME_UNAVAILABLE',
-                503,
-                ['runtime' => $this->knowledgeRuntime->diagnostics()],
-            );
         } catch (Throwable $e) {
-            if ($storedPath !== null && $entry === null) {
+            if (is_string($storedPath) && $storedPath !== '') {
                 Storage::disk('local')->delete($storedPath);
-            } elseif ($entry !== null && ! $queued) {
-                $this->knowledgeProcessor->markFailedForRun(
-                    $entry->id,
-                    $ingestionRunId,
-                    'The knowledge file was stored but could not be queued for processing.',
-                );
             }
 
-            return $this->safeFailure($request, $e, 'knowledge_upload');
+            return $this->safeFailure($request, $e, 'document_upload');
+        }
+    }
+
+    public function destroyDocument(Request $request, int $documentId): JsonResponse
+    {
+        try {
+            $document = AiHelperDocument::query()->find($documentId);
+            if (! $document || ! $this->authorization->canManageDocument($request->user(), $document)) {
+                return response()->json([
+                    'message' => 'Reference document not found.',
+                    'code' => 'AI_HELPER_DOCUMENT_NOT_FOUND',
+                ], 404);
+            }
+
+            $sourcePath = trim((string) ($document->source_path ?? ''));
+            if ($sourcePath !== '') {
+                Storage::disk('local')->delete($sourcePath);
+            }
+            $document->forceFill(['source_path' => null])->save();
+            $document->delete();
+
+            AuditLogger::log($request, 'ai_helper_document_deleted', $request->user(), [
+                'document_id' => $document->id,
+                'request_id' => $this->responder->requestId($request),
+            ]);
+
+            return response()->json([
+                'message' => 'Reference document deleted.',
+                'request_id' => $this->responder->requestId($request),
+            ]);
+        } catch (Throwable $e) {
+            return $this->safeFailure($request, $e, 'document_delete');
         }
     }
 
@@ -527,102 +484,6 @@ class AiHelperController extends Controller
             return $this->responder->error($request, $e->getMessage(), 'AI_HELPER_MARKDOWN_INVALID', 422);
         } catch (Throwable $e) {
             return $this->safeFailure($request, $e, 'markdown_knowledge_upload');
-        }
-    }
-
-    public function updateKnowledge(UpdateAiHelperKnowledgeRequest $request, int $knowledgeId): JsonResponse
-    {
-        $validated = $request->validated();
-
-        try {
-            $entry = AiHelperKnowledgeEntry::query()
-                ->where('uploaded_by', $request->user()->id)
-                ->where('id', $knowledgeId)
-                ->first();
-
-            if (! $entry) {
-                return response()->json([
-                    'message' => 'Knowledge entry not found.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_NOT_FOUND',
-                ], 404);
-            }
-
-            if ($entry->status === AiHelperKnowledgeEntry::STATUS_PROCESSING) {
-                return response()->json([
-                    'message' => 'Knowledge is still processing.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_PROCESSING',
-                ], 422);
-            }
-
-            if ($entry->status === AiHelperKnowledgeEntry::STATUS_FAILED) {
-                return response()->json([
-                    'message' => 'Failed knowledge entries cannot be enabled.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_FAILED',
-                ], 422);
-            }
-
-            $status = (string) $validated['status'];
-            if ($status === AiHelperKnowledgeEntry::STATUS_ACTIVE && ! $entry->extraction_complete) {
-                return response()->json([
-                    'message' => 'Knowledge extraction must be complete before it can be enabled.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_NOT_READY',
-                ], 422);
-            }
-            if (
-                $status === AiHelperKnowledgeEntry::STATUS_ACTIVE &&
-                $entry->review_status !== AiHelperKnowledgeEntry::REVIEW_APPROVED
-            ) {
-                return response()->json([
-                    'message' => 'Knowledge must be approved before it can be enabled.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_NOT_APPROVED',
-                ], 422);
-            }
-
-            $entry->forceFill([
-                'status' => $status,
-                'active' => $status === AiHelperKnowledgeEntry::STATUS_ACTIVE,
-                'error' => null,
-            ])->save();
-            AuditLogger::log($request, 'ai_helper_knowledge_status_updated', $request->user(), [
-                'knowledge_entry_id' => $entry->id,
-                'status' => $status,
-                'request_id' => $this->responder->requestId($request),
-            ]);
-
-            return response()->json([
-                'message' => $status === AiHelperKnowledgeEntry::STATUS_ACTIVE ? 'Knowledge enabled.' : 'Knowledge disabled.',
-                'data' => $this->formatKnowledgeEntry($entry->fresh(['uploader', 'reviewer'])),
-                'request_id' => $this->responder->requestId($request),
-            ]);
-        } catch (Throwable $e) {
-            return $this->safeFailure($request, $e, 'knowledge_update');
-        }
-    }
-
-    public function destroyKnowledge(Request $request, int $knowledgeId): JsonResponse
-    {
-        try {
-            $entry = AiHelperKnowledgeEntry::query()->find($knowledgeId);
-
-            if (! $entry || ! $this->authorization->canManageKnowledge($request->user(), $entry)) {
-                return response()->json([
-                    'message' => 'Knowledge entry not found.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_NOT_FOUND',
-                ], 404);
-            }
-
-            $this->knowledgeLifecycle->purge($entry);
-            AuditLogger::log($request, 'ai_helper_knowledge_deleted', $request->user(), [
-                'knowledge_entry_id' => $entry->id,
-                'request_id' => $this->responder->requestId($request),
-            ]);
-
-            return response()->json([
-                'message' => 'Knowledge deleted.',
-                'request_id' => $this->responder->requestId($request),
-            ]);
-        } catch (Throwable $e) {
-            return $this->safeFailure($request, $e, 'knowledge_delete');
         }
     }
 
@@ -832,6 +693,7 @@ class AiHelperController extends Controller
             $perPage = min(50, max(1, (int) ($validated['per_page'] ?? 20)));
 
             $query = AiHelperKnowledgeEntry::query()
+                ->where('source_mime', 'text/markdown')
                 ->with(['uploader:id,name,email', 'reviewer:id,name,email'])
                 ->withCount('chunks')
                 ->latest('created_at');
@@ -848,6 +710,7 @@ class AiHelperController extends Controller
 
             $page = $query->paginate($perPage);
             $reviewCounts = AiHelperKnowledgeEntry::query()
+                ->where('source_mime', 'text/markdown')
                 ->selectRaw('review_status, count(*) as aggregate')
                 ->groupBy('review_status')
                 ->pluck('aggregate', 'review_status')
@@ -882,10 +745,12 @@ class AiHelperController extends Controller
         }
 
         try {
-            $storageBytes = (int) AiHelperKnowledgeEntry::query()
+            $knowledgeStorageBytes = (int) AiHelperKnowledgeEntry::query()
                 ->withTrashed()
+                ->where('source_mime', 'text/markdown')
                 ->sum('source_size');
             $failedUploads = AiHelperKnowledgeEntry::query()
+                ->where('source_mime', 'text/markdown')
                 ->where('status', AiHelperKnowledgeEntry::STATUS_FAILED)
                 ->latest('updated_at')
                 ->limit(10)
@@ -906,10 +771,16 @@ class AiHelperController extends Controller
                     'queue' => [
                         'default_connection' => config('queue.default'),
                     ],
-                    'knowledge_runtime' => $this->knowledgeRuntime->diagnostics(),
+                    'knowledge_runtime' => [
+                        'mode' => 'markdown_only',
+                        'pdf_ingestion_enabled' => false,
+                        'external_ocr_required' => false,
+                    ],
                     'storage' => [
-                        'used_bytes' => $storageBytes,
-                        'max_total_bytes' => (int) config('ai_helper.knowledge_max_total_upload_bytes', 0),
+                        'knowledge_used_bytes' => $knowledgeStorageBytes,
+                        'knowledge_max_total_bytes' => (int) config('ai_helper.knowledge_max_total_upload_bytes', 0),
+                        'document_used_bytes' => (int) AiHelperDocument::withTrashed()->sum('source_size'),
+                        'document_max_total_bytes' => (int) config('ai_helper.document_max_total_upload_bytes', 0),
                     ],
                     'recent_failed_uploads' => $failedUploads,
                 ],
@@ -928,11 +799,11 @@ class AiHelperController extends Controller
 
         try {
             $entry = AiHelperKnowledgeEntry::query()
+                ->where('source_mime', 'text/markdown')
                 ->with([
                     'uploader:id,name,email',
                     'reviewer:id,name,email',
-                    'chunks' => fn ($query) => $query->orderBy('chunk_index')->limit(12),
-                    'pages' => fn ($query) => $query->orderBy('page_number'),
+                    'sourceDocument:id,title',
                 ])
                 ->withCount('chunks')
                 ->find($knowledgeId);
@@ -944,7 +815,7 @@ class AiHelperController extends Controller
                 ], 404);
             }
 
-            return response()->json(['data' => $this->formatKnowledgeDetail($entry)]);
+            return response()->json(['data' => $this->formatKnowledgeEntry($entry)]);
         } catch (Throwable $e) {
             return $this->safeFailure($request, $e, 'admin_knowledge_detail');
         }
@@ -959,7 +830,9 @@ class AiHelperController extends Controller
         $validated = $request->validated();
 
         try {
-            $entry = AiHelperKnowledgeEntry::query()->find($knowledgeId);
+            $entry = AiHelperKnowledgeEntry::query()
+                ->where('source_mime', 'text/markdown')
+                ->find($knowledgeId);
             if (! $entry) {
                 return response()->json([
                     'message' => 'Knowledge entry not found.',
@@ -1025,7 +898,7 @@ class AiHelperController extends Controller
 
             return response()->json([
                 'message' => 'Knowledge review updated.',
-                'data' => $this->formatKnowledgeDetail($entry->fresh(['uploader', 'reviewer', 'chunks', 'pages'])),
+                'data' => $this->formatKnowledgeEntry($entry->fresh(['uploader', 'reviewer', 'sourceDocument'])),
                 'request_id' => $this->responder->requestId($request),
             ]);
         } catch (Throwable $e) {
@@ -1040,7 +913,9 @@ class AiHelperController extends Controller
         }
 
         try {
-            $entry = AiHelperKnowledgeEntry::query()->find($knowledgeId);
+            $entry = AiHelperKnowledgeEntry::query()
+                ->where('source_mime', 'text/markdown')
+                ->find($knowledgeId);
             if (! $entry) {
                 return response()->json([
                     'message' => 'Knowledge entry not found.',
@@ -1544,47 +1419,44 @@ class AiHelperController extends Controller
         return [];
     }
 
-    private function buildKnowledgeSummary(string $content): string
+    private function visibleDocumentsQuery(User $user)
     {
-        $text = trim((string) preg_replace('/\s+/', ' ', $content));
-        if ($text === '') {
-            return '';
-        }
-
-        $sentences = preg_split('/(?<=[.!?])\s+/', $text, 4) ?: [];
-        $summary = trim(implode(' ', array_slice(array_filter($sentences), 0, 2)));
-
-        if ($summary === '') {
-            $summary = $text;
-        }
-
-        return Str::limit($summary, 320, '');
-    }
-
-    private function visibleKnowledgeEntriesQuery(User $user)
-    {
-        return AiHelperKnowledgeEntry::query()
+        return AiHelperDocument::query()
             ->where(function ($query) use ($user) {
                 $query
                     ->where('uploaded_by', $user->id)
-                    ->orWhere(function ($shared) {
-                        $shared
-                            ->where('visibility', AiHelperKnowledgeEntry::VISIBILITY_SHARED)
-                            ->where('review_status', AiHelperKnowledgeEntry::REVIEW_APPROVED)
-                            ->whereIn('status', [
-                                AiHelperKnowledgeEntry::STATUS_ACTIVE,
-                                AiHelperKnowledgeEntry::STATUS_PROCESSING,
-                            ])
-                            ->where('active', true);
-                    });
+                    ->orWhere('visibility', AiHelperDocument::VISIBILITY_SHARED);
             });
     }
 
-    private function resolveVisibleKnowledgeEntry(User $user, int $knowledgeId): ?AiHelperKnowledgeEntry
+    private function resolveVisibleDocument(User $user, int $documentId): ?AiHelperDocument
     {
-        return $this->visibleKnowledgeEntriesQuery($user)
-            ->where('id', $knowledgeId)
+        return $this->visibleDocumentsQuery($user)
+            ->where('id', $documentId)
             ->first();
+    }
+
+    private function formatDocument(AiHelperDocument $document): array
+    {
+        $uploader = $document->relationLoaded('uploader') ? $document->uploader : null;
+        $sourcePath = trim((string) ($document->source_path ?? ''));
+
+        return [
+            'id' => $document->id,
+            'title' => $document->title,
+            'source_filename' => $document->source_filename,
+            'source_mime' => 'application/pdf',
+            'source_size' => $document->source_size,
+            'visibility' => $document->visibility,
+            'uploaded_by' => $document->uploaded_by,
+            'uploader_name' => $uploader?->name ?: $uploader?->email ?: ($document->uploaded_by ? 'Unknown user' : 'System'),
+            'original_available' => $sourcePath !== '' && Storage::disk('local')->exists($sourcePath),
+            'ai_usable' => false,
+            'kind' => 'reference_pdf',
+            'acknowledged_at' => optional($document->acknowledged_at)->toIso8601String(),
+            'created_at' => optional($document->created_at)->toIso8601String(),
+            'updated_at' => optional($document->updated_at)->toIso8601String(),
+        ];
     }
 
     private function formatKnowledgeEntry(AiHelperKnowledgeEntry $entry): array
@@ -1595,7 +1467,6 @@ class AiHelperController extends Controller
         return [
             'id' => $entry->id,
             'title' => $entry->title,
-            'summary' => $entry->summary ?: ($entry->content ? $this->buildKnowledgeSummary((string) $entry->content) : null),
             'module_key' => $entry->module_key,
             'route_key' => $entry->route_key,
             'scope_type' => $entry->scope_type,
@@ -1611,27 +1482,14 @@ class AiHelperController extends Controller
             'source_filename' => $entry->source_filename,
             'source_mime' => $entry->source_mime,
             'source_size' => $entry->source_size,
-            'pdf_page_count' => $entry->pdf_page_count,
-            'pdf_image_count' => $entry->pdf_image_count,
-            'pdf_pages_with_images' => $entry->pdf_pages_with_images,
-            'pdf_readable_text_characters' => $entry->pdf_readable_text_characters,
-            'pdf_readable_word_count' => $entry->pdf_readable_word_count,
-            'pdf_image_coverage_estimate' => $entry->pdf_image_coverage_estimate,
-            'processing_warnings' => $entry->processing_warnings ?: [],
-            'processing_findings' => $entry->processing_findings ?: [],
+            'source_document_id' => $entry->source_document_id,
+            'source_document_title' => $entry->relationLoaded('sourceDocument') ? $entry->sourceDocument?->title : null,
             'ingestion_run_id' => $entry->ingestion_run_id,
             'ingestion_version' => $entry->ingestion_version,
             'ingestion_started_at' => optional($entry->ingestion_started_at)->toIso8601String(),
             'ingestion_completed_at' => optional($entry->ingestion_completed_at)->toIso8601String(),
-            'extraction_mode' => $entry->extraction_mode,
             'extraction_complete' => (bool) $entry->extraction_complete,
             'quality_status' => $entry->quality_status,
-            'pages_indexed' => (int) ($entry->pages_indexed ?? 0),
-            'pages_native' => (int) ($entry->pages_native ?? 0),
-            'pages_ocr' => (int) ($entry->pages_ocr ?? 0),
-            'pages_blank' => (int) ($entry->pages_blank ?? 0),
-            'pages_visual_only' => (int) ($entry->pages_visual_only ?? 0),
-            'pages_unreadable' => (int) ($entry->pages_unreadable ?? 0),
             'extracted_characters' => (int) ($entry->extracted_characters ?? 0),
             'error' => $entry->error,
             'acknowledged_at' => optional($entry->acknowledged_at)->toIso8601String(),
@@ -1640,63 +1498,6 @@ class AiHelperController extends Controller
             'created_at' => optional($entry->created_at)->toIso8601String(),
             'updated_at' => optional($entry->updated_at)->toIso8601String(),
         ];
-    }
-
-    private function formatKnowledgeDetail(AiHelperKnowledgeEntry $entry): array
-    {
-        return [
-            ...$this->formatKnowledgeEntry($entry),
-            'content_preview' => Str::limit((string) $entry->content, 4000, ''),
-            'chunks' => $entry->relationLoaded('chunks')
-                ? $entry->chunks->map(fn ($chunk) => [
-                    'id' => $chunk->id,
-                    'chunk_index' => $chunk->chunk_index,
-                    'content' => $chunk->content,
-                    'token_estimate' => $chunk->token_estimate,
-                    'page_start' => $chunk->page_start,
-                    'page_end' => $chunk->page_end,
-                    'extraction_mode' => $chunk->extraction_mode,
-                ])->values()
-                : [],
-            'pages' => $this->formatKnowledgePages($entry),
-        ];
-    }
-
-    private function formatUserKnowledgeDetail(AiHelperKnowledgeEntry $entry): array
-    {
-        $sourcePath = trim((string) ($entry->source_path ?? ''));
-        $originalAvailable = $sourcePath !== ''
-            && ! str_starts_with($sourcePath, 'seed:')
-            && Storage::disk('local')->exists($sourcePath);
-        $extractedContent = (string) ($entry->content ?? '');
-
-        return [
-            ...$this->formatKnowledgeEntry($entry),
-            'extracted_content' => $extractedContent,
-            'extracted_content_available' => trim($extractedContent) !== '',
-            'original_available' => $originalAvailable,
-            'pages' => $this->formatKnowledgePages($entry),
-        ];
-    }
-
-    private function formatKnowledgePages(AiHelperKnowledgeEntry $entry): array
-    {
-        if (! $entry->relationLoaded('pages')) {
-            return [];
-        }
-
-        return $entry->pages->map(fn ($page) => [
-            'page_number' => $page->page_number,
-            'outcome' => $page->outcome,
-            'native_character_count' => $page->native_character_count,
-            'native_word_count' => $page->native_word_count,
-            'ocr_character_count' => $page->ocr_character_count,
-            'ocr_word_count' => $page->ocr_word_count,
-            'image_count' => $page->image_count,
-            'ocr_attempted' => (bool) $page->ocr_attempted,
-            'ocr_succeeded' => (bool) $page->ocr_succeeded,
-            'findings' => $page->findings ?: [],
-        ])->values()->all();
     }
 
     private function authorizeSystemAdministrator(Request $request): ?JsonResponse
