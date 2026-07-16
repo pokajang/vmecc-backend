@@ -27,6 +27,7 @@ Use `--json` in automated deployment checks and require:
 - No Poppler or Tesseract installation is required.
 - PDFs and Markdown must remain on Laravel's private `local` filesystem disk.
 - Provision the approved `ai_knowledge/` source directory outside the web root and set `AI_HELPER_REFERENCE_CORPUS_PATH` to its absolute path. The source corpus is intentionally not committed to this repository.
+- The corpus layout must contain PDFs under `ai_knowledge/pdf/` and their exact-basename Markdown counterparts under `ai_knowledge/md/`. Audit and image assets may remain under `md/`; the seeder reads only the 34 top-level Markdown files.
 - A queue worker is recommended for administrator Markdown uploads and re-indexing; the small bundled corpus can also be seeded or re-indexed synchronously during controlled maintenance.
 - The worker user needs read/write access to `storage/app/ai-helper`.
 - The normal Laravel scheduler and queue health checks still apply to the rest of the application.

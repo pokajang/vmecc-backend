@@ -21,15 +21,16 @@ class AiHelperReferenceCorpusSeeder extends Seeder
     public function run(): void
     {
         $sourceDirectory = $this->sourceDirectory();
+        $pdfDirectory = $sourceDirectory.DIRECTORY_SEPARATOR.'pdf';
         $markdownDirectory = $sourceDirectory.DIRECTORY_SEPARATOR.'md';
-        if (! is_dir($sourceDirectory) || ! is_dir($markdownDirectory)) {
+        if (! is_dir($pdfDirectory) || ! is_dir($markdownDirectory)) {
             throw new RuntimeException("AI reference corpus directories not found under: {$sourceDirectory}");
         }
 
         $uploaderId = User::query()->where('email', self::UPLOADER_EMAIL)->value('id');
         $processor = app(AiHelperKnowledgeProcessingService::class);
         $lifecycle = app(AiHelperKnowledgeLifecycleService::class);
-        $pdfFiles = glob($sourceDirectory.DIRECTORY_SEPARATOR.'*.pdf') ?: [];
+        $pdfFiles = glob($pdfDirectory.DIRECTORY_SEPARATOR.'*.pdf') ?: [];
         sort($pdfFiles, SORT_NATURAL | SORT_FLAG_CASE);
 
         foreach ($pdfFiles as $pdfFile) {
