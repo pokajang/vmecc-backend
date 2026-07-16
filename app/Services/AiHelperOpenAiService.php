@@ -15,7 +15,7 @@ class AiHelperOpenAiService
     }
 
     /**
-     * @param callable(string): void $onDelta
+     * @param  callable(string): void  $onDelta
      * @return array{response_id: ?string}
      */
     public function streamResponse(string $instructions, array $input, callable $onDelta): array
@@ -92,11 +92,13 @@ class AiHelperOpenAiService
 
                 if ($line === '') {
                     $flushEvent();
+
                     continue;
                 }
 
                 if (str_starts_with($line, 'event:')) {
                     $eventName = trim(substr($line, 6));
+
                     continue;
                 }
 
@@ -115,5 +117,89 @@ class AiHelperOpenAiService
         $flushEvent();
 
         return ['response_id' => $responseId];
+    }
+
+    /**
+     * @return array{data: array<string, mixed>, response_id: ?string}
+     */
+    public function structuredResponse(
+        string $model,
+        string $instructions,
+        array $input,
+        string $schemaName,
+        array $schema,
+        ?int $timeout = null,
+    ): array {
+        if (! $this->isAvailable()) {
+            throw new RuntimeException('AI helper is not configured.');
+        }
+
+        $client = new Client([
+            'base_uri' => rtrim((string) config('ai_helper.base_url'), '/').'/',
+            'timeout' => max(1, $timeout ?? (int) config('ai_helper.timeout', 60)),
+        ]);
+
+        try {
+            $response = $client->request('POST', 'responses', [
+                'headers' => [
+                    'Authorization' => 'Bearer '.config('ai_helper.api_key'),
+                    'Accept' => 'application/json',
+                    'Content-Type' => 'application/json',
+                ],
+                'json' => [
+                    'model' => $model,
+                    'instructions' => $instructions,
+                    'input' => $input,
+                    'text' => [
+                        'format' => [
+                            'type' => 'json_schema',
+                            'name' => $schemaName,
+                            'strict' => true,
+                            'schema' => $schema,
+                        ],
+                    ],
+                    'store' => false,
+                ],
+            ]);
+        } catch (RequestException $e) {
+            $message = $e->getResponse()?->getStatusCode()
+                ? 'AI helper provider request failed.'
+                : 'AI helper provider is unavailable.';
+            throw new RuntimeException($message, previous: $e);
+        } catch (GuzzleException $e) {
+            throw new RuntimeException('AI helper provider is unavailable.', previous: $e);
+        }
+
+        $payload = json_decode((string) $response->getBody(), true);
+        if (! is_array($payload)) {
+            throw new RuntimeException('AI helper provider returned an invalid structured response.');
+        }
+        $text = $this->outputText($payload);
+        $data = json_decode($text, true);
+        if (! is_array($data)) {
+            throw new RuntimeException('AI helper provider returned invalid structured JSON.');
+        }
+
+        return [
+            'data' => $data,
+            'response_id' => isset($payload['id']) ? (string) $payload['id'] : null,
+        ];
+    }
+
+    private function outputText(array $payload): string
+    {
+        if (is_string($payload['output_text'] ?? null) && trim($payload['output_text']) !== '') {
+            return $payload['output_text'];
+        }
+
+        foreach ($payload['output'] ?? [] as $output) {
+            foreach ($output['content'] ?? [] as $content) {
+                if (($content['type'] ?? null) === 'output_text' && is_string($content['text'] ?? null)) {
+                    return $content['text'];
+                }
+            }
+        }
+
+        throw new RuntimeException('AI helper provider returned no structured output text.');
     }
 }

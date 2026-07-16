@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Jobs\EmbedAiHelperKnowledgeEntry;
 use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Models\AiHelperKnowledgePage;
@@ -13,6 +14,8 @@ use Throwable;
 
 class AiHelperKnowledgeProcessingService
 {
+    public function __construct(private readonly AiHelperMarkdownStructureParser $markdownStructure) {}
+
     public function process(int $entryId, ?string $expectedRunId = null): void
     {
         $entry = AiHelperKnowledgeEntry::query()->find($entryId);
@@ -31,7 +34,7 @@ class AiHelperKnowledgeProcessingService
         } catch (Throwable $e) {
             Log::warning('Ask AI knowledge processing failed', [
                 'knowledge_entry_id' => $entryId,
-                'error' => $e->getMessage(),
+                'exception_class' => $e::class,
             ]);
             if ($e instanceof RuntimeException) {
                 $this->markFailed($entryId, $expectedRunId, $e->getMessage());
@@ -57,7 +60,7 @@ class AiHelperKnowledgeProcessingService
         bool $activate = true,
         bool $extractionComplete = true,
     ): bool {
-        $content = $this->normalizeText($content);
+        $content = $this->normalizeSourceContent($content, $entry);
         $chunks = $this->chunkPages($pages, $content, $extractionMode);
         if ($chunks === []) {
             $this->markFailed($entry->id, $expectedRunId, 'Could not prepare readable guidance from this knowledge source.');
@@ -66,7 +69,7 @@ class AiHelperKnowledgeProcessingService
         }
 
         try {
-            return DB::transaction(function () use ($entry, $content, $summary, $metadata, $expectedRunId, $chunks, $pages, $extractionMode, $activate, $extractionComplete) {
+            $processed = DB::transaction(function () use ($entry, $content, $summary, $metadata, $expectedRunId, $chunks, $pages, $extractionMode, $activate, $extractionComplete) {
                 $locked = AiHelperKnowledgeEntry::query()->lockForUpdate()->find($entry->id);
                 if (! $locked || ! $this->canProcess($locked, $expectedRunId)) {
                     return false;
@@ -82,6 +85,9 @@ class AiHelperKnowledgeProcessingService
                         'page_start' => $chunk['page_start'],
                         'page_end' => $chunk['page_end'],
                         'content' => $chunk['content'],
+                        'heading_path' => $chunk['heading_path'] ?? null,
+                        'content_type' => $chunk['content_type'] ?? 'text',
+                        'search_text' => $chunk['search_text'] ?? $chunk['content'],
                         'content_hash' => hash('sha256', $chunk['content']),
                         'token_estimate' => $this->estimateTokens($chunk['content']),
                         'module_key' => $locked->module_key,
@@ -126,26 +132,51 @@ class AiHelperKnowledgeProcessingService
                     'extraction_mode' => $extractionMode,
                     'extraction_complete' => $extractionComplete,
                     'quality_status' => $metadata['quality_status'] ?? ($extractionComplete ? 'ready' : 'review_required'),
+                    'retrieval_metadata' => $this->retrievalMetadata($locked, $chunks),
                     'extracted_characters' => Str::length($content),
                     'error' => null,
+                    'embedding_status' => 'pending',
+                    'embedding' => null,
+                    'embedding_model' => null,
+                    'embedding_hash' => null,
+                    'embedded_at' => null,
+                    'embedding_error' => null,
                 ] + $metadata)->save();
 
                 return true;
             });
+
+            if ($processed && $activate && (bool) config('ai_helper.embedding_enabled', true)) {
+                try {
+                    EmbedAiHelperKnowledgeEntry::dispatch($entry->id);
+                } catch (Throwable $e) {
+                    // A sync queue executes the embedding job inline. Keep the lexical
+                    // index usable if the optional semantic provider rejects a request.
+                    Log::warning('Ask AI knowledge semantic indexing failed; lexical index remains active', [
+                        'knowledge_entry_id' => $entry->id,
+                        'exception_class' => $e::class,
+                    ]);
+                }
+            }
+
+            return $processed;
         } catch (Throwable $e) {
             Log::warning('Ask AI knowledge chunk persistence failed', [
                 'knowledge_entry_id' => $entry->id,
-                'error' => $e->getMessage(),
+                'exception_class' => $e::class,
             ]);
             throw $e;
         }
     }
 
-    /** @return array<int, array{content: string, page_start: int, page_end: int, extraction_mode: string}> */
+    /** @return array<int, array<string, mixed>> */
     private function chunkPages(array $pages, string $fallbackContent, string $fallbackMode): array
     {
         if ($pages === []) {
-            $pages = [['number' => 1, 'text' => $fallbackContent, 'extraction_mode' => $fallbackMode]];
+            return collect($this->markdownStructure->chunks(
+                $fallbackContent,
+                max(600, (int) config('ai_helper.knowledge_chunk_characters', 1500)),
+            ))->map(fn (array $chunk) => $chunk + ['extraction_mode' => $fallbackMode])->all();
         }
 
         $chunks = [];
@@ -160,6 +191,9 @@ class AiHelperKnowledgeProcessingService
                     'page_start' => max(1, (int) ($page['number'] ?? 1)),
                     'page_end' => max(1, (int) ($page['number'] ?? 1)),
                     'extraction_mode' => (string) ($page['extraction_mode'] ?? $fallbackMode),
+                    'heading_path' => [],
+                    'content_type' => 'text',
+                    'search_text' => $text,
                 ];
             }
         }
@@ -264,9 +298,40 @@ class AiHelperKnowledgeProcessingService
         return trim((string) preg_replace('/\s+/', ' ', $text));
     }
 
+    private function normalizeSourceContent(string $content, AiHelperKnowledgeEntry $entry): string
+    {
+        $isMarkdown = $entry->source_mime === 'text/markdown'
+            || str_ends_with(Str::lower((string) $entry->source_filename), '.md')
+            || str_starts_with((string) $entry->source_path, 'seed:');
+        if (! $isMarkdown) {
+            return $this->normalizeText($content);
+        }
+
+        $content = str_replace(["\r\n", "\r", "\0"], ["\n", "\n", ''], $content);
+        $lines = array_map(static fn (string $line) => rtrim($line), explode("\n", $content));
+
+        return trim(implode("\n", $lines));
+    }
+
     private function estimateTokens(string $content): int
     {
         return max(1, (int) ceil(Str::length($content) / 4));
+    }
+
+    private function retrievalMetadata(AiHelperKnowledgeEntry $entry, array $chunks): array
+    {
+        $identity = trim($entry->title.' '.($entry->source_filename ?? ''));
+        preg_match('/\bannex(?:e)?\s*0*(\d{1,3})\b/i', $identity, $annex);
+        preg_match('/\brev(?:ision)?[.\s:-]*0*(\d{1,4})\b/i', $identity, $revision);
+        preg_match_all('/\b(?:[A-Z]{2,}(?:-[A-Z0-9]+){2,}|PRO-\d{4,})\b/i', $identity, $codes);
+
+        return [
+            'annex_number' => isset($annex[1]) ? (int) $annex[1] : null,
+            'revision' => isset($revision[1]) ? (ltrim((string) $revision[1], '0') ?: '0') : null,
+            'document_codes' => collect($codes[0] ?? [])->map(fn ($code) => Str::upper($code))->unique()->values()->all(),
+            'headings' => collect($chunks)->pluck('heading_path')->flatten()->filter()->unique()->values()->all(),
+            'visual_reference_count' => collect($chunks)->where('content_type', 'visual_reference')->count(),
+        ];
     }
 
     private function pdfMetadata(array $extraction): array

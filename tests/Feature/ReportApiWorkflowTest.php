@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Report;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -25,12 +26,27 @@ class ReportApiWorkflowTest extends TestCase
             'display_id' => 'ERCO-01-28042026',
             'report_type' => 'erco',
             'status' => 'Submitted',
-            'payload' => $this->ercoPayload('Zone 1'),
+            'payload' => array_replace($this->ercoPayload('Zone 1'), [
+                'recordActionsVersion' => 999,
+                'recordActions' => ['delete' => ['applicable' => true, 'allowed' => true]],
+                'canReview' => true,
+            ]),
         ]);
         $create->assertCreated();
         $create->assertJsonPath('data.status', 'Submitted');
         $create->assertJsonPath('data.version', 1);
+        $create->assertJsonPath('data.recordActionsVersion', 1);
+        $create->assertJsonPath('data.recordActions.edit.allowed', true);
+        $create->assertJsonPath('data.recordActions.delete.allowed', true);
+        $create->assertJsonPath('data.recordActions.download.format', 'pdf');
+        $create->assertJsonPath('data.recordActions.download.allowed', true);
+        $create->assertJsonPath('data.recordActions.review.applicable', true);
+        $create->assertJsonPath('data.recordActions.review.allowed', false);
         $reportUid = (string) $create->json('data.id');
+        $storedPayload = Report::query()->where('report_uid', $reportUid)->firstOrFail()->payload;
+        $this->assertArrayNotHasKey('recordActionsVersion', $storedPayload);
+        $this->assertArrayNotHasKey('recordActions', $storedPayload);
+        $this->assertArrayNotHasKey('canReview', $storedPayload);
 
         $get = $this->getJson("/api/reports/{$reportUid}");
         $get->assertOk();
@@ -48,6 +64,13 @@ class ReportApiWorkflowTest extends TestCase
         $update->assertJsonPath('data.revision', 2);
 
         $this->actingAs($ic);
+        $reviewerView = $this->getJson("/api/reports/{$reportUid}");
+        $reviewerView->assertOk();
+        $reviewerView->assertJsonPath('data.recordActions.review.allowed', true);
+        $reviewerView->assertJsonPath('data.recordActions.reject.allowed', true);
+        $reviewerView->assertJsonPath('data.recordActions.edit.allowed', false);
+        $reviewerView->assertJsonPath('data.recordActions.delete.allowed', false);
+
         $review = $this->postJson("/api/reports/{$reportUid}/review", [
             'version' => 2,
             'remarks' => 'Reviewed by supervisor',
@@ -132,6 +155,10 @@ class ReportApiWorkflowTest extends TestCase
         $first = $this->postJson('/api/reports', $payload);
         $first->assertCreated();
         $first->assertJsonPath('data.idempotent_replay', false);
+        $first->assertJsonPath('data.canDownloadPdf', false);
+        $first->assertJsonPath('data.recordActions.download.applicable', true);
+        $first->assertJsonPath('data.recordActions.download.allowed', true);
+        $first->assertJsonPath('data.recordActions.download.format', 'json');
         $reportUid = (string) $first->json('data.id');
 
         $second = $this->postJson('/api/reports', $payload);

@@ -1358,6 +1358,11 @@ class InspectionPayloadService
         return Str::of($inspectionType)->squish()->lower()->toString() === 'general inspection';
     }
 
+    private function isHighAngleInspectionType(string $inspectionType): bool
+    {
+        return Str::of($inspectionType)->squish()->lower()->toString() === 'high angle rescue equipment inspection';
+    }
+
     private function validateInspectionHighAngleSessionMeta(array $payload): void
     {
         $inspectedBy = trim((string) ($payload['highAngleInspectedBy'] ?? $payload['high_angle_inspected_by'] ?? ''));
@@ -1465,25 +1470,94 @@ class InspectionPayloadService
 
     private function validateInspectionFrtSubmittedRoster(array $dailyRows, array $oneOffRows): void
     {
+        if (count($dailyRows) === 0 && count($oneOffRows) === 0) {
+            throw ValidationException::withMessages([
+                'payload.frtDailyChecks' => ['Submit at least one completed fire truck checklist row.'],
+            ]);
+        }
+
         $this->validateInspectionFrtCanonicalRows(
             rows: $dailyRows,
             fieldPath: 'payload.frtDailyChecks',
             expectedRows: FrtDailyReference::dailyRowMap(),
-            expectedCountMessage: 'FRT daily checklist must include all 92 seeded rows.',
         );
         $this->validateInspectionFrtCanonicalRows(
             rows: $oneOffRows,
             fieldPath: 'payload.frtOneOffChecks',
             expectedRows: FrtDailyReference::oneOffRowMap(),
-            expectedCountMessage: 'FRT one-off checklist must include all 46 seeded rows.',
         );
+    }
+
+    private function validateInspectionFrtRawCanonicalRows(
+        mixed $rows,
+        string $fieldPath,
+        array $expectedRows,
+    ): void {
+        if (! is_array($rows)) {
+            return;
+        }
+
+        $expectedRowsByNumber = [];
+        foreach ($expectedRows as $expectedRow) {
+            $expectedRowsByNumber[trim((string) ($expectedRow['rowNumber'] ?? ''))] = $expectedRow;
+        }
+
+        $seen = [];
+        foreach ($rows as $index => $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            $rawId = trim((string) ($row['id'] ?? ''));
+            $rowNumber = trim((string) ($row['rowNumber'] ?? $row['row_number'] ?? ''));
+            if ($rawId !== '' && ! array_key_exists($rawId, $expectedRows)) {
+                throw ValidationException::withMessages([
+                    "{$fieldPath}.{$index}.id" => ['Unsupported FRT checklist row.'],
+                ]);
+            }
+
+            $expected = $rawId !== ''
+                ? ($expectedRows[$rawId] ?? null)
+                : ($expectedRowsByNumber[$rowNumber] ?? null);
+            if (! is_array($expected)) {
+                throw ValidationException::withMessages([
+                    "{$fieldPath}.{$index}.id" => ['Unsupported FRT checklist row.'],
+                ]);
+            }
+
+            $canonicalId = (string) $expected['id'];
+            if (array_key_exists($canonicalId, $seen)) {
+                throw ValidationException::withMessages([
+                    "{$fieldPath}.{$index}.id" => ['Duplicate FRT checklist row.'],
+                ]);
+            }
+
+            foreach ($expected as $key => $expectedValue) {
+                if ($key === 'id') {
+                    continue;
+                }
+
+                $snakeKey = Str::snake($key);
+                if (! array_key_exists($key, $row) && ! array_key_exists($snakeKey, $row)) {
+                    continue;
+                }
+
+                $actualValue = trim((string) ($row[$key] ?? $row[$snakeKey] ?? ''));
+                if ($actualValue !== trim((string) $expectedValue)) {
+                    throw ValidationException::withMessages([
+                        "{$fieldPath}.{$index}.{$key}" => ['FRT checklist row metadata must match the seeded workbook roster.'],
+                    ]);
+                }
+            }
+
+            $seen[$canonicalId] = true;
+        }
     }
 
     private function validateInspectionFrtCanonicalRows(
         array $rows,
         string $fieldPath,
         array $expectedRows,
-        string $expectedCountMessage,
     ): void {
         $seen = [];
 
@@ -1512,12 +1586,6 @@ class InspectionPayloadService
             }
 
             $seen[$id] = true;
-        }
-
-        if (count($seen) !== count($expectedRows)) {
-            throw ValidationException::withMessages([
-                $fieldPath => [$expectedCountMessage],
-            ]);
         }
     }
 
@@ -1657,50 +1725,39 @@ class InspectionPayloadService
 
     private function orderNormalizedFrtDailyRows(array $rows): array
     {
-        $ordered = [];
-        $rowsById = [];
-
-        foreach ($rows as $row) {
-            $rowsById[trim((string) ($row['id'] ?? ''))] = $row;
-        }
-
-        foreach (FrtDailyReference::dailyRows() as $expected) {
-            $id = $expected['id'];
-            if (array_key_exists($id, $rowsById)) {
-                $ordered[] = $rowsById[$id];
-                unset($rowsById[$id]);
-            }
-        }
-
-        foreach ($rowsById as $row) {
-            $ordered[] = $row;
-        }
-
-        return $ordered;
+        return $this->orderNormalizedFrtRows($rows, FrtDailyReference::dailyRows());
     }
 
     private function orderNormalizedFrtOneOffRows(array $rows): array
     {
-        $ordered = [];
-        $rowsById = [];
+        return $this->orderNormalizedFrtRows($rows, FrtDailyReference::oneOffRows());
+    }
 
-        foreach ($rows as $row) {
-            $rowsById[trim((string) ($row['id'] ?? ''))] = $row;
+    private function orderNormalizedFrtRows(array $rows, array $expectedRows): array
+    {
+        $positions = [];
+        foreach ($expectedRows as $position => $expected) {
+            $positions[(string) $expected['id']] = $position;
         }
 
-        foreach (FrtDailyReference::oneOffRows() as $expected) {
-            $id = $expected['id'];
-            if (array_key_exists($id, $rowsById)) {
-                $ordered[] = $rowsById[$id];
-                unset($rowsById[$id]);
-            }
+        $indexedRows = [];
+        foreach ($rows as $originalPosition => $row) {
+            $indexedRows[] = [
+                'originalPosition' => $originalPosition,
+                'canonicalPosition' => $positions[trim((string) ($row['id'] ?? ''))] ?? PHP_INT_MAX,
+                'row' => $row,
+            ];
         }
 
-        foreach ($rowsById as $row) {
-            $ordered[] = $row;
-        }
+        usort($indexedRows, static function (array $left, array $right): int {
+            $canonicalOrder = $left['canonicalPosition'] <=> $right['canonicalPosition'];
 
-        return $ordered;
+            return $canonicalOrder !== 0
+                ? $canonicalOrder
+                : $left['originalPosition'] <=> $right['originalPosition'];
+        });
+
+        return array_map(static fn (array $entry): array => $entry['row'], $indexedRows);
     }
 
     private function inspectionPayloadSlug(string $value): string
@@ -1783,21 +1840,41 @@ class InspectionPayloadService
             || $this->hasInspectionRows($payload, 'frtOneOffChecks', 'frt_one_off_checks')
         ) {
             $this->validateInspectionFrtSessionMeta($payload);
+            $rawDailyRows = $payload['frtDailyChecks'] ?? $payload['frt_daily_checks'] ?? [];
+            $rawOneOffRows = $payload['frtOneOffChecks'] ?? $payload['frt_one_off_checks'] ?? [];
             $dailyRows = $this->normalizeInspectionFrtDailyChecks(
-                $payload['frtDailyChecks'] ?? $payload['frt_daily_checks'] ?? []
+                $rawDailyRows
             );
             $oneOffRows = $this->normalizeInspectionFrtOneOffChecks(
-                $payload['frtOneOffChecks'] ?? $payload['frt_one_off_checks'] ?? []
+                $rawOneOffRows
+            );
+            $this->validateInspectionFrtRawCanonicalRows(
+                $rawDailyRows,
+                'payload.frtDailyChecks',
+                FrtDailyReference::dailyRowMap(),
+            );
+            $this->validateInspectionFrtRawCanonicalRows(
+                $rawOneOffRows,
+                'payload.frtOneOffChecks',
+                FrtDailyReference::oneOffRowMap(),
             );
             $this->validateInspectionFrtSubmittedRoster($dailyRows, $oneOffRows);
             $this->validateInspectionFrtDailyRows($dailyRows, 'payload.frtDailyChecks');
             $this->validateInspectionFrtOneOffRows($oneOffRows, 'payload.frtOneOffChecks');
         }
 
-        if ($this->hasInspectionRows($payload, 'highAngleChecks', 'high_angle_checks')) {
+        if (
+            $this->isHighAngleInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
+            || $this->hasInspectionRows($payload, 'highAngleChecks', 'high_angle_checks')
+        ) {
             $rows = $this->normalizeInspectionHighAngleChecks(
-                $payload['highAngleChecks'] ?? $payload['high_angle_checks']
+                $payload['highAngleChecks'] ?? $payload['high_angle_checks'] ?? []
             );
+            if ($rows === []) {
+                throw ValidationException::withMessages([
+                    'payload.highAngleChecks' => ['Submit at least one completed High Angle equipment row.'],
+                ]);
+            }
             $this->validateInspectionHighAngleSessionMeta($payload);
             $this->validateInspectionHighAngleRemarks($rows, 'payload.highAngleChecks');
         }

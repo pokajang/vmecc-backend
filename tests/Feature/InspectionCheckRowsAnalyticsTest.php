@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\InspectionCheckRow;
 use App\Models\Report;
 use App\Models\User;
+use App\Support\Inspection\FrtDailyReference;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -737,32 +738,11 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
 
     private function frtPayload(): array
     {
-        $dailyChecks = [];
-        foreach (range(1, 92) as $rowNumber) {
-            $dailyChecks[] = [
-                'id' => 'daily:fire-truck:'.$rowNumber,
-                'rowNumber' => (string) $rowNumber,
-                'mainLocation' => 'FIRE TRUCK',
-                'location' => match (true) {
-                    $rowNumber <= 6 => 'LOCKER 01',
-                    $rowNumber <= 12 => 'LOCKER 02',
-                    $rowNumber <= 19 => 'LOCKER 03',
-                    $rowNumber <= 32 => 'LOCKER 04',
-                    $rowNumber <= 45 => 'LOCKER 05',
-                    $rowNumber <= 50 => 'LOCKER 06',
-                    $rowNumber <= 51 => 'LOCKER 07',
-                    $rowNumber <= 55 => 'LOCKER 08',
-                    default => 'FIRE TRUCK',
-                },
-                'equipment' => match ($rowNumber) {
-                    1 => 'FIRE HOSE 2.5"',
-                    90 => 'OVERALL BODY',
-                    91 => 'MILEAGE (ODOMETER)',
-                    92 => 'FUEL LEVEL (%)',
-                    default => 'Daily Item '.$rowNumber,
-                },
-                'quantity' => in_array($rowNumber, [91, 92], true) ? '' : '1',
-                'rowKind' => in_array($rowNumber, [91, 92], true) ? 'reading' : 'status',
+        $dailyChecks = array_map(function (array $reference): array {
+            $rowNumber = (int) $reference['rowNumber'];
+
+            return [
+                ...$reference,
                 'status' => $rowNumber === 90 ? 'Issue' : 'Checked',
                 'readingValue' => match ($rowNumber) {
                     91 => '123456',
@@ -778,32 +758,13 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
                     ],
                 ] : [],
             ];
-        }
+        }, FrtDailyReference::dailyRows());
 
-        $oneOffChecks = [];
-        foreach (range(1, 46) as $rowNumber) {
-            $oneOffChecks[] = [
-                'id' => 'one-off:fire-truck:'.$rowNumber,
-                'rowNumber' => (string) $rowNumber,
-                'mainLocation' => 'FIRE TRUCK',
-                'location' => match (true) {
-                    $rowNumber <= 23 => 'TRUCK CHECKLIST',
-                    $rowNumber <= 25 => 'LOCKER NO 01',
-                    $rowNumber <= 27 => 'LOCKER NO 02',
-                    $rowNumber <= 30 => 'LOCKER NO 03',
-                    $rowNumber <= 36 => 'LOCKER NO 04',
-                    $rowNumber <= 39 => 'LOCKER NO 05',
-                    $rowNumber <= 41 => 'LOCKER NO 06',
-                    $rowNumber <= 44 => 'LOCKER NO 07',
-                    default => 'CREW CABIN',
-                },
-                'equipment' => match ($rowNumber) {
-                    1 => 'POWER WINDOW',
-                    16 => 'ELECTRONIC SIREN',
-                    45 => 'BA SET : 4',
-                    46 => 'RADIO SET : 1',
-                    default => 'One Off Item '.$rowNumber,
-                },
+        $oneOffChecks = array_map(function (array $reference): array {
+            $rowNumber = (int) $reference['rowNumber'];
+
+            return [
+                ...$reference,
                 'condition' => $rowNumber === 16 ? 'Not Good' : 'Good',
                 'remarks' => $rowNumber === 16 ? 'Mute switch sticking.' : '',
                 'photos' => $rowNumber === 16 ? [
@@ -814,7 +775,7 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
                     ],
                 ] : [],
             ];
-        }
+        }, FrtDailyReference::oneOffRows());
 
         return [
             'incidentType' => 'FRT Daily Inspection',

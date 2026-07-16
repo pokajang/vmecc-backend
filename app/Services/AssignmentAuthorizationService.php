@@ -11,8 +11,17 @@ use Spatie\Permission\Models\Role;
 
 class AssignmentAuthorizationService
 {
+    private const SYSTEM_ADMIN_ROLE_KEYS = [
+        'system administrator',
+        'system admin',
+    ];
+
     public function hasPermission(User $user, string $requiredPermissions, ?int $teamId = null): bool
     {
+        if ($this->isSystemAdministrator($user)) {
+            return true;
+        }
+
         $permissions = $this->getActivePermissionNames($user, $teamId)->values()->all();
         if (empty($permissions)) {
             return false;
@@ -33,13 +42,23 @@ class AssignmentAuthorizationService
         return false;
     }
 
+    public function isSystemAdministrator(User $user): bool
+    {
+        return $this->getActiveRoleNames($user)
+            ->contains(fn (string $roleName) => in_array(
+                strtolower(trim($roleName)),
+                self::SYSTEM_ADMIN_ROLE_KEYS,
+                true
+            ));
+    }
+
     public function getActivePermissionNames(User $user, ?int $teamId = null): Collection
     {
         $assignments = $this->activeAssignmentsQuery($user)
             ->with('role.permissions')
             ->get();
 
-        if ($assignments->isEmpty()) {
+        if ($assignments->isEmpty() && ! $this->hasPersistedAssignments($user)) {
             return collect($user->getAllPermissions()->pluck('name')->values()->all());
         }
 
@@ -70,7 +89,7 @@ class AssignmentAuthorizationService
     public function getActiveRoleNames(User $user): Collection
     {
         $assignments = $this->activeAssignmentsQuery($user)->with('role')->get();
-        if ($assignments->isEmpty()) {
+        if ($assignments->isEmpty() && ! $this->hasPersistedAssignments($user)) {
             return $this->sortRoleNames(collect($user->getRoleNames()->values()->all()));
         }
 
@@ -103,7 +122,7 @@ class AssignmentAuthorizationService
             ->orderByDesc('id')
             ->get();
 
-        if ($assignments->isEmpty()) {
+        if ($assignments->isEmpty() && ! $this->hasPersistedAssignments($user)) {
             return $user->getRoleNames()
                 ->values()
                 ->map(function (string $roleName, int $index) {
@@ -148,6 +167,7 @@ class AssignmentAuthorizationService
     {
         return DB::transaction(function () use ($user, $assignments) {
             $user->roleAssignments()->delete();
+
             return $this->addAssignments($user, $assignments);
         });
     }
@@ -174,6 +194,7 @@ class AssignmentAuthorizationService
             $assignment['is_primary'] = $incomingPrimaryIndex !== false && $index === (int) $incomingPrimaryIndex;
             $created[] = $this->createAssignment($user, $assignment);
         }
+
         return $created;
     }
 
@@ -200,6 +221,11 @@ class AssignmentAuthorizationService
             ->where(function ($query) use ($today) {
                 $query->whereNull('end_date')->orWhereDate('end_date', '>=', $today);
             });
+    }
+
+    private function hasPersistedAssignments(User $user): bool
+    {
+        return $user->roleAssignments()->exists();
     }
 
     private function sortRoleNames(Collection $roles): Collection

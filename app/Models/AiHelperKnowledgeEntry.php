@@ -105,6 +105,13 @@ class AiHelperKnowledgeEntry extends Model
         'processed_at',
         'error',
         'tags',
+        'retrieval_metadata',
+        'embedding',
+        'embedding_model',
+        'embedding_hash',
+        'embedding_status',
+        'embedded_at',
+        'embedding_error',
         'active',
         'version',
         'ingestion_run_id',
@@ -125,6 +132,9 @@ class AiHelperKnowledgeEntry extends Model
 
     protected $casts = [
         'tags' => 'array',
+        'retrieval_metadata' => 'array',
+        'embedding' => 'array',
+        'embedded_at' => 'datetime',
         'active' => 'boolean',
         'version' => 'integer',
         'source_size' => 'integer',

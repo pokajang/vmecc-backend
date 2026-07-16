@@ -52,8 +52,7 @@ class AiHelperApiResponder
             'action' => $action,
             'request_id' => $requestId,
             'user_id' => $request->user()?->id,
-            'error' => $e->getMessage(),
-            'exception' => get_class($e),
+            'exception_class' => $e::class,
         ]);
 
         return $this->error(

@@ -7,6 +7,26 @@ use App\Models\AiHelperThread;
 
 class AiHelperConversationService
 {
+    /** @return array<int, string> */
+    public function recentUserMessages(?AiHelperThread $thread, int $limit = 3): array
+    {
+        if (! $thread) {
+            return [];
+        }
+
+        return $thread->messages()
+            ->where('role', AiHelperMessage::ROLE_USER)
+            ->where('status', AiHelperMessage::STATUS_COMPLETED)
+            ->latest('created_at')
+            ->limit(max(1, $limit))
+            ->pluck('content')
+            ->reverse()
+            ->map(fn ($content) => trim((string) $content))
+            ->filter()
+            ->values()
+            ->all();
+    }
+
     /**
      * @return array<int, array{role: string, content: string}>
      */

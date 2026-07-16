@@ -147,4 +147,24 @@ class AiHelperDocumentApiTest extends TestCase
         $this->assertSame(0, AiHelperKnowledgeEntry::query()->where('source_mime', 'application/pdf')->count());
         $this->assertSame(34, AiHelperKnowledgeEntry::query()->whereHas('chunks')->count());
     }
+
+    public function test_citation_metadata_covers_every_source_id_the_model_can_receive(): void
+    {
+        config([
+            'ai_helper.knowledge_citation_limit' => 2,
+            'ai_helper.knowledge_retrieval_limit' => 18,
+        ]);
+        $guidance = collect(range(1, 13))->map(fn (int $page) => [
+            'source_id' => 'S'.$page,
+            'source_document_id' => 100,
+            'title' => 'Multi-page source',
+            'page_start' => $page,
+            'page_end' => $page,
+        ])->all();
+
+        $citations = app(AiHelperKnowledgeService::class)->citationsForGuidance($guidance);
+
+        $this->assertCount(13, $citations);
+        $this->assertSame('S13', $citations[12]['source_id']);
+    }
 }

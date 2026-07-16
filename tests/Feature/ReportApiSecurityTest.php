@@ -82,7 +82,9 @@ class ReportApiSecurityTest extends TestCase
         $this->actingAs($owner)
             ->getJson("/api/reports/{$report->report_uid}")
             ->assertOk()
-            ->assertJsonPath('data.canDownloadPdf', false);
+            ->assertJsonPath('data.canDownloadPdf', false)
+            ->assertJsonPath('data.recordActions.edit.allowed', false)
+            ->assertJsonPath('data.recordActions.delete.allowed', false);
     }
 
     public function test_user_cannot_transition_other_users_report(): void

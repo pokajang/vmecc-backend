@@ -58,7 +58,11 @@ class DrillReportMediaLifecycleTest extends TestCase
             'report_type' => 'drill',
             'status' => 'Submitted',
             'payload' => $this->payloadWithPhoto($mediaId),
-        ])->assertCreated();
+        ])->assertCreated()
+            ->assertJsonPath(
+                'data.postIncidentAnalysis.photos.0.description',
+                'Initial response position'
+            );
         $reportUid = (string) $created->json('data.id');
 
         $this->assertDatabaseHas('report_media_links', [

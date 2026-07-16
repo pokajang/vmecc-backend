@@ -2,7 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Models\AiHelperDocument;
+use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
+use App\Models\AiHelperMessage;
 use App\Models\User;
 use App\Services\AiHelperOpenAiService;
 use Database\Seeders\AiHelperKnowledgeSeeder;
@@ -79,8 +82,108 @@ class AiHelperApiTest extends TestCase
 
         $this->assertStringContainsString('event: meta', $content);
         $this->assertStringContainsString('event: heartbeat', $content);
+        $this->assertStringContainsString('event: status', $content);
+        $this->assertStringContainsString('Checking the answer against its sources', $content);
         $this->assertStringContainsString('event: delta', $content);
         $this->assertStringContainsString('event: done', $content);
+    }
+
+    public function test_stream_rejects_an_uncited_operational_answer_before_emitting_it(): void
+    {
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'test-key',
+            'ai_helper.embedding_enabled' => false,
+        ]);
+        $this->linkedKnowledge(
+            'ANNEX 1 Terminologies and Definitions',
+            '999 is the official Malaysian Emergency Service Centre telephone number.',
+        );
+        $this->actingAs(User::factory()->create(['status' => 'active']));
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('isAvailable')->andReturnTrue();
+            $mock->shouldReceive('streamResponse')->twice()->andReturnUsing(function ($instructions, $input, $onDelta) {
+                $onDelta('Call 999 immediately for every incident.');
+
+                return ['response_id' => 'resp_uncited'];
+            });
+        });
+
+        $content = $this->postJson('/api/ai-helper/messages/stream', [
+            'message' => 'What is 999 according to Annex 1?',
+            'page_context' => ['path' => '/dashboard'],
+            'response_language' => 'en',
+            'new_thread' => true,
+        ])->assertOk()->streamedContent();
+
+        $this->assertStringContainsString('sufficiently sourced answer', $content);
+        $this->assertStringNotContainsString('Call 999 immediately', $content);
+        $message = AiHelperMessage::query()->where('role', AiHelperMessage::ROLE_ASSISTANT)->latest('id')->firstOrFail();
+        $this->assertSame('rejected', $message->retrieval_metadata['citation_validation']['status']);
+        $this->assertSame([], $message->sources);
+    }
+
+    public function test_unsupported_knowledge_question_returns_deterministic_not_found_without_calling_the_model(): void
+    {
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'test-key',
+            'ai_helper.embedding_enabled' => false,
+            'ai_helper.rerank_enabled' => false,
+            'ai_helper.retrieval_v3' => true,
+        ]);
+        $this->actingAs(User::factory()->create(['status' => 'active']));
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('isAvailable')->andReturnTrue();
+            $mock->shouldNotReceive('streamResponse');
+            $mock->shouldNotReceive('structuredResponse');
+        });
+
+        $content = $this->postJson('/api/ai-helper/messages/stream', [
+            'message' => 'What colour is the CEO car?',
+            'page_context' => ['path' => '/dashboard'],
+            'response_language' => 'en',
+            'new_thread' => true,
+        ])->assertOk()->streamedContent();
+
+        $this->assertStringContainsString('not found in the available VMECC knowledge', $content);
+        $this->assertStringNotContainsString('event: status', $content);
+        $message = AiHelperMessage::query()->where('role', AiHelperMessage::ROLE_ASSISTANT)->latest('id')->firstOrFail();
+        $this->assertSame([], $message->sources);
+        $this->assertSame('deterministic', $message->retrieval_metadata['verification']['status']);
+    }
+
+    public function test_embedded_helper_also_rejects_uncited_operational_content(): void
+    {
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'test-key',
+            'ai_helper.embedding_enabled' => false,
+        ]);
+        $this->linkedKnowledge(
+            'ANNEX 1 Terminologies and Definitions',
+            '999 is the official Malaysian Emergency Service Centre telephone number.',
+        );
+        $this->actingAs(User::factory()->create(['status' => 'active']));
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('isAvailable')->andReturnTrue();
+            $mock->shouldReceive('streamResponse')->twice()->andReturnUsing(function ($instructions, $input, $onDelta) {
+                $onDelta('Call 999 immediately for every incident.');
+
+                return ['response_id' => 'resp_embedded_uncited'];
+            });
+        });
+
+        $content = $this->postJson('/api/ai-helper/messages/stream', [
+            'message' => 'What is 999 according to Annex 1?',
+            'page_context' => ['path' => '/dashboard'],
+            'response_language' => 'en',
+            'conversation_purpose' => 'embedded_helper',
+        ])->assertOk()->streamedContent();
+
+        $this->assertStringContainsString('sufficiently sourced answer', $content);
+        $this->assertStringNotContainsString('Call 999 immediately', $content);
+        $this->assertSame(0, AiHelperMessage::query()->where('role', AiHelperMessage::ROLE_ASSISTANT)->count());
     }
 
     public function test_markdown_upload_requires_system_administrator(): void
@@ -140,6 +243,22 @@ MD;
             ->assertJsonPath('data.knowledge_runtime.mode', 'markdown_only')
             ->assertJsonPath('data.knowledge_runtime.pdf_ingestion_enabled', false)
             ->assertJsonPath('data.knowledge_runtime.external_ocr_required', false)
+            ->assertJsonStructure(['data' => [
+                'knowledge_runtime' => [
+                    'retrieval_pipeline_version',
+                    'rerank_enabled',
+                    'critical_fact_validation_enabled',
+                    'grounding_verification_mode',
+                ],
+                'reliability' => [
+                    'sample_size',
+                    'verified',
+                    'repaired',
+                    'rejected',
+                    'rerank_fallbacks',
+                    'p95_response_ms',
+                ],
+            ]])
             ->assertJsonMissing(['api_key' => 'sk-secret-value']);
     }
 
@@ -153,6 +272,37 @@ MD;
         $admin->assignRole($role);
 
         return $admin;
+    }
+
+    private function linkedKnowledge(string $title, string $content): AiHelperKnowledgeEntry
+    {
+        $document = AiHelperDocument::create([
+            'title' => $title,
+            'source_filename' => $title.'.pdf',
+            'source_mime' => 'application/pdf',
+            'visibility' => AiHelperDocument::VISIBILITY_SHARED,
+        ]);
+        $entry = AiHelperKnowledgeEntry::create([
+            'source_document_id' => $document->id,
+            'title' => $title,
+            'content' => $content,
+            'source_mime' => 'text/markdown',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+            'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'active' => true,
+        ]);
+        AiHelperKnowledgeChunk::create([
+            'knowledge_entry_id' => $entry->id,
+            'chunk_index' => 0,
+            'content' => $content,
+            'search_text' => $content,
+            'content_hash' => hash('sha256', $content),
+            'token_estimate' => 20,
+            'active' => true,
+        ]);
+
+        return $entry;
     }
 
     private function markdownUpload(string $name, string $content): UploadedFile

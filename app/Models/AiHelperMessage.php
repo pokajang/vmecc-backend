@@ -8,11 +8,15 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class AiHelperMessage extends Model
 {
     public const ROLE_USER = 'user';
+
     public const ROLE_ASSISTANT = 'assistant';
 
     public const STATUS_COMPLETED = 'completed';
+
     public const STATUS_STREAMING = 'streaming';
+
     public const STATUS_FAILED = 'failed';
+
     public const STATUS_ABORTED = 'aborted';
 
     protected $fillable = [
@@ -24,11 +28,13 @@ class AiHelperMessage extends Model
         'status',
         'error',
         'sources',
+        'retrieval_metadata',
     ];
 
     protected $casts = [
         'route_context' => 'array',
         'sources' => 'array',
+        'retrieval_metadata' => 'array',
     ];
 
     public function thread(): BelongsTo

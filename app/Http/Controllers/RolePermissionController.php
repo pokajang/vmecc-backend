@@ -8,6 +8,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 class RolePermissionController extends Controller
 {
@@ -27,11 +28,20 @@ class RolePermissionController extends Controller
             ->keyBy('name');
 
         $matrix = [];
+        $roleAccess = [];
         foreach (RoleCatalog::ROLES as $roleName) {
             $role = $roles->get($roleName);
+            $isSystemAdministrator = $roleName === 'System Administrator';
+            $roleAccess[$roleName] = [
+                'full_access' => $isSystemAdministrator,
+                'permissions_locked' => $isSystemAdministrator,
+            ];
 
-            if ($roleName === 'System Administrator') {
+            if ($isSystemAdministrator) {
+                // Kept for backward compatibility. Consumers should use role_access
+                // for the authoritative full-access and locked-state contract.
                 $matrix[$roleName] = ['*'];
+
                 continue;
             }
 
@@ -44,8 +54,9 @@ class RolePermissionController extends Controller
 
         return response()->json([
             'permissions' => $permissions,
-            'roles'       => RoleCatalog::ROLES,
-            'matrix'      => $matrix,
+            'roles' => RoleCatalog::ROLES,
+            'matrix' => $matrix,
+            'role_access' => $roleAccess,
         ]);
     }
 
@@ -59,7 +70,7 @@ class RolePermissionController extends Controller
     public function update(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'matrix'   => ['required', 'array'],
+            'matrix' => ['required', 'array'],
             'matrix.*' => ['present', 'array'],
             'matrix.*.*' => ['string'],
         ]);
@@ -67,7 +78,7 @@ class RolePermissionController extends Controller
         $allowedPermissions = array_flip(RoleCatalog::allPermissions());
 
         $before = [];
-        $after  = [];
+        $after = [];
         $changed = [];
 
         foreach ($data['matrix'] as $roleName => $permissionNames) {
@@ -77,7 +88,7 @@ class RolePermissionController extends Controller
             }
 
             // Skip unknown roles.
-            if (!in_array($roleName, RoleCatalog::ROLES, true)) {
+            if (! in_array($roleName, RoleCatalog::ROLES, true)) {
                 continue;
             }
 
@@ -107,13 +118,13 @@ class RolePermissionController extends Controller
         }
 
         // Clear Spatie permission cache so changes take effect immediately.
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
-        if (!empty($changed)) {
+        if (! empty($changed)) {
             AuditLogger::log($request, 'role_permissions_updated', null, [
                 'changed_roles' => $changed,
-                'before'        => array_intersect_key($before, array_flip($changed)),
-                'after'         => array_intersect_key($after, array_flip($changed)),
+                'before' => array_intersect_key($before, array_flip($changed)),
+                'after' => array_intersect_key($after, array_flip($changed)),
             ]);
         }
 

@@ -11,6 +11,7 @@ use App\Http\Requests\AiHelper\UpdateAiHelperReportRequest;
 use App\Http\Requests\AiHelper\UploadAiHelperDocumentRequest;
 use App\Http\Requests\AiHelper\UploadAiHelperMarkdownKnowledgeRequest;
 use App\Models\AiHelperDocument;
+use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Models\AiHelperMessage;
 use App\Models\AiHelperResponseReport;
@@ -26,10 +27,13 @@ use App\Services\AiHelperKnowledgeQuotaService;
 use App\Services\AiHelperKnowledgeService;
 use App\Services\AiHelperMarkdownKnowledgeParser;
 use App\Services\AiHelperOpenAiService;
+use App\Services\AiHelperReliabilityMetrics;
+use App\Services\AiHelperResponsePipeline;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -53,6 +57,8 @@ class AiHelperController extends Controller
         private readonly AiHelperKnowledgeQuotaService $knowledgeQuota,
         private readonly AiHelperKnowledgeLifecycleService $knowledgeLifecycle,
         private readonly AiHelperConversationService $conversation,
+        private readonly AiHelperResponsePipeline $responsePipeline,
+        private readonly AiHelperReliabilityMetrics $reliabilityMetrics,
         private readonly AiHelperApiResponder $responder,
     ) {}
 
@@ -763,6 +769,23 @@ class AiHelperController extends Controller
                     'updated_at' => optional($entry->updated_at)->toIso8601String(),
                 ])
                 ->values();
+            $retrievalSchemaReady = Schema::hasColumn('ai_helper_knowledge_entries', 'embedding_status')
+                && Schema::hasColumn('ai_helper_knowledge_chunks', 'embedding');
+            $usableChunkQuery = AiHelperKnowledgeChunk::query()
+                ->where('active', true)
+                ->whereHas('knowledgeEntry', fn ($query) => $query
+                    ->where('source_mime', 'text/markdown')
+                    ->where('active', true)
+                    ->where('review_status', AiHelperKnowledgeEntry::REVIEW_APPROVED)
+                    ->whereIn('status', [AiHelperKnowledgeEntry::STATUS_ACTIVE, AiHelperKnowledgeEntry::STATUS_PROCESSING]));
+            $activeChunks = (clone $usableChunkQuery)->count();
+            $embeddedChunks = $retrievalSchemaReady
+                ? (clone $usableChunkQuery)->whereNotNull('embedding')->count()
+                : 0;
+            $markdownSources = AiHelperKnowledgeEntry::query()->where('source_mime', 'text/markdown')->count();
+            $semanticSources = $retrievalSchemaReady
+                ? AiHelperKnowledgeEntry::query()->where('source_mime', 'text/markdown')->where('embedding_status', 'ready')->count()
+                : 0;
 
             return response()->json([
                 'data' => [
@@ -775,6 +798,18 @@ class AiHelperController extends Controller
                         'mode' => 'markdown_only',
                         'pdf_ingestion_enabled' => false,
                         'external_ocr_required' => false,
+                        'retrieval_mode' => (bool) config('ai_helper.retrieval_v2', true) ? 'hybrid' : 'legacy',
+                        'retrieval_pipeline_version' => (bool) config('ai_helper.retrieval_v3', false) ? 3 : 2,
+                        'rerank_enabled' => (bool) config('ai_helper.rerank_enabled', false),
+                        'critical_fact_validation_enabled' => (bool) config('ai_helper.critical_fact_validation_enabled', true),
+                        'grounding_verification_mode' => (string) config('ai_helper.grounding_verification_mode', 'disabled'),
+                        'retrieval_schema_ready' => $retrievalSchemaReady,
+                        'semantic_ready' => $retrievalSchemaReady && $activeChunks > 0 && $activeChunks === $embeddedChunks,
+                        'markdown_sources' => $markdownSources,
+                        'semantic_sources' => $semanticSources,
+                        'chunks' => $activeChunks,
+                        'embedded_chunks' => $embeddedChunks,
+                        'missing_embeddings' => max(0, $activeChunks - $embeddedChunks),
                     ],
                     'storage' => [
                         'knowledge_used_bytes' => $knowledgeStorageBytes,
@@ -782,6 +817,7 @@ class AiHelperController extends Controller
                         'document_used_bytes' => (int) AiHelperDocument::withTrashed()->sum('source_size'),
                         'document_max_total_bytes' => (int) config('ai_helper.document_max_total_upload_bytes', 0),
                     ],
+                    'reliability' => $this->reliabilityMetrics->recent(),
                     'recent_failed_uploads' => $failedUploads,
                 ],
                 'request_id' => $this->responder->requestId($request),
@@ -966,18 +1002,32 @@ class AiHelperController extends Controller
         try {
             $actor = $request->user();
             $conversationPurpose = $this->normalizeConversationPurpose($validated['conversation_purpose'] ?? null);
+            $retrievalThread = null;
+            if ($conversationPurpose === self::CONVERSATION_PURPOSE_CHAT && ! (bool) ($validated['new_thread'] ?? false)) {
+                $threadQuery = AiHelperThread::query()->where('user_id', $actor->id);
+                $retrievalThread = ! empty($validated['thread_id'])
+                    ? $this->regularThreadById($threadQuery, (int) $validated['thread_id'])
+                    : $this->latestRegularThreadForUser($actor->id);
+            }
+            $previousUserMessages = $this->conversation->recentUserMessages($retrievalThread);
             $pageContext = $this->knowledge->buildContext(
                 $validated['page_context'] ?? [],
                 $actor,
                 (string) $validated['message'],
+                $previousUserMessages,
             );
             $pageContext['page']['conversation_purpose'] = $conversationPurpose;
             $pageContext['page']['assistant_surface'] = $conversationPurpose;
+            $responseLanguage = (string) ($validated['response_language'] ?? 'bm');
             $instructions = $this->knowledge->instructionsFor(
                 $pageContext,
-                (string) ($validated['response_language'] ?? 'bm')
+                $responseLanguage,
             );
             $sources = $this->knowledge->citationsForGuidance($pageContext['guidance'] ?? []);
+            $deterministicContent = $this->knowledge->deterministicResponseFor(
+                $pageContext,
+                $responseLanguage,
+            );
 
             if ($conversationPurpose === self::CONVERSATION_PURPOSE_EMBEDDED_HELPER) {
                 if (! empty($validated['thread_id'])) {
@@ -1001,6 +1051,7 @@ class AiHelperController extends Controller
                 ]);
 
                 return $this->streamEmbeddedHelperResponse(
+                    (string) $validated['message'],
                     $history,
                     $instructions,
                     $requestId,
@@ -1008,6 +1059,10 @@ class AiHelperController extends Controller
                     count($pageContext['guidance'] ?? []),
                     $pageContext['page'] ?? [],
                     $sources,
+                    $pageContext['guidance'] ?? [],
+                    $pageContext['retrieval'] ?? [],
+                    $deterministicContent,
+                    $responseLanguage,
                 );
             }
 
@@ -1032,6 +1087,7 @@ class AiHelperController extends Controller
                 'content' => '',
                 'route_context' => $pageContext['page'] ?? [],
                 'status' => AiHelperMessage::STATUS_STREAMING,
+                'retrieval_metadata' => $pageContext['retrieval'] ?? [],
             ]);
 
             $thread->forceFill([
@@ -1049,7 +1105,10 @@ class AiHelperController extends Controller
             return $this->safeFailure($request, $e, 'stream_prepare');
         }
 
-        return response()->stream(function () use ($thread, $assistantMessage, $history, $instructions, $requestId, $sources) {
+        $question = (string) $validated['message'];
+        $guidance = $pageContext['guidance'] ?? [];
+
+        return response()->stream(function () use ($thread, $assistantMessage, $history, $instructions, $requestId, $sources, $guidance, $question, $deterministicContent, $responseLanguage) {
             $this->emit('meta', [
                 'request_id' => $requestId,
                 'contract_version' => 1,
@@ -1061,20 +1120,45 @@ class AiHelperController extends Controller
             $content = '';
             try {
                 $startedAt = microtime(true);
-                $result = $this->openAi->streamResponse($instructions, $history, function (string $delta) use (&$content, $requestId) {
-                    if (connection_aborted()) {
-                        throw new RuntimeException('AI helper stream aborted by client.');
-                    }
-                    $content .= $delta;
-                    $this->emit('delta', ['text' => $delta, 'request_id' => $requestId], $requestId);
-                });
+                $lastHeartbeatAt = microtime(true);
+                $result = $this->responsePipeline->respond(
+                    $question,
+                    $instructions,
+                    $history,
+                    $guidance,
+                    $sources,
+                    $deterministicContent,
+                    $responseLanguage,
+                    fn (string $status) => $this->emitPipelineStatus($status, $requestId),
+                    function (string $delta) use (&$lastHeartbeatAt, $requestId) {
+                        if (connection_aborted()) {
+                            throw new RuntimeException('AI helper stream aborted by client.');
+                        }
+                        if (microtime(true) - $lastHeartbeatAt >= 10) {
+                            $this->emit('heartbeat', ['request_id' => $requestId, 'at' => now()->toIso8601String()], $requestId);
+                            $lastHeartbeatAt = microtime(true);
+                        }
+                    },
+                );
+                $content = (string) $result['content'];
+                $responseSources = $result['sources'] ?? [];
+                $verification = $result['verification'] ?? [];
+                $retrievalMetadata = array_merge($assistantMessage->retrieval_metadata ?? [], [
+                    'pipeline_version' => (int) (($assistantMessage->retrieval_metadata['pipeline_version'] ?? null) ?: 3),
+                    'verification' => $verification,
+                    'citation_validation' => $verification['citation_validation'] ?? null,
+                    'provider_response_ids' => $result['provider_response_ids'] ?? [],
+                    'response_timings_ms' => $result['timings_ms'] ?? [],
+                ]);
+                $this->emit('delta', ['text' => $content, 'request_id' => $requestId], $requestId);
 
                 $assistantMessage->forceFill([
                     'content' => $content,
                     'openai_response_id' => $result['response_id'] ?? null,
                     'status' => AiHelperMessage::STATUS_COMPLETED,
                     'error' => null,
-                    'sources' => $sources,
+                    'sources' => $responseSources,
+                    'retrieval_metadata' => $retrievalMetadata,
                 ])->save();
 
                 $thread->touch();
@@ -1084,6 +1168,9 @@ class AiHelperController extends Controller
                     'assistant_message_id' => $assistantMessage->id,
                     'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
                     'content_length' => strlen($content),
+                    'citation_validation_status' => $verification['citation_validation']['status'] ?? null,
+                    'verification_status' => $verification['status'] ?? null,
+                    'verification_attempts' => $verification['attempts'] ?? null,
                 ]);
                 $this->emit('done', [
                     'request_id' => $requestId,
@@ -1119,6 +1206,7 @@ class AiHelperController extends Controller
     }
 
     private function streamEmbeddedHelperResponse(
+        string $question,
         array $history,
         string $instructions,
         string $requestId,
@@ -1126,8 +1214,12 @@ class AiHelperController extends Controller
         int $guidanceCount,
         array $pageContext,
         array $sources,
+        array $guidance,
+        array $retrievalMetadata,
+        ?string $deterministicContent,
+        string $responseLanguage,
     ): StreamedResponse {
-        return response()->stream(function () use ($history, $instructions, $requestId, $userId, $guidanceCount, $pageContext, $sources) {
+        return response()->stream(function () use ($question, $history, $instructions, $requestId, $userId, $guidanceCount, $pageContext, $sources, $guidance, $retrievalMetadata, $deterministicContent, $responseLanguage) {
             $this->emit('meta', [
                 'request_id' => $requestId,
                 'contract_version' => 1,
@@ -1140,28 +1232,52 @@ class AiHelperController extends Controller
             $content = '';
             try {
                 $startedAt = microtime(true);
-                $result = $this->openAi->streamResponse($instructions, $history, function (string $delta) use (&$content, $requestId) {
-                    if (connection_aborted()) {
-                        throw new RuntimeException('AI helper stream aborted by client.');
-                    }
-                    $content .= $delta;
-                    $this->emit('delta', ['text' => $delta, 'request_id' => $requestId], $requestId);
-                });
+                $lastHeartbeatAt = microtime(true);
+                $result = $this->responsePipeline->respond(
+                    $question,
+                    $instructions,
+                    $history,
+                    $guidance,
+                    $sources,
+                    $deterministicContent,
+                    $responseLanguage,
+                    fn (string $status) => $this->emitPipelineStatus($status, $requestId),
+                    function (string $delta) use (&$lastHeartbeatAt, $requestId) {
+                        if (connection_aborted()) {
+                            throw new RuntimeException('AI helper stream aborted by client.');
+                        }
+                        if (microtime(true) - $lastHeartbeatAt >= 10) {
+                            $this->emit('heartbeat', ['request_id' => $requestId, 'at' => now()->toIso8601String()], $requestId);
+                            $lastHeartbeatAt = microtime(true);
+                        }
+                    },
+                );
+                $content = (string) $result['content'];
+                $responseSources = $result['sources'] ?? [];
+                $verification = $result['verification'] ?? [];
+                $this->emit('delta', ['text' => $content, 'request_id' => $requestId], $requestId);
 
                 Log::info('Ask AI embedded helper stream completed', [
                     'request_id' => $requestId,
                     'user_id' => $userId,
                     'openai_response_id' => $result['response_id'] ?? null,
                     'guidance_count' => $guidanceCount,
+                    'retrieval_mode' => $retrievalMetadata['mode'] ?? null,
+                    'retrieval_document_count' => $retrievalMetadata['documents_selected'] ?? null,
+                    'retrieval_chunk_count' => $retrievalMetadata['chunks_selected'] ?? null,
+                    'semantic_fallback' => $retrievalMetadata['semantic_fallback'] ?? null,
                     'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
                     'content_length' => strlen($content),
+                    'citation_validation_status' => $verification['citation_validation']['status'] ?? null,
+                    'verification_status' => $verification['status'] ?? null,
+                    'verification_attempts' => $verification['attempts'] ?? null,
                 ]);
 
                 $this->emit('done', [
                     'request_id' => $requestId,
                     'conversation_purpose' => self::CONVERSATION_PURPOSE_EMBEDDED_HELPER,
                     'thread' => null,
-                    'message' => $this->formatTransientAssistantMessage($content, $pageContext, $sources),
+                    'message' => $this->formatTransientAssistantMessage($content, $pageContext, $responseSources),
                 ], $requestId);
             } catch (Throwable $e) {
                 $aborted = str_contains($e->getMessage(), 'aborted by client') || connection_aborted();
@@ -1350,6 +1466,22 @@ class AiHelperController extends Controller
         return Str::limit(Str::headline($title ?: 'VMECC').' help', 80, '');
     }
 
+    private function emitPipelineStatus(string $status, string $requestId): void
+    {
+        $message = match ($status) {
+            'generating' => 'Preparing an answer from the selected knowledge...',
+            'verifying' => 'Checking the answer against its sources...',
+            'repairing' => 'Correcting an answer that did not pass source checks...',
+            default => 'Processing the Ask AI request...',
+        };
+
+        $this->emit('status', [
+            'request_id' => $requestId,
+            'status' => $status,
+            'message' => $message,
+        ], $requestId);
+    }
+
     private function emit(string $event, array $payload, ?string $requestId = null): void
     {
         if ($requestId && ! isset($payload['request_id'])) {
@@ -1483,6 +1615,8 @@ class AiHelperController extends Controller
             'source_mime' => $entry->source_mime,
             'source_size' => $entry->source_size,
             'source_document_id' => $entry->source_document_id,
+            'embedding_status' => $entry->embedding_status,
+            'embedded_at' => optional($entry->embedded_at)->toIso8601String(),
             'source_document_title' => $entry->relationLoaded('sourceDocument') ? $entry->sourceDocument?->title : null,
             'ingestion_run_id' => $entry->ingestion_run_id,
             'ingestion_version' => $entry->ingestion_version,

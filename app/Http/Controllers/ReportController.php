@@ -254,6 +254,7 @@ class ReportController extends Controller
             'inspected_at' => ['nullable', 'string'],
             'inspectedAt' => ['nullable', 'string'],
         ]);
+        $data['payload'] = $this->stripServerManagedPayloadMetadata((array) $data['payload']);
 
         $status = (string) ($data['status'] ?? self::STATUS_SUBMITTED);
         $reportType = $this->normalizeReportType($data['report_type'] ?? '');
@@ -438,6 +439,7 @@ class ReportController extends Controller
             'inspected_at' => ['nullable', 'string'],
             'inspectedAt' => ['nullable', 'string'],
         ]);
+        $data['payload'] = $this->stripServerManagedPayloadMetadata((array) $data['payload']);
 
         if ((int) $data['version'] !== (int) $report->version) {
             return response()->json([
@@ -961,6 +963,12 @@ class ReportController extends Controller
     private function formatReport(Report $report): array
     {
         $payload = is_array($report->payload) ? $report->payload : [];
+        $canReview = $this->formatCanReview($report);
+        $canApprove = $this->formatCanApprove($report);
+        $canReject = $this->formatCanReject($report);
+        $canDownloadPdf = $this->formatCanDownloadPdf($report);
+        $canEdit = $this->formatCanEdit($report);
+        $canDelete = $this->formatCanDelete($report);
         $history = $report->timelineEntries->map(function (ReportTimelineEntry $entry) {
             return [
                 'id' => $entry->id,
@@ -1013,14 +1021,46 @@ class ReportController extends Controller
             'dutyContextVersion' => $report->duty_context_version,
             'dutySourceVersion' => $report->duty_source_version,
             'approvalHistory' => is_array($report->approval_history) ? $report->approval_history : [],
-            'canReview' => $this->formatCanReview($report),
-            'canApprove' => $this->formatCanApprove($report),
-            'canReject' => $this->formatCanReject($report),
-            'canDownloadPdf' => $this->formatCanDownloadPdf($report),
+            'canReview' => $canReview,
+            'canApprove' => $canApprove,
+            'canReject' => $canReject,
+            'canDownloadPdf' => $canDownloadPdf,
+            'recordActionsVersion' => 1,
+            'recordActions' => $this->formatRecordActions(
+                $report,
+                $canEdit,
+                $canDelete,
+                $canReview,
+                $canApprove,
+                $canReject,
+                $canDownloadPdf,
+            ),
             'timeline' => $history,
             'createdAt' => optional($report->created_at)->toIso8601String(),
             'updatedAt' => optional($report->updated_at)->toIso8601String(),
         ]);
+    }
+
+    private function stripServerManagedPayloadMetadata(array $payload): array
+    {
+        foreach ([
+            'recordActionsVersion',
+            'recordActions',
+            'record_actions_version',
+            'record_actions',
+            'canReview',
+            'canApprove',
+            'canReject',
+            'canDownloadPdf',
+            'can_review',
+            'can_approve',
+            'can_reject',
+            'can_download_pdf',
+        ] as $field) {
+            unset($payload[$field]);
+        }
+
+        return $payload;
     }
 
     private function isInspectionReport(Report $report): bool
@@ -1103,6 +1143,116 @@ class ReportController extends Controller
         return $user
             ? $this->reportReadAuthorizationService->canDownloadPdf($user, $report)
             : false;
+    }
+
+    private function formatCanEdit(Report $report): bool
+    {
+        $user = request()?->user();
+        if (! $user) {
+            return false;
+        }
+        $reportType = $this->normalizeReportType($report->report_type ?? '');
+        if ($this->isManagedReportingWorkflowType($reportType)
+            && ! $this->hasReportingModulePermission($user, $reportType)) {
+            return false;
+        }
+
+        if ($this->isInspectionReport($report)) {
+            return $this->inspectionPolicy
+                ->canEdit($report, $user, $this->isSystemAdministrator($user))
+                ->allowed;
+        }
+
+        return (int) $report->owner_user_id === (int) $user->id
+            && in_array($report->status, [self::STATUS_DRAFT, self::STATUS_SUBMITTED, self::STATUS_REJECTED], true);
+    }
+
+    private function formatCanDelete(Report $report): bool
+    {
+        $user = request()?->user();
+        if (! $user) {
+            return false;
+        }
+        $reportType = $this->normalizeReportType($report->report_type ?? '');
+        if ($this->isManagedReportingWorkflowType($reportType)
+            && ! $this->hasReportingModulePermission($user, $reportType)) {
+            return false;
+        }
+
+        if ($this->isInspectionReport($report)) {
+            return $this->inspectionPolicy
+                ->canDelete($report, $user, $this->isSystemAdministrator($user))
+                ->allowed;
+        }
+
+        return (int) $report->owner_user_id === (int) $user->id;
+    }
+
+    private function formatRecordActions(
+        Report $report,
+        bool $canEdit,
+        bool $canDelete,
+        bool $canReview,
+        bool $canApprove,
+        bool $canReject,
+        bool $canDownloadPdf,
+    ): array {
+        $reportType = $this->normalizeReportType($report->report_type ?? '');
+        $status = (string) $report->status;
+        $isFitnessExport = $reportType === 'fitness-test'
+            && $status !== self::STATUS_DRAFT;
+        $canExportFitnessData = $isFitnessExport
+            && request()?->user()
+            && $this->reportReadAuthorizationService->canViewModule(request()->user(), $reportType);
+        $hasPdfExport = in_array($reportType, ['inspection', 'erco', 'drill'], true)
+            && $status !== self::STATUS_DRAFT;
+
+        return [
+            'view' => $this->formatActionCapability(true, true),
+            'download' => $this->formatActionCapability(
+                $hasPdfExport || $isFitnessExport,
+                $hasPdfExport ? $canDownloadPdf : (bool) $canExportFitnessData,
+                ($hasPdfExport && ! $canDownloadPdf) || ($isFitnessExport && ! $canExportFitnessData)
+                    ? 'download_forbidden'
+                    : null,
+                ['format' => $isFitnessExport ? 'json' : 'pdf'],
+            ),
+            'edit' => $this->formatActionCapability(
+                in_array($status, [self::STATUS_DRAFT, self::STATUS_SUBMITTED, self::STATUS_REJECTED], true)
+                    || ($this->isInspectionReport($report) && $this->isSystemAdministrator(request()?->user())),
+                $canEdit,
+                $canEdit ? null : 'edit_forbidden',
+            ),
+            'review' => $this->formatActionCapability(
+                $status === self::STATUS_SUBMITTED,
+                $canReview,
+                $canReview ? null : 'review_forbidden',
+            ),
+            'approve' => $this->formatActionCapability(
+                $status === self::STATUS_REVIEWED,
+                $canApprove,
+                $canApprove ? null : 'approve_forbidden',
+            ),
+            'reject' => $this->formatActionCapability(
+                in_array($status, [self::STATUS_SUBMITTED, self::STATUS_REVIEWED], true),
+                $canReject,
+                $canReject ? null : 'reject_forbidden',
+            ),
+            'delete' => $this->formatActionCapability(true, $canDelete, $canDelete ? null : 'delete_forbidden'),
+        ];
+    }
+
+    private function formatActionCapability(
+        bool $applicable,
+        bool $allowed,
+        ?string $reasonCode = null,
+        array $extra = [],
+    ): array {
+        return array_merge([
+            'applicable' => $applicable,
+            'allowed' => $applicable && $allowed,
+            'reasonCode' => $applicable && ! $allowed ? $reasonCode : null,
+        ], $extra);
     }
 
     private function emitWorkflowNotificationSafely(

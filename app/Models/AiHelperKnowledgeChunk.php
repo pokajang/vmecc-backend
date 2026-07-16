@@ -11,6 +11,13 @@ class AiHelperKnowledgeChunk extends Model
         'knowledge_entry_id',
         'chunk_index',
         'content',
+        'heading_path',
+        'content_type',
+        'search_text',
+        'embedding',
+        'embedding_model',
+        'embedding_hash',
+        'embedded_at',
         'content_hash',
         'token_estimate',
         'module_key',
@@ -24,6 +31,9 @@ class AiHelperKnowledgeChunk extends Model
 
     protected $casts = [
         'active' => 'boolean',
+        'heading_path' => 'array',
+        'embedding' => 'array',
+        'embedded_at' => 'datetime',
         'chunk_index' => 'integer',
         'token_estimate' => 'integer',
         'page_start' => 'integer',

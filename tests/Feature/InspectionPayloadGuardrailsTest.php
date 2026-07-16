@@ -1666,14 +1666,15 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonValidationErrors(['payload.frtDailyChecks.89.photos.0.url']);
     }
 
-    public function test_inspection_report_rejects_frt_reports_with_incomplete_seeded_roster(): void
+    public function test_inspection_report_accepts_completed_subset_of_frt_seeded_roster(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantInspectionPermission($user);
         $this->actingAs($user);
 
         $payload = $this->frtPayload();
-        array_pop($payload['frtDailyChecks']);
+        $payload['frtDailyChecks'] = [$payload['frtDailyChecks'][0]];
+        $payload['frtOneOffChecks'] = [];
 
         $response = $this->postJson('/api/reports', [
             'display_id' => 'INS-GUARD-FRT-ROSTER',
@@ -1682,8 +1683,62 @@ class InspectionPayloadGuardrailsTest extends TestCase
             'payload' => $payload,
         ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.frtDailyChecks']);
+        $response->assertCreated();
+        $this->assertCount(1, $response->json('data.frtDailyChecks') ?? []);
+        $this->assertCount(0, $response->json('data.frtOneOffChecks') ?? []);
+    }
+
+    public function test_inspection_report_rejects_empty_frt_submission(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $payload = $this->frtPayload();
+        $payload['frtDailyChecks'] = [];
+        $payload['frtOneOffChecks'] = [];
+
+        $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-FRT-EMPTY',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ])->assertUnprocessable()->assertJsonValidationErrors(['payload.frtDailyChecks']);
+    }
+
+    public function test_inspection_report_rejects_duplicate_unsupported_and_modified_frt_subset_rows(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $payload = $this->frtPayload();
+        $row = $payload['frtDailyChecks'][0];
+        $payload['frtDailyChecks'] = [$row, $row];
+        $payload['frtOneOffChecks'] = [];
+
+        $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-FRT-DUPLICATE',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ])->assertUnprocessable()->assertJsonValidationErrors(['payload.frtDailyChecks.1.id']);
+
+        $payload['frtDailyChecks'] = [array_merge($row, ['id' => 'daily:unsupported:999'])];
+        $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-FRT-UNSUPPORTED',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ])->assertUnprocessable()->assertJsonValidationErrors(['payload.frtDailyChecks.0.id']);
+
+        $payload['frtDailyChecks'] = [array_merge($row, ['equipment' => 'Modified equipment'])];
+        $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-FRT-MODIFIED',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ])->assertUnprocessable()->assertJsonValidationErrors(['payload.frtDailyChecks.0.equipment']);
     }
 
     public function test_inspection_report_rejects_frt_reports_without_required_session_meta(): void
@@ -1977,6 +2032,27 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $missingDate->assertJsonValidationErrors([
             'payload.highAngleInspectionDate',
         ]);
+    }
+
+    public function test_inspection_report_rejects_empty_high_angle_submission(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-HA-EMPTY',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'High Angle Rescue Equipment Inspection',
+                'location' => 'Response Kit #1',
+                'mainLocation' => 'Response Kit #1',
+                'highAngleInspectedBy' => 'Inspector Rope',
+                'highAngleInspectionDate' => '2026-06-28',
+                'highAngleChecks' => [],
+            ],
+        ])->assertUnprocessable()->assertJsonValidationErrors(['payload.highAngleChecks']);
     }
 
     public function test_inspection_report_rejects_invalid_checklist_payload(): void
