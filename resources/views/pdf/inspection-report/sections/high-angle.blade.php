@@ -33,6 +33,37 @@
                 </thead>
                 <tbody>
                     @foreach ($group['rows'] as $check)
+                        @php
+                            $condition = trim((string) ($check['condition'] ?? ''));
+                            $issueRemarks = trim((string) ($check['conditionRemarks'] ?? $check['condition_remarks'] ?? $check['remarks'] ?? ''));
+                            $issuePhotos = $filterInlinePhotos($check['conditionPhotos'] ?? $check['condition_photos'] ?? []);
+                            if (count($issuePhotos) === 0) {
+                                $issuePhotos = $filterInlinePhotos($check['photos'] ?? []);
+                            }
+                            $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: 'High Angle equipment';
+                            $additionalNotes = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? ''));
+                            $additionalPhotos = $filterInlinePhotos($check['additionalPhotos'] ?? $check['additional_photos'] ?? []);
+                            $hasIssue = strcasecmp($condition, 'Not Good') === 0;
+                            $issueTitle = 'Issue Evidence: '.$equipmentName;
+                            $additionalTitle = 'Additional Info: '.$equipmentName;
+                            $checkCompactBlocks = [];
+                            $checkTextBlocks = [];
+                            $checkEvidenceGroups = [];
+                            if ($hasIssue && count($issuePhotos) > 0) {
+                                $checkEvidenceGroups[] = ['kind' => 'Issue', 'title' => $issueTitle, 'remarks' => $issueRemarks, 'photos' => $issuePhotos, 'alt' => 'High Angle issue photo'];
+                            } elseif ($hasIssue && $isCompactText($issueRemarks)) {
+                                $checkCompactBlocks[] = $compactBlock($issueTitle, 'Condition remarks', $issueRemarks);
+                            } elseif ($hasIssue && $issueRemarks !== '') {
+                                $checkTextBlocks[] = ['title' => $issueTitle, 'label' => 'Condition remarks', 'value' => $issueRemarks];
+                            }
+                            if (count($additionalPhotos) > 0) {
+                                $checkEvidenceGroups[] = ['kind' => 'Additional', 'title' => $additionalTitle, 'remarks' => $additionalNotes, 'remarksLabel' => 'General equipment remarks', 'photos' => $additionalPhotos, 'alt' => 'High Angle additional photo'];
+                            } elseif ($isCompactText($additionalNotes)) {
+                                $checkCompactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalNotes);
+                            } elseif ($additionalNotes !== '') {
+                                $checkTextBlocks[] = ['title' => $additionalTitle, 'label' => 'General equipment remarks', 'value' => $additionalNotes];
+                            }
+                        @endphp
                         <tr>
                             <td>{{ trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--' }}</td>
                             <td>{{ trim((string) ($check['location'] ?? '')) ?: '--' }}</td>
@@ -42,58 +73,10 @@
                             <td>{{ trim((string) ($check['condition'] ?? '')) ?: '--' }}</td>
                             <td>{{ trim((string) ($check['conditionRemarks'] ?? $check['condition_remarks'] ?? $check['remarks'] ?? '')) ?: '--' }}</td>
                         </tr>
+                        @include('pdf.inspection-report.partials.inline-check-evidence', ['checkEvidenceColspan' => 7])
                     @endforeach
                 </tbody>
             </table>
-            @php
-                $compactBlocks = [];
-                $evidenceGroups = [];
-            @endphp
-            @foreach ($group['rows'] as $check)
-                @php
-                    $condition = trim((string) ($check['condition'] ?? ''));
-                    $issueRemarks = trim((string) ($check['conditionRemarks'] ?? $check['condition_remarks'] ?? $check['remarks'] ?? ''));
-                    $issuePhotos = $filterInlinePhotos($check['conditionPhotos'] ?? $check['condition_photos'] ?? []);
-                    if (count($issuePhotos) === 0) {
-                        $issuePhotos = $filterInlinePhotos($check['photos'] ?? []);
-                    }
-                    $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: 'High Angle equipment';
-                    $additionalNotes = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? ''));
-                    $additionalPhotos = $filterInlinePhotos($check['additionalPhotos'] ?? $check['additional_photos'] ?? []);
-                    $hasIssue = strcasecmp($condition, 'Not Good') === 0;
-                    $issueTitle = 'Issue Evidence: '.$equipmentName;
-                    $additionalTitle = 'Additional Info: '.$equipmentName;
-                    $compactIssueOnly = $hasIssue && count($issuePhotos) === 0 && $isCompactText($issueRemarks);
-                    $compactAdditionalOnly = count($additionalPhotos) === 0 && $isCompactText($additionalNotes);
-                    if ($compactIssueOnly) {
-                        $compactBlocks[] = $compactBlock($issueTitle, 'Condition remarks', $issueRemarks);
-                    }
-                    if ($compactAdditionalOnly) {
-                        $compactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalNotes);
-                    }
-                    if ($hasIssue && count($issuePhotos) > 0) {
-                        $evidenceGroups[] = ['kind' => 'Issue', 'title' => $issueTitle, 'remarks' => $issueRemarks, 'photos' => $issuePhotos, 'alt' => 'High Angle issue photo'];
-                    }
-                    if (count($additionalPhotos) > 0) {
-                        $evidenceGroups[] = ['kind' => 'Additional', 'title' => $additionalTitle, 'remarks' => $additionalNotes, 'remarksLabel' => 'General equipment remarks', 'photos' => $additionalPhotos, 'alt' => 'High Angle additional photo'];
-                    }
-                @endphp
-                @if ($hasIssue && ! $compactIssueOnly && count($issuePhotos) === 0 && $issueRemarks !== '')
-                    <div class="text-block-label" style="margin-top: 10px;">
-                        {{ $issueTitle }}
-                    </div>
-                    <div class="text-block-value">{{ $issueRemarks }}</div>
-                @endif
-                @if (! $compactAdditionalOnly && count($additionalPhotos) === 0 && $additionalNotes !== '')
-                    <div class="text-block-label" style="margin-top: 10px;">
-                        {{ $additionalTitle }}
-                    </div>
-                    <div class="text-block-label">General equipment remarks</div>
-                    <div class="text-block-value">{{ $additionalNotes }}</div>
-                @endif
-            @endforeach
-            {!! $renderCompactBlocks($compactBlocks) !!}
-            @include('pdf.inspection-report.partials.evidence-gallery', ['evidenceGroups' => $evidenceGroups])
         @endforeach
     </div>
 </div>

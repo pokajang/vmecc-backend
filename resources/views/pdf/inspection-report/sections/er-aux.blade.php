@@ -45,6 +45,27 @@
                         } elseif ($remarks !== '') {
                             $erAuxEvidence[] = $remarks;
                         }
+                        $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: 'ER Aux equipment';
+                        $defectTitle = 'Defect Evidence: '.$equipmentName;
+                        $additionalTitle = 'Additional Evidence: '.$equipmentName;
+                        $additionalRemarks = $additionalNotes !== '' ? $additionalNotes : $remarks;
+                        $checkCompactBlocks = [];
+                        $checkTextBlocks = [];
+                        $checkEvidenceGroups = [];
+                        if (count($defectPhotos) > 0) {
+                            $checkEvidenceGroups[] = ['kind' => 'Defect', 'title' => $defectTitle, 'remarks' => $defectRemarks, 'photos' => $defectPhotos, 'alt' => 'ER Aux defect photo'];
+                        } elseif ($isCompactText($defectRemarks)) {
+                            $checkCompactBlocks[] = $compactBlock($defectTitle, 'Defect remarks', $defectRemarks);
+                        } elseif ($defectRemarks !== '') {
+                            $checkTextBlocks[] = ['title' => $defectTitle, 'label' => 'Defect remarks', 'value' => $defectRemarks];
+                        }
+                        if (count($additionalPhotos) > 0) {
+                            $checkEvidenceGroups[] = ['kind' => 'Additional', 'title' => $additionalTitle, 'remarks' => $additionalRemarks, 'remarksLabel' => 'General equipment remarks', 'photos' => $additionalPhotos, 'alt' => 'ER Aux additional photo'];
+                        } elseif ($isCompactText($additionalRemarks)) {
+                            $checkCompactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalRemarks);
+                        } elseif ($additionalRemarks !== '') {
+                            $checkTextBlocks[] = ['title' => $additionalTitle, 'label' => 'General equipment remarks', 'value' => $additionalRemarks];
+                        }
                     @endphp
                     <tr>
                         <td>
@@ -61,65 +82,10 @@
                         <td>{{ $condition !== '' ? $condition : '--' }}</td>
                         <td>{{ count($erAuxEvidence) > 0 ? implode('; ', $erAuxEvidence) : '--' }}</td>
                     </tr>
+                    @include('pdf.inspection-report.partials.inline-check-evidence', ['checkEvidenceColspan' => 5])
                 @endforeach
             </tbody>
         </table>
-        @php
-            $compactBlocks = [];
-            $evidenceGroups = [];
-        @endphp
-        @foreach ($erAuxChecks as $check)
-            @php
-                $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: 'ER Aux equipment';
-                $defectRemarks = trim((string) ($check['defectRemarks'] ?? $check['defect_remarks'] ?? ''));
-                $defectPhotos = $filterInlinePhotos($check['defectPhotos'] ?? $check['defect_photos'] ?? []);
-                $additionalRemarks = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? $check['remarks'] ?? $check['remark'] ?? ''));
-                $additionalPhotos = $filterInlinePhotos($check['photos'] ?? []);
-                $defectTitle = 'Defect Evidence: '.$equipmentName;
-                $additionalTitle = 'Additional Evidence: '.$equipmentName;
-                $compactDefectOnly = count($defectPhotos) === 0 && $isCompactText($defectRemarks);
-                $compactAdditionalOnly = count($additionalPhotos) === 0 && $isCompactText($additionalRemarks);
-                if ($compactDefectOnly) {
-                    $compactBlocks[] = $compactBlock($defectTitle, 'Defect remarks', $defectRemarks);
-                }
-                if ($compactAdditionalOnly) {
-                    $compactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalRemarks);
-                }
-                if (count($defectPhotos) > 0) {
-                    $evidenceGroups[] = [
-                        'kind' => 'Defect',
-                        'title' => $defectTitle,
-                        'remarks' => $defectRemarks,
-                        'photos' => $defectPhotos,
-                        'alt' => 'ER Aux defect photo',
-                    ];
-                }
-                if (count($additionalPhotos) > 0) {
-                    $evidenceGroups[] = [
-                        'kind' => 'Additional',
-                        'title' => $additionalTitle,
-                        'remarks' => $additionalRemarks,
-                        'remarksLabel' => 'General equipment remarks',
-                        'photos' => $additionalPhotos,
-                        'alt' => 'ER Aux additional photo',
-                    ];
-                }
-            @endphp
-            @if (! $compactDefectOnly && count($defectPhotos) === 0 && $defectRemarks !== '')
-                <div class="text-block-label" style="margin-top: 10px;">
-                    {{ $defectTitle }}
-                </div>
-                <div class="text-block-value">{{ $defectRemarks }}</div>
-            @endif
-            @if (! $compactAdditionalOnly && count($additionalPhotos) === 0 && $additionalRemarks !== '')
-                <div class="text-block-label" style="margin-top: 10px;">
-                    {{ $additionalTitle }}
-                </div>
-                <div class="text-block-value">{{ $additionalRemarks }}</div>
-            @endif
-        @endforeach
-        {!! $renderCompactBlocks($compactBlocks) !!}
-        @include('pdf.inspection-report.partials.evidence-gallery', ['evidenceGroups' => $evidenceGroups])
     </div>
 </div>
 @endif

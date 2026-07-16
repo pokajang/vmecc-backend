@@ -1,5 +1,7 @@
 <?php
 
+use App\Models\User;
+
 return [
 
     /*
@@ -16,6 +18,12 @@ return [
     'defaults' => [
         'guard' => 'web',
         'passwords' => 'users',
+    ],
+
+    'bootstrap_admin' => [
+        'email' => env('BOOTSTRAP_ADMIN_EMAIL', 'azam@amiosh.com'),
+        'name' => env('BOOTSTRAP_ADMIN_NAME', 'Jang'),
+        'password' => env('BOOTSTRAP_ADMIN_PASSWORD'),
     ],
 
     /*
@@ -62,7 +70,7 @@ return [
     'providers' => [
         'users' => [
             'driver' => 'eloquent',
-            'model' => App\Models\User::class,
+            'model' => User::class,
         ],
 
         // 'users' => [

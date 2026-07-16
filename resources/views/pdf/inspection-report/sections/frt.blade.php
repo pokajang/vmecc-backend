@@ -74,6 +74,27 @@
                                 $rowKind = trim((string) ($check['rowKind'] ?? $check['row_kind'] ?? 'status')) ?: 'status';
                                 $rowStatus = trim((string) ($check['status'] ?? ''));
                                 $readingValue = trim((string) ($check['readingValue'] ?? $check['reading_value'] ?? ''));
+                                $issuePhotos = strcasecmp($rowStatus, 'Issue') === 0 ? $filterInlinePhotos($check['photos'] ?? []) : [];
+                                $issueRemarks = trim((string) ($check['remarks'] ?? ''));
+                                $additionalNotes = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? ''));
+                                $additionalPhotos = $filterInlinePhotos($check['additionalPhotos'] ?? $check['additional_photos'] ?? []);
+                                $rowLabel = trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--';
+                                $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: '--';
+                                $issueTitle = 'Issue Evidence - Row '.$rowLabel.': '.$equipmentName;
+                                $additionalTitle = 'Additional Info - Row '.$rowLabel.': '.$equipmentName;
+                                $checkCompactBlocks = [];
+                                $checkTextBlocks = [];
+                                $checkEvidenceGroups = [];
+                                if (count($issuePhotos) > 0) {
+                                    $checkEvidenceGroups[] = ['kind' => 'Issue', 'title' => $issueTitle, 'remarks' => $issueRemarks, 'photos' => $issuePhotos, 'alt' => 'FRT issue photo'];
+                                }
+                                if (count($additionalPhotos) > 0) {
+                                    $checkEvidenceGroups[] = ['kind' => 'Additional', 'title' => $additionalTitle, 'remarks' => $additionalNotes, 'remarksLabel' => 'General equipment remarks', 'photos' => $additionalPhotos, 'alt' => 'FRT additional photo'];
+                                } elseif ($isCompactText($additionalNotes)) {
+                                    $checkCompactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalNotes);
+                                } elseif ($additionalNotes !== '') {
+                                    $checkTextBlocks[] = ['title' => $additionalTitle, 'label' => 'General equipment remarks', 'value' => $additionalNotes];
+                                }
                             @endphp
                             <tr>
                                 <td>{{ trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--' }}</td>
@@ -84,43 +105,10 @@
                                 <td>{{ $rowKind === 'reading' ? ($readingValue !== '' ? $readingValue : '--') : '--' }}</td>
                                 <td>{{ trim((string) ($check['remarks'] ?? '')) ?: '--' }}</td>
                             </tr>
+                            @include('pdf.inspection-report.partials.inline-check-evidence', ['checkEvidenceColspan' => 7])
                         @endforeach
                     </tbody>
                 </table>
-                @php
-                    $compactBlocks = [];
-                    $evidenceGroups = [];
-                @endphp
-                @foreach ($group['rows'] as $check)
-                    @php
-                        $rowStatus = trim((string) ($check['status'] ?? ''));
-                        $issuePhotos = strcasecmp($rowStatus, 'Issue') === 0 ? $filterInlinePhotos($check['photos'] ?? []) : [];
-                        $issueRemarks = trim((string) ($check['remarks'] ?? ''));
-                        $additionalNotes = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? ''));
-                        $additionalPhotos = $filterInlinePhotos($check['additionalPhotos'] ?? $check['additional_photos'] ?? []);
-                        $issueTitle = 'Issue Evidence - Row '.(trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--').': '.(trim((string) ($check['equipment'] ?? '')) ?: '--');
-                        $additionalTitle = 'Additional Info - Row '.(trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--').': '.(trim((string) ($check['equipment'] ?? '')) ?: '--');
-                        $compactAdditionalOnly = count($additionalPhotos) === 0 && $isCompactText($additionalNotes);
-                        if ($compactAdditionalOnly) {
-                            $compactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalNotes);
-                        }
-                        if (count($issuePhotos) > 0) {
-                            $evidenceGroups[] = ['kind' => 'Issue', 'title' => $issueTitle, 'remarks' => $issueRemarks, 'photos' => $issuePhotos, 'alt' => 'FRT issue photo'];
-                        }
-                        if (count($additionalPhotos) > 0) {
-                            $evidenceGroups[] = ['kind' => 'Additional', 'title' => $additionalTitle, 'remarks' => $additionalNotes, 'remarksLabel' => 'General equipment remarks', 'photos' => $additionalPhotos, 'alt' => 'FRT additional photo'];
-                        }
-                    @endphp
-                    @if (! $compactAdditionalOnly && count($additionalPhotos) === 0 && $additionalNotes !== '')
-                        <div class="text-block-label" style="margin-top: 6px; font-weight: 700; color: #374151;">
-                            {{ $additionalTitle }}
-                        </div>
-                        <div class="text-block-label">General equipment remarks</div>
-                        <div class="text-block-value">{{ $additionalNotes }}</div>
-                    @endif
-                @endforeach
-                {!! $renderCompactBlocks($compactBlocks) !!}
-                @include('pdf.inspection-report.partials.evidence-gallery', ['evidenceGroups' => $evidenceGroups])
             @endforeach
             @if ($frtDailyRemarks !== '')
                 <div class="text-block-label" style="margin-top: 10px;">Daily Remarks</div>
@@ -150,49 +138,40 @@
                     </thead>
                     <tbody>
                         @foreach ($group['rows'] as $check)
+                            @php
+                                $condition = trim((string) ($check['condition'] ?? ''));
+                                $issuePhotos = strcasecmp($condition, 'Not Good') === 0 ? $filterInlinePhotos($check['photos'] ?? []) : [];
+                                $issueRemarks = trim((string) ($check['remarks'] ?? ''));
+                                $additionalNotes = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? ''));
+                                $additionalPhotos = $filterInlinePhotos($check['additionalPhotos'] ?? $check['additional_photos'] ?? []);
+                                $rowLabel = trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--';
+                                $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: '--';
+                                $issueTitle = 'Issue Evidence - Row '.$rowLabel.': '.$equipmentName;
+                                $additionalTitle = 'Additional Info - Row '.$rowLabel.': '.$equipmentName;
+                                $checkCompactBlocks = [];
+                                $checkTextBlocks = [];
+                                $checkEvidenceGroups = [];
+                                if (count($issuePhotos) > 0) {
+                                    $checkEvidenceGroups[] = ['kind' => 'Issue', 'title' => $issueTitle, 'remarks' => $issueRemarks, 'photos' => $issuePhotos, 'alt' => 'FRT one-off issue photo'];
+                                }
+                                if (count($additionalPhotos) > 0) {
+                                    $checkEvidenceGroups[] = ['kind' => 'Additional', 'title' => $additionalTitle, 'remarks' => $additionalNotes, 'remarksLabel' => 'General equipment remarks', 'photos' => $additionalPhotos, 'alt' => 'FRT one-off additional photo'];
+                                } elseif ($isCompactText($additionalNotes)) {
+                                    $checkCompactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalNotes);
+                                } elseif ($additionalNotes !== '') {
+                                    $checkTextBlocks[] = ['title' => $additionalTitle, 'label' => 'General equipment remarks', 'value' => $additionalNotes];
+                                }
+                            @endphp
                             <tr>
                                 <td>{{ trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--' }}</td>
                                 <td>{{ trim((string) ($check['equipment'] ?? '')) ?: '--' }}</td>
                                 <td>{{ trim((string) ($check['condition'] ?? '')) ?: '--' }}</td>
                                 <td>{{ trim((string) ($check['remarks'] ?? '')) ?: '--' }}</td>
                             </tr>
+                            @include('pdf.inspection-report.partials.inline-check-evidence', ['checkEvidenceColspan' => 4])
                         @endforeach
                     </tbody>
                 </table>
-                @php
-                    $compactBlocks = [];
-                    $evidenceGroups = [];
-                @endphp
-                @foreach ($group['rows'] as $check)
-                    @php
-                        $condition = trim((string) ($check['condition'] ?? ''));
-                        $issuePhotos = strcasecmp($condition, 'Not Good') === 0 ? $filterInlinePhotos($check['photos'] ?? []) : [];
-                        $issueRemarks = trim((string) ($check['remarks'] ?? ''));
-                        $additionalNotes = trim((string) ($check['additionalNotes'] ?? $check['additional_notes'] ?? ''));
-                        $additionalPhotos = $filterInlinePhotos($check['additionalPhotos'] ?? $check['additional_photos'] ?? []);
-                        $issueTitle = 'Issue Evidence - Row '.(trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--').': '.(trim((string) ($check['equipment'] ?? '')) ?: '--');
-                        $additionalTitle = 'Additional Info - Row '.(trim((string) ($check['rowNumber'] ?? $check['row_number'] ?? '')) ?: '--').': '.(trim((string) ($check['equipment'] ?? '')) ?: '--');
-                        $compactAdditionalOnly = count($additionalPhotos) === 0 && $isCompactText($additionalNotes);
-                        if ($compactAdditionalOnly) {
-                            $compactBlocks[] = $compactBlock($additionalTitle, 'General equipment remarks', $additionalNotes);
-                        }
-                        if (count($issuePhotos) > 0) {
-                            $evidenceGroups[] = ['kind' => 'Issue', 'title' => $issueTitle, 'remarks' => $issueRemarks, 'photos' => $issuePhotos, 'alt' => 'FRT one-off issue photo'];
-                        }
-                        if (count($additionalPhotos) > 0) {
-                            $evidenceGroups[] = ['kind' => 'Additional', 'title' => $additionalTitle, 'remarks' => $additionalNotes, 'remarksLabel' => 'General equipment remarks', 'photos' => $additionalPhotos, 'alt' => 'FRT one-off additional photo'];
-                        }
-                    @endphp
-                    @if (! $compactAdditionalOnly && count($additionalPhotos) === 0 && $additionalNotes !== '')
-                        <div class="text-block-label" style="margin-top: 6px; font-weight: 700; color: #374151;">
-                            {{ $additionalTitle }}
-                        </div>
-                        <div class="text-block-label">General equipment remarks</div>
-                        <div class="text-block-value">{{ $additionalNotes }}</div>
-                    @endif
-                @endforeach
-                {!! $renderCompactBlocks($compactBlocks) !!}
-                @include('pdf.inspection-report.partials.evidence-gallery', ['evidenceGroups' => $evidenceGroups])
             @endforeach
             @if ($frtOneOffRemarks !== '')
                 <div class="text-block-label" style="margin-top: 10px;">One-off Remarks</div>

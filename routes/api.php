@@ -8,16 +8,17 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DrillReportPdfController;
 use App\Http\Controllers\ErcoReportPdfController;
 use App\Http\Controllers\FeedbackReportController;
+use App\Http\Controllers\FireExtinguisherExceptionExportController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\InspectionDutyContextController;
 use App\Http\Controllers\InspectionEquipmentController;
 use App\Http\Controllers\InspectionFireExtinguisherController;
 use App\Http\Controllers\InspectionFireTruckController;
 use App\Http\Controllers\InspectionLocationController;
-use App\Http\Controllers\InspectionSiteLocationController;
 use App\Http\Controllers\InspectionReportPdfController;
 use App\Http\Controllers\InspectionScbaCatalogController;
 use App\Http\Controllers\InspectionSessionController;
+use App\Http\Controllers\InspectionSiteLocationController;
 use App\Http\Controllers\LeaveAssignmentController;
 use App\Http\Controllers\LeaveAttachmentController;
 use App\Http\Controllers\LeaveController;
@@ -252,6 +253,10 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::get('inspection/fire-extinguishers', [InspectionFireExtinguisherController::class, 'index']);
     Route::get('inspection/fire-extinguishers/coverage', [InspectionFireExtinguisherController::class, 'coverage']);
     Route::get('inspection/fire-extinguishers/coverage/{extinguisherId}', [InspectionFireExtinguisherController::class, 'coverageDetail']);
+    Route::post('inspection/fire-extinguishers/exception-export/preview', [FireExtinguisherExceptionExportController::class, 'preview'])
+        ->middleware('throttle:report-export-previews');
+    Route::post('inspection/fire-extinguishers/exception-export/download', [FireExtinguisherExceptionExportController::class, 'download'])
+        ->middleware('throttle:report-downloads');
     Route::get('inspection/fire-extinguishers/lookup', [InspectionFireExtinguisherController::class, 'lookup']);
     Route::post('inspection/fire-extinguishers/batch', [InspectionFireExtinguisherController::class, 'storeBatch']);
     Route::post('inspection/fire-extinguishers', [InspectionFireExtinguisherController::class, 'store']);

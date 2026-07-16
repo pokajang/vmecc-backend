@@ -30,6 +30,39 @@
                     </thead>
                     <tbody>
                         @foreach ($section['rows'] as $check)
+                            @php
+                                $brand = trim((string) ($check['brand'] ?? ''));
+                                $serialNo = trim((string) ($check['serialNo'] ?? $check['serial_no'] ?? ''));
+                                $equipmentName = trim($brand.' '.$serialNo) ?: 'SCBA item';
+                                $generalRemarks = trim((string) ($check['remarks'] ?? $check['remark'] ?? ''));
+                                $additionalPhotos = $filterInlinePhotos($check['photos'] ?? []);
+                                $checkCompactBlocks = [];
+                                $checkTextBlocks = [];
+                                $checkEvidenceGroups = [];
+                                if (count($additionalPhotos) > 0) {
+                                    $checkEvidenceGroups[] = ['kind' => 'Equipment', 'title' => 'Equipment Evidence: '.$equipmentName, 'remarks' => $generalRemarks, 'remarksLabel' => 'General equipment remarks', 'photos' => $additionalPhotos, 'alt' => 'SCBA equipment photo'];
+                                } elseif ($isCompactText($generalRemarks)) {
+                                    $checkCompactBlocks[] = $compactBlock('Equipment Evidence: '.$equipmentName, 'General equipment remarks', $generalRemarks);
+                                } elseif ($generalRemarks !== '') {
+                                    $checkTextBlocks[] = ['title' => 'Equipment Evidence: '.$equipmentName, 'label' => 'General equipment remarks', 'value' => $generalRemarks];
+                                }
+                                foreach ($section['status_fields'] as $field) {
+                                    $statusValue = trim((string) ($check[$field['status']] ?? $check[$field['status_snake']] ?? ''));
+                                    $issueRemarks = trim((string) ($check[$field['remarks']] ?? $check[$field['remarks_snake']] ?? ''));
+                                    $issuePhotos = $filterInlinePhotos($check[$field['photos']] ?? $check[$field['photos_snake']] ?? []);
+                                    $issueTitle = 'Issue Evidence: '.$equipmentName.' - '.$field['label'];
+                                    if (strcasecmp($statusValue, 'Not Good') !== 0) {
+                                        continue;
+                                    }
+                                    if (count($issuePhotos) > 0) {
+                                        $checkEvidenceGroups[] = ['kind' => 'Issue', 'title' => $issueTitle, 'remarks' => $issueRemarks, 'photos' => $issuePhotos, 'alt' => 'SCBA issue photo'];
+                                    } elseif ($isCompactText($issueRemarks)) {
+                                        $checkCompactBlocks[] = $compactBlock($issueTitle, 'Issue remarks', $issueRemarks);
+                                    } elseif ($issueRemarks !== '') {
+                                        $checkTextBlocks[] = ['title' => $issueTitle, 'label' => 'Issue remarks', 'value' => $issueRemarks];
+                                    }
+                                }
+                            @endphp
                             <tr>
                                 @foreach ($section['columns'] as $column)
                                     @php
@@ -38,55 +71,10 @@
                                     <td>{{ $value !== '' ? $value : '--' }}</td>
                                 @endforeach
                             </tr>
+                            @include('pdf.inspection-report.partials.inline-check-evidence', ['checkEvidenceColspan' => count($section['columns'])])
                         @endforeach
                     </tbody>
                 </table>
-                @php
-                    $compactBlocks = [];
-                    $evidenceGroups = [];
-                @endphp
-                @foreach ($section['rows'] as $check)
-                    @php
-                        $brand = trim((string) ($check['brand'] ?? ''));
-                        $serialNo = trim((string) ($check['serialNo'] ?? $check['serial_no'] ?? ''));
-                        $equipmentName = trim($brand.' '.$serialNo) ?: 'SCBA item';
-                        $generalRemarks = trim((string) ($check['remarks'] ?? $check['remark'] ?? ''));
-                        $additionalPhotos = $filterInlinePhotos($check['photos'] ?? []);
-                        if (count($additionalPhotos) === 0 && $isCompactText($generalRemarks)) {
-                            $compactBlocks[] = $compactBlock('Equipment Evidence: '.$equipmentName, 'General equipment remarks', $generalRemarks);
-                        }
-                        if (count($additionalPhotos) > 0) {
-                            $evidenceGroups[] = ['kind' => 'Equipment', 'title' => 'Equipment Evidence: '.$equipmentName, 'remarks' => $generalRemarks, 'remarksLabel' => 'General equipment remarks', 'photos' => $additionalPhotos, 'alt' => 'SCBA equipment photo'];
-                        }
-                    @endphp
-                    @if (count($additionalPhotos) === 0 && ! $isCompactText($generalRemarks) && $generalRemarks !== '')
-                        <div class="text-block-label" style="margin-top: 10px;">Equipment Evidence: {{ $equipmentName }}</div>
-                        <div class="text-block-value">{{ $generalRemarks }}</div>
-                    @endif
-                    @foreach ($section['status_fields'] as $field)
-                        @php
-                            $statusValue = trim((string) ($check[$field['status']] ?? $check[$field['status_snake']] ?? ''));
-                            $issueRemarks = trim((string) ($check[$field['remarks']] ?? $check[$field['remarks_snake']] ?? ''));
-                            $issuePhotos = $filterInlinePhotos($check[$field['photos']] ?? $check[$field['photos_snake']] ?? []);
-                            $issueTitle = 'Issue Evidence: '.$equipmentName.' - '.$field['label'];
-                            $compactIssueOnly = strcasecmp($statusValue, 'Not Good') === 0 && count($issuePhotos) === 0 && $isCompactText($issueRemarks);
-                            if ($compactIssueOnly) {
-                                $compactBlocks[] = $compactBlock($issueTitle, 'Issue remarks', $issueRemarks);
-                            }
-                            if (strcasecmp($statusValue, 'Not Good') === 0 && count($issuePhotos) > 0) {
-                                $evidenceGroups[] = ['kind' => 'Issue', 'title' => $issueTitle, 'remarks' => $issueRemarks, 'photos' => $issuePhotos, 'alt' => 'SCBA issue photo'];
-                            }
-                        @endphp
-                        @if (strcasecmp($statusValue, 'Not Good') === 0 && ! $compactIssueOnly && count($issuePhotos) === 0 && $issueRemarks !== '')
-                            <div class="text-block-label" style="margin-top: 10px;">
-                                {{ $issueTitle }}
-                            </div>
-                            <div class="text-block-value">{{ $issueRemarks }}</div>
-                        @endif
-                    @endforeach
-                @endforeach
-                {!! $renderCompactBlocks($compactBlocks) !!}
-                @include('pdf.inspection-report.partials.evidence-gallery', ['evidenceGroups' => $evidenceGroups])
             @endif
         @endforeach
     </div>

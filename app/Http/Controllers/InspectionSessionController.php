@@ -135,7 +135,8 @@ class InspectionSessionController extends Controller
         try {
             $session = $this->sessionResolverService->create($sessionScope, (int) $request->user()->id, $dutyContext);
         } catch (QueryException $exception) {
-            if (($exception->errorInfo[0] ?? null) !== '23000') {
+            $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
+            if (! in_array($sqlState, ['23000', '23505'], true)) {
                 throw $exception;
             }
             $existing = $sessionScope['scopeVersion'] === 'v2'

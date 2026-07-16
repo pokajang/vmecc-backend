@@ -39,6 +39,36 @@ class ReportImageServiceTest extends TestCase
         }
     }
 
+    public function test_it_preserves_portrait_and_landscape_aspect_ratios(): void
+    {
+        foreach ([[1600, 900], [900, 1600]] as [$sourceWidth, $sourceHeight]) {
+            $image = imagecreatetruecolor($sourceWidth, $sourceHeight);
+            $white = imagecolorallocate($image, 255, 255, 255);
+            imagefilledrectangle($image, 0, 0, $sourceWidth, $sourceHeight, $white);
+            $basePath = tempnam(sys_get_temp_dir(), 'report-image-orientation-');
+            $path = $basePath.'.png';
+            imagepng($image, $path);
+            imagedestroy($image);
+
+            try {
+                $result = app(ReportImageService::class)->normalize(
+                    new UploadedFile($path, 'camera.png', 'image/png', null, true),
+                    'camera',
+                );
+
+                $this->assertEqualsWithDelta(
+                    $sourceWidth / $sourceHeight,
+                    $result['width'] / $result['height'],
+                    0.01,
+                );
+                $this->assertSame($sourceWidth > $sourceHeight, $result['width'] > $result['height']);
+            } finally {
+                @unlink($basePath);
+                @unlink($path);
+            }
+        }
+    }
+
     public function test_it_rejects_a_file_that_claims_to_be_an_image_but_has_invalid_content(): void
     {
         $file = UploadedFile::fake()->createWithContent('spoofed.jpg', 'not an image');

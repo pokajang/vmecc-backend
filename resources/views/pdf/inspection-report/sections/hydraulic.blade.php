@@ -18,6 +18,38 @@
                 @foreach ($hydraulicChecks as $check)
                     @php
                         $equipmentDescription = trim((string) ($check['equipmentDescription'] ?? $check['equipment_description'] ?? ''));
+                        $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: 'Hydraulic equipment';
+                        $equipmentPhotos = $filterInlinePhotos($check['photos'] ?? []);
+                        $equipmentRemarks = trim((string) ($check['remarks'] ?? ''));
+                        $checkCompactBlocks = [];
+                        $checkTextBlocks = [];
+                        $checkEvidenceGroups = [];
+                        foreach ($hydraulicCheckFields as $field) {
+                            $statusValue = trim((string) ($check[$field['status']] ?? $check[$field['status_snake']] ?? ''));
+                            $defectRemarks = trim((string) ($check[$field['remarks']] ?? $check[$field['remarks_snake']] ?? ''));
+                            $defectPhotos = $filterInlinePhotos($check[$field['photos']] ?? $check[$field['photos_snake']] ?? []);
+                            $defectTitle = 'Defect Evidence: '.$equipmentName.' - '.$field['label'];
+                            $naTitle = 'N/A Reason: '.$equipmentName.' - '.$field['label'];
+                            if (strcasecmp($statusValue, 'Defect') === 0) {
+                                if (count($defectPhotos) > 0) {
+                                    $checkEvidenceGroups[] = ['kind' => 'Defect', 'title' => $defectTitle, 'remarks' => $defectRemarks, 'photos' => $defectPhotos, 'alt' => 'Hydraulic defect photo'];
+                                } elseif ($isCompactText($defectRemarks)) {
+                                    $checkCompactBlocks[] = $compactBlock($defectTitle, 'Defect remarks', $defectRemarks);
+                                } elseif ($defectRemarks !== '') {
+                                    $checkTextBlocks[] = ['title' => $defectTitle, 'label' => 'Defect remarks', 'value' => $defectRemarks];
+                                }
+                            }
+                            if (strcasecmp($statusValue, 'N/A') === 0) {
+                                if ($isCompactText($defectRemarks)) {
+                                    $checkCompactBlocks[] = $compactBlock($naTitle, 'Reason', $defectRemarks);
+                                } elseif ($defectRemarks !== '') {
+                                    $checkTextBlocks[] = ['title' => $naTitle, 'label' => 'Reason', 'value' => $defectRemarks];
+                                }
+                            }
+                        }
+                        if (count($equipmentPhotos) > 0) {
+                            $checkEvidenceGroups[] = ['kind' => 'Equipment', 'title' => 'Equipment Evidence: '.$equipmentName, 'remarks' => $equipmentRemarks, 'remarksLabel' => 'General equipment remarks', 'photos' => $equipmentPhotos, 'alt' => 'Hydraulic equipment photo'];
+                        }
                     @endphp
                     <tr>
                         <td>
@@ -36,72 +68,10 @@
                         <td>{{ trim((string) ($check['functionTest'] ?? $check['function_test'] ?? '')) ?: '--' }}</td>
                         <td>{{ trim((string) ($check['remarks'] ?? '')) ?: '--' }}</td>
                     </tr>
+                    @include('pdf.inspection-report.partials.inline-check-evidence', ['checkEvidenceColspan' => 7])
                 @endforeach
             </tbody>
         </table>
-        @php
-            $compactBlocks = [];
-            $evidenceGroups = [];
-        @endphp
-        @foreach ($hydraulicChecks as $check)
-            @php
-                $equipmentName = trim((string) ($check['equipment'] ?? '')) ?: 'Hydraulic equipment';
-                $equipmentPhotos = $filterInlinePhotos($check['photos'] ?? []);
-                $equipmentRemarks = trim((string) ($check['remarks'] ?? ''));
-            @endphp
-            @foreach ($hydraulicCheckFields as $field)
-                @php
-                    $statusValue = trim((string) ($check[$field['status']] ?? $check[$field['status_snake']] ?? ''));
-                    $defectRemarks = trim((string) ($check[$field['remarks']] ?? $check[$field['remarks_snake']] ?? ''));
-                    $defectPhotos = $filterInlinePhotos($check[$field['photos']] ?? $check[$field['photos_snake']] ?? []);
-                    $defectTitle = 'Defect Evidence: '.$equipmentName.' - '.$field['label'];
-                    $naTitle = 'N/A Reason: '.$equipmentName.' - '.$field['label'];
-                    $compactDefectOnly = strcasecmp($statusValue, 'Defect') === 0 && count($defectPhotos) === 0 && $isCompactText($defectRemarks);
-                    $compactNaOnly = strcasecmp($statusValue, 'N/A') === 0 && $isCompactText($defectRemarks);
-                    if ($compactDefectOnly) {
-                        $compactBlocks[] = $compactBlock($defectTitle, 'Defect remarks', $defectRemarks);
-                    }
-                    if ($compactNaOnly) {
-                        $compactBlocks[] = $compactBlock($naTitle, 'Reason', $defectRemarks);
-                    }
-                    if (strcasecmp($statusValue, 'Defect') === 0 && count($defectPhotos) > 0) {
-                        $evidenceGroups[] = [
-                            'kind' => 'Defect',
-                            'title' => $defectTitle,
-                            'remarks' => $defectRemarks,
-                            'photos' => $defectPhotos,
-                            'alt' => 'Hydraulic defect photo',
-                        ];
-                    }
-                @endphp
-                @if (strcasecmp($statusValue, 'Defect') === 0 && ! $compactDefectOnly && count($defectPhotos) === 0 && $defectRemarks !== '')
-                    <div class="text-block-label" style="margin-top: 10px;">
-                        {{ $defectTitle }}
-                    </div>
-                    <div class="text-block-value">{{ $defectRemarks }}</div>
-                @endif
-                @if (strcasecmp($statusValue, 'N/A') === 0 && ! $compactNaOnly && $defectRemarks !== '')
-                    <div class="text-block-label" style="margin-top: 10px;">
-                        {{ $naTitle }}
-                    </div>
-                    <div class="text-block-value">{{ $defectRemarks }}</div>
-                @endif
-            @endforeach
-            @php
-                if (count($equipmentPhotos) > 0) {
-                    $evidenceGroups[] = [
-                        'kind' => 'Equipment',
-                        'title' => 'Equipment Evidence: '.$equipmentName,
-                        'remarks' => $equipmentRemarks,
-                        'remarksLabel' => 'General equipment remarks',
-                        'photos' => $equipmentPhotos,
-                        'alt' => 'Hydraulic equipment photo',
-                    ];
-                }
-            @endphp
-        @endforeach
-        {!! $renderCompactBlocks($compactBlocks) !!}
-        @include('pdf.inspection-report.partials.evidence-gallery', ['evidenceGroups' => $evidenceGroups])
     </div>
 </div>
 @endif

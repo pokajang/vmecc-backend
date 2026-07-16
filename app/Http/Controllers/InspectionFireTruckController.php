@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\InspectionFireTruck;
 use App\Services\AssignmentAuthorizationService;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -15,8 +16,7 @@ class InspectionFireTruckController extends Controller
 {
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -53,20 +53,22 @@ class InspectionFireTruckController extends Controller
             ]);
         }
 
-        if (InspectionFireTruck::query()->where('normalized_plate_no', $normalizedPlate)->where('is_active', true)->exists()) {
-            throw ValidationException::withMessages([
-                'plateNo' => ['This truck plate number already exists.'],
-            ]);
+        if (InspectionFireTruck::query()->where('normalized_plate_no', $normalizedPlate)->exists()) {
+            throw $this->duplicatePlateValidation();
         }
 
-        $row = InspectionFireTruck::query()->create($this->payloadToAttributes($data, [
-            'plate_no' => $plateNo,
-            'normalized_plate_no' => $normalizedPlate,
-            'source' => 'custom',
-            'created_by' => $request->user()?->id,
-            'is_active' => true,
-            'sort_order' => $this->nextSortOrder(),
-        ]));
+        try {
+            $row = InspectionFireTruck::query()->create($this->payloadToAttributes($data, [
+                'plate_no' => $plateNo,
+                'normalized_plate_no' => $normalizedPlate,
+                'source' => 'custom',
+                'created_by' => $request->user()?->id,
+                'is_active' => true,
+                'sort_order' => $this->nextSortOrder(),
+            ]));
+        } catch (UniqueConstraintViolationException) {
+            throw $this->duplicatePlateValidation();
+        }
 
         return response()->json(['data' => $this->formatRow($row, $request)], 201);
     }
@@ -88,19 +90,20 @@ class InspectionFireTruckController extends Controller
 
         $duplicate = InspectionFireTruck::query()
             ->where('normalized_plate_no', $normalizedPlate)
-            ->where('is_active', true)
             ->whereKeyNot($row->id)
             ->exists();
         if ($duplicate) {
-            throw ValidationException::withMessages([
-                'plateNo' => ['This truck plate number already exists.'],
-            ]);
+            throw $this->duplicatePlateValidation();
         }
 
-        $row->fill($this->payloadToAttributes($data, [
-            'plate_no' => $plateNo,
-            'normalized_plate_no' => $normalizedPlate,
-        ]))->save();
+        try {
+            $row->fill($this->payloadToAttributes($data, [
+                'plate_no' => $plateNo,
+                'normalized_plate_no' => $normalizedPlate,
+            ]))->save();
+        } catch (UniqueConstraintViolationException) {
+            throw $this->duplicatePlateValidation();
+        }
 
         return response()->json(['data' => $this->formatRow($row, $request)]);
     }
@@ -191,6 +194,7 @@ class InspectionFireTruckController extends Controller
     private function canManageSeedRows(Request $request): bool
     {
         $user = $request->user();
+
         return (bool) ($user && $this->authorizationService->hasPermission($user, 'reports.manage'));
     }
 
@@ -209,9 +213,17 @@ class InspectionFireTruckController extends Controller
         return Str::of((string) $value)->squish()->upper()->replaceMatches('/[^A-Z0-9]+/', '')->toString();
     }
 
+    private function duplicatePlateValidation(): ValidationException
+    {
+        return ValidationException::withMessages([
+            'plateNo' => ['This truck plate number already exists.'],
+        ]);
+    }
+
     private function date(mixed $value): ?string
     {
         $text = trim((string) $value);
+
         return $text !== '' ? $text : null;
     }
 }

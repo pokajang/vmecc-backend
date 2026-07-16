@@ -6,13 +6,14 @@ class InspectionReportPhotoSanitizer
 {
     private const ALLOWED_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
 
-    public function sanitize(array $record): InspectionReportPhotoSanitizationResult
+    public function sanitize(array $record, ?int $maxImages = null): InspectionReportPhotoSanitizationResult
     {
         $imageCount = 0;
         $unavailableImageCount = 0;
         $omittedImageCount = 0;
         $photoSlotCount = 0;
         $totalImageBytes = 0;
+        $maxImages = max(1, $maxImages ?? (int) config('inspection_reports.pdf.max_images', 20));
 
         $record = $this->sanitizeNode(
             $record,
@@ -21,6 +22,7 @@ class InspectionReportPhotoSanitizer
             $omittedImageCount,
             $photoSlotCount,
             $totalImageBytes,
+            $maxImages,
         );
 
         return new InspectionReportPhotoSanitizationResult(
@@ -39,9 +41,9 @@ class InspectionReportPhotoSanitizer
         int &$omittedImageCount,
         int &$photoSlotCount,
         int &$totalImageBytes,
+        int $maxImages,
     ): array {
         if (array_key_exists('url', $node)) {
-            $maxImages = max(1, (int) config('inspection_reports.pdf.max_images', 20));
             if ($photoSlotCount >= $maxImages) {
                 $node = $this->omitted($node, $omittedImageCount);
             } else {
@@ -59,6 +61,7 @@ class InspectionReportPhotoSanitizer
                     $omittedImageCount,
                     $photoSlotCount,
                     $totalImageBytes,
+                    $maxImages,
                 );
             }
         }

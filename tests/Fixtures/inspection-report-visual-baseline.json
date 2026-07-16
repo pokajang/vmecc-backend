@@ -9,45 +9,45 @@
     "er-aux": {
         "pages": 2,
         "pngPages": [
-            {"width": 1191, "height": 1684, "averageHash": "fdbff99b0b8fffff"},
+            {"width": 1191, "height": 1684, "averageHash": "fffffb938b8fffff"},
             {"width": 1191, "height": 1684, "averageHash": "ff0b8f8fffffffff"}
         ]
     },
     "fire-extinguisher": {
         "pages": 2,
         "pngPages": [
-            {"width": 1191, "height": 1684, "averageHash": "f99fff0f0fbfffff"},
+            {"width": 1191, "height": 1684, "averageHash": "f99fff8f079fffff"},
             {"width": 1191, "height": 1684, "averageHash": "ff0b8f8fffffffff"}
         ]
     },
     "frt": {
         "pages": 5,
         "pngPages": [
-            {"width": 1191, "height": 1684, "averageHash": "fd9fbfbfbf0f8fff"},
+            {"width": 1191, "height": 1684, "averageHash": "fd9fbf0f0fbfbfff"},
             {"width": 1191, "height": 1684, "averageHash": "b3b781b781b783ff"},
-            {"width": 1191, "height": 1684, "averageHash": "b3b781b781b783ff"},
-            {"width": 1191, "height": 1684, "averageHash": "81930191979797ff"},
-            {"width": 1191, "height": 1684, "averageHash": "8f9fff8b8b8fffff"}
+            {"width": 1191, "height": 1684, "averageHash": "b3b783b781b7b3ff"},
+            {"width": 1191, "height": 1684, "averageHash": "ffbfbf030fbfbfff"},
+            {"width": 1191, "height": 1684, "averageHash": "ffffff8b8b8f9fff"}
         ]
     },
     "high-angle": {
         "pages": 2,
         "pngPages": [
-            {"width": 1191, "height": 1684, "averageHash": "ffffff0f9f9b8bff"},
-            {"width": 1191, "height": 1684, "averageHash": "0f0f2bffffffffff"}
+            {"width": 1191, "height": 1684, "averageHash": "f99fff018fffffff"},
+            {"width": 1191, "height": 1684, "averageHash": "ff0b8f8fffffffff"}
         ]
     },
     "hydraulic": {
         "pages": 2,
         "pngPages": [
-            {"width": 1191, "height": 1684, "averageHash": "ffff8f0fff8b8bff"},
+            {"width": 1191, "height": 1684, "averageHash": "ffff8f8fff8b8bff"},
             {"width": 1191, "height": 1684, "averageHash": "0f0f2bffffffffff"}
         ]
     },
     "scba": {
         "pages": 2,
         "pngPages": [
-            {"width": 1191, "height": 1684, "averageHash": "fdbfff0f0fbfffff"},
+            {"width": 1191, "height": 1684, "averageHash": "fdbfff070fbfffff"},
             {"width": 1191, "height": 1684, "averageHash": "ff0b8f8fffffffff"}
         ]
     },
@@ -56,6 +56,12 @@
         "pngPages": [
             {"width": 1191, "height": 1684, "averageHash": "80018101bf01ffff"},
             {"width": 1191, "height": 1684, "averageHash": "ff0b8f8fffffffff"}
+        ]
+    },
+    "hse-v2": {
+        "pages": 1,
+        "pngPages": [
+            {"width": 1191, "height": 1684, "averageHash": "b915819f9f2bffff"}
         ]
     }
 }

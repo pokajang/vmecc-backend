@@ -7,4 +7,8 @@ return [
         'max_total_image_bytes' => (int) env('INSPECTION_PDF_MAX_TOTAL_IMAGE_BYTES', 12 * 1024 * 1024),
         'max_image_pixels' => (int) env('INSPECTION_PDF_MAX_IMAGE_PIXELS', 16_000_000),
     ],
+    'exception_export' => [
+        'max_records' => (int) env('INSPECTION_EXCEPTION_EXPORT_MAX_RECORDS', 500),
+        'max_images' => (int) env('INSPECTION_EXCEPTION_EXPORT_MAX_IMAGES', 100),
+    ],
 ];

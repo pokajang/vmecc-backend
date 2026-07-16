@@ -146,6 +146,23 @@
             font-weight: 700;
             text-align: left;
         }
+        .hydraulic-checks tr.inspection-check-evidence-row {
+            page-break-inside: auto;
+        }
+        .hydraulic-checks tr.inspection-check-evidence-row > td {
+            padding: 0;
+            border-top: 0;
+            background: #f8fafc;
+        }
+        .inspection-check-evidence {
+            padding: 6px 7px 7px 10px;
+            border-left: 3px solid #0b948f;
+        }
+        .inspection-check-evidence__spaced { margin-top: 7px; }
+        .inspection-check-evidence > .compact-info-grid:first-child,
+        .inspection-check-evidence > .evidence-grid:first-child {
+            margin-top: 0;
+        }
         .pill {
             display: inline-block;
             margin-left: 3px;

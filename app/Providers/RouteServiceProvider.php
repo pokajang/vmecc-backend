@@ -82,6 +82,23 @@ class RouteServiceProvider extends ServiceProvider
             ];
         });
 
+        RateLimiter::for('report-export-previews', function (Request $request) {
+            return Limit::perMinute(60)->by('user:'.($request->user()?->id ?: $request->ip()));
+        });
+
+        RateLimiter::for('report-downloads', function (Request $request) {
+            $response = fn (Request $request, array $headers) => response()->json([
+                'message' => 'Too many report downloads. Wait briefly and retry.',
+                'code' => 'REPORT_DOWNLOAD_RATE_LIMITED',
+                'retry_after' => (int) ($headers['Retry-After'] ?? 60),
+            ], 429, $headers);
+
+            return [
+                Limit::perMinute(12)->by('user:'.($request->user()?->id ?: $request->ip()))->response($response),
+                Limit::perMinute(60)->by('ip:'.$request->ip())->response($response),
+            ];
+        });
+
         RateLimiter::for('inspection-duty-confirmations', function (Request $request) {
             $response = fn (Request $request, array $headers) => response()->json([
                 'message' => 'Too many duty confirmation attempts. Wait briefly and retry.',
