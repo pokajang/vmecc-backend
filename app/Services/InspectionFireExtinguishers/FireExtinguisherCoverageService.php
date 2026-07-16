@@ -3,6 +3,7 @@
 namespace App\Services\InspectionFireExtinguishers;
 
 use App\Models\InspectionFireExtinguisher;
+use App\Models\InspectionFireExtinguisherIssue;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -25,7 +26,18 @@ class FireExtinguisherCoverageService
     public function build(array $filters = [], bool $includeChecks = false): array
     {
         $normalized = $this->policy->normalizeFilters($filters);
-        $query = InspectionFireExtinguisher::query()->where('is_active', true);
+        $query = InspectionFireExtinguisher::query()
+            ->withCount([
+                'issues as open_issues_count' => fn ($builder) => $builder->whereIn('status', InspectionFireExtinguisherIssue::ACTIVE_STATUSES),
+                'issues as overdue_issues_count' => fn ($builder) => $builder->whereIn('status', InspectionFireExtinguisherIssue::ACTIVE_STATUSES)->where('due_at', '<', now()),
+            ]);
+        if ($normalized['lifecycleStatus'] === 'all') {
+            // Include every lifecycle state.
+        } elseif (in_array($normalized['lifecycleStatus'], ['active', 'out_of_service', 'retired'], true)) {
+            $query->where('lifecycle_status', $normalized['lifecycleStatus']);
+        } else {
+            $query->where('lifecycle_status', 'active');
+        }
         if ($normalized['zone'] !== '') {
             $query->where('zone', $normalized['zone']);
         }
@@ -81,6 +93,10 @@ class FireExtinguisherCoverageService
     /** @param array<string, mixed> $filters */
     public function detail(InspectionFireExtinguisher $row, array $filters = []): array
     {
+        $row->loadCount([
+            'issues as open_issues_count' => fn ($builder) => $builder->whereIn('status', InspectionFireExtinguisherIssue::ACTIVE_STATUSES),
+            'issues as overdue_issues_count' => fn ($builder) => $builder->whereIn('status', InspectionFireExtinguisherIssue::ACTIVE_STATUSES)->where('due_at', '<', now()),
+        ]);
         $normalized = $this->policy->normalizeFilters($filters);
         [$periodStart, $periodEnd] = $this->periodRange(
             $normalized['period'],
@@ -107,13 +123,11 @@ class FireExtinguisherCoverageService
     /** @return array<string, array<int, string>> */
     private function coverageFilterOptions(Collection $coverageRows): array
     {
-        $catalogRows = InspectionFireExtinguisher::query()->where('is_active', true)->get(['zone', 'main_location_name']);
-
         return [
-            'zones' => $catalogRows->pluck('zone')->map(fn ($value): string => $this->text($value))
+            'zones' => $coverageRows->pluck('zone')->map(fn ($value): string => $this->text($value))
                 ->filter()->unique()->sort(fn (string $a, string $b): int => ($this->policy->zoneSortValue($a) <=> $this->policy->zoneSortValue($b)) ?: strnatcasecmp($a, $b)
                 )->values()->all(),
-            'locations' => $catalogRows->pluck('main_location_name')->map(fn ($value): string => $this->text($value))
+            'locations' => $coverageRows->pluck('location')->map(fn ($value): string => $this->text($value))
                 ->filter()->unique()->sort(fn (string $a, string $b): int => strnatcasecmp($a, $b))->values()->all(),
             'inspectors' => $coverageRows->pluck('inspectedBy')->map(fn ($value): string => $this->text($value))
                 ->filter()->unique()->sort(fn (string $a, string $b): int => strnatcasecmp($a, $b))->values()->all(),

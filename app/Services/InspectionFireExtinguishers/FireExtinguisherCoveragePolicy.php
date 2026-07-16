@@ -29,6 +29,7 @@ class FireExtinguisherCoveragePolicy
             'duplicateScope' => strtolower($this->text($filters['duplicateScope'] ?? 'all')) ?: 'all',
             'sort' => strtolower($this->text($filters['sort'] ?? 'zone-location')) ?: 'zone-location',
             'direction' => $direction,
+            'lifecycleStatus' => strtolower($this->text($filters['lifecycleStatus'] ?? 'active')) ?: 'active',
         ];
     }
 
@@ -52,10 +53,10 @@ class FireExtinguisherCoveragePolicy
             if (in_array($filters['duplicateScope'], ['report', 'reports'], true) && (int) ($row['duplicateCount'] ?? 0) <= 1) {
                 return false;
             }
-            if ($filters['issues'] === 'with-issues' && (int) ($row['issueCount'] ?? 0) <= 0) {
+            if ($filters['issues'] === 'with-issues' && $this->openIssueCount($row) <= 0) {
                 return false;
             }
-            if ($filters['issues'] === 'no-issues' && (int) ($row['issueCount'] ?? 0) > 0) {
+            if ($filters['issues'] === 'no-issues' && $this->openIssueCount($row) > 0) {
                 return false;
             }
             if ($filters['certification'] !== 'all' && $this->certificationStatus($row) !== $filters['certification']) {
@@ -76,7 +77,7 @@ class FireExtinguisherCoveragePolicy
             return match ($sort) {
                 'latest' => $this->compareValues($b['latestInspectionAt'] ?? '', $a['latestInspectionAt'] ?? ''),
                 'days-left' => $this->compareValues((int) ($a['daysLeft'] ?? 0), (int) ($b['daysLeft'] ?? 0)),
-                'issues' => $this->compareValues((int) ($b['issueCount'] ?? 0), (int) ($a['issueCount'] ?? 0)),
+                'issues' => $this->compareValues($this->openIssueCount($b), $this->openIssueCount($a)),
                 'duplicates', 'reports' => $this->compareValues((int) ($b['duplicateCount'] ?? 0), (int) ($a['duplicateCount'] ?? 0)),
                 'locator-duplicates' => $this->compareValues(
                     (int) ($b['locatorDuplicateCount'] ?? 0),
@@ -98,7 +99,7 @@ class FireExtinguisherCoveragePolicy
             'total' => $rows->count(),
             'inspected' => $rows->filter(fn (array $row): bool => (string) ($row['latestInspectionAt'] ?? '') !== '')->count(),
             'notInspected' => $rows->filter(fn (array $row): bool => (string) ($row['latestInspectionAt'] ?? '') === '')->count(),
-            'issues' => $rows->filter(fn (array $row): bool => (int) ($row['issueCount'] ?? 0) > 0)->count(),
+            'issues' => $rows->filter(fn (array $row): bool => $this->openIssueCount($row) > 0)->count(),
             'duplicates' => $rows->filter(fn (array $row): bool => (int) ($row['duplicateCount'] ?? 0) > 1)->count(),
             'locatorDuplicates' => $rows->filter(fn (array $row): bool => (int) ($row['locatorDuplicateCount'] ?? 0) > 1)->count(),
             'expired' => $rows->filter(fn (array $row): bool => $this->text($row['daysLeft'] ?? '') !== '' && (int) $row['daysLeft'] < 0)->count(),
@@ -143,7 +144,7 @@ class FireExtinguisherCoveragePolicy
         if ($this->text($row['latestInspectionAt'] ?? '') === '') {
             return 'not-inspected';
         }
-        if ((int) ($row['issueCount'] ?? 0) > 0) {
+        if ($this->openIssueCount($row) > 0) {
             return 'issues';
         }
         if ((int) ($row['duplicateCount'] ?? 0) > 1) {
@@ -166,6 +167,11 @@ class FireExtinguisherCoveragePolicy
         }
 
         return 'valid';
+    }
+
+    private function openIssueCount(array $row): int
+    {
+        return (int) ($row['openIssueCount'] ?? $row['issueCount'] ?? 0);
     }
 
     private function text(mixed $value): string

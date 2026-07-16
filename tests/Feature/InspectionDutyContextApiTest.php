@@ -308,9 +308,10 @@ class InspectionDutyContextApiTest extends TestCase
     private function inspectionUser(): User
     {
         $user = User::factory()->create(['status' => 'active']);
-        $permission = Permission::query()->firstOrCreate(['name' => 'reports.inspection.view', 'guard_name' => 'web']);
+        $permissions = collect(['reports.inspection.view', 'reports.inspection.conduct'])
+            ->map(fn (string $name) => Permission::query()->firstOrCreate(['name' => $name, 'guard_name' => 'web']));
         $role = Role::query()->firstOrCreate(['name' => 'Duty Context Tester', 'guard_name' => 'web']);
-        $role->givePermissionTo($permission);
+        $role->givePermissionTo($permissions);
         $user->assignRole($role);
 
         return $user;

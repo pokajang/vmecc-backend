@@ -1519,17 +1519,16 @@ class InspectionReportPdfTest extends TestCase
 
     private function grantInspectionPermission(User $user, string $roleName = 'Inspection Pdf Tester'): void
     {
-        $permission = Permission::query()->firstOrCreate([
-            'name' => 'reports.inspection.view',
-            'guard_name' => 'web',
-        ]);
+        $permissions = collect(['reports.inspection.view', 'reports.inspection.conduct'])
+            ->map(fn (string $name) => Permission::query()->firstOrCreate([
+                'name' => $name,
+                'guard_name' => 'web',
+            ]));
         $role = Role::query()->firstOrCreate([
             'name' => $roleName,
             'guard_name' => 'web',
         ]);
-        if (! $role->hasPermissionTo($permission)) {
-            $role->givePermissionTo($permission);
-        }
+        $role->givePermissionTo($permissions);
         $user->assignRole($role);
     }
 }

@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\AiHelperResponseReport;
 use App\Models\FeedbackReport;
+use App\Models\InspectionFireExtinguisher;
+use App\Models\InspectionFireExtinguisherIssue;
 use App\Models\Leave;
 use App\Models\PayrollClaim;
 use App\Models\Report;
@@ -11,6 +13,7 @@ use App\Models\Roster;
 use App\Models\Team;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -141,6 +144,43 @@ class ActionQueueApiTest extends TestCase
         $response->assertOk();
         $this->assertSame(1, $roster['count']);
         $this->assertSame('/roster/schedule?range=all&attention=draft', $roster['to']);
+    }
+
+    public function test_fire_extinguisher_issue_queue_surfaces_assigned_overdue_and_verification_work(): void
+    {
+        $actor = $this->createUserWithRole('Extinguisher Issue Manager', [
+            'self.dashboard',
+            'reports.inspection.issues.manage',
+            'reports.inspection.issues.verify',
+        ]);
+        $asset = InspectionFireExtinguisher::query()->create([
+            'main_location_name' => 'Action Queue Yard',
+            'id_loc_no' => 'QUEUE-001',
+            'source' => 'custom',
+            'is_active' => true,
+            'lifecycle_status' => 'active',
+        ]);
+        InspectionFireExtinguisherIssue::query()->create([
+            'public_id' => (string) Str::uuid(),
+            'fire_extinguisher_id' => $asset->id,
+            'check_key' => 'operational-condition',
+            'check_name' => 'Operational condition',
+            'status' => 'pending_verification',
+            'severity' => 'high',
+            'title' => 'Gauge failed',
+            'assigned_to_user_id' => $actor->id,
+            'due_at' => now()->subDay(),
+            'first_detected_at' => now()->subDays(2),
+            'last_detected_at' => now()->subDays(2),
+            'active_key' => 'fire-extinguisher:'.$asset->id.':operational-condition',
+        ]);
+
+        $items = collect($this->actingAs($actor)->getJson('/api/dashboard/action-queue')
+            ->assertOk()->json('items'));
+
+        $this->assertSame(1, $items->firstWhere('key', 'inspection.extinguisher-issues.assigned')['count']);
+        $this->assertSame(1, $items->firstWhere('key', 'inspection.extinguisher-issues.overdue')['count']);
+        $this->assertSame(1, $items->firstWhere('key', 'inspection.extinguisher-issues.verify')['count']);
     }
 
     public function test_admin_moderation_links_include_new_and_reviewing_records(): void

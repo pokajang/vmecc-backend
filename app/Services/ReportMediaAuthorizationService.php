@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\InspectionExtinguisherResult;
+use App\Models\InspectionFireExtinguisherIssue;
 use App\Models\InspectionSession;
 use App\Models\Report;
 use App\Models\ReportDraft;
@@ -84,6 +85,14 @@ class ReportMediaAuthorizationService
             return (int) $session->started_by_user_id === (int) $user->id
                 || (int) $session->submitted_by_user_id === (int) $user->id
                 || $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.view');
+        }
+
+        if ($parentType === 'fire_extinguisher_issue_resolution') {
+            return InspectionFireExtinguisherIssue::query()->where('public_id', $parentKey)->exists()
+                && $this->authorizationService->hasPermission(
+                    $user,
+                    'reports.manage|reports.inspection.view',
+                );
         }
 
         return false;

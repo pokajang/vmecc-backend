@@ -89,7 +89,7 @@ class InspectionSessionController extends Controller
     public function store(Request $request): JsonResponse
     {
         $this->ensureEnabled();
-        $this->ensureInspectionPermission($request);
+        $this->ensureInspectionConductPermission($request);
 
         $data = $request->validate([
             'inspectionType' => ['nullable', 'string', 'max:190'],
@@ -200,7 +200,7 @@ class InspectionSessionController extends Controller
     public function claim(Request $request, string $sessionUid, string $extinguisherId): JsonResponse
     {
         $this->ensureEnabled();
-        $this->ensureInspectionPermission($request);
+        $this->ensureInspectionConductPermission($request);
         $session = $this->findWritableSession($request, $sessionUid);
         $this->dutyConfirmations->consume($request, 'session-write', $session->session_uid, self::FIRE_EXTINGUISHER_TYPE_KEY);
         $payload = $this->resultPayloadFromRequest($request);
@@ -250,7 +250,7 @@ class InspectionSessionController extends Controller
     public function complete(Request $request, string $sessionUid, string $extinguisherId): JsonResponse
     {
         $this->ensureEnabled();
-        $this->ensureInspectionPermission($request);
+        $this->ensureInspectionConductPermission($request);
         $session = $this->findWritableSession($request, $sessionUid);
         $this->dutyConfirmations->consume($request, 'session-write', $session->session_uid, self::FIRE_EXTINGUISHER_TYPE_KEY);
         $data = $request->validate([
@@ -508,7 +508,7 @@ class InspectionSessionController extends Controller
     public function reset(Request $request, string $sessionUid, string $extinguisherId): JsonResponse
     {
         $this->ensureEnabled();
-        $this->ensureInspectionPermission($request);
+        $this->ensureInspectionConductPermission($request);
         $session = $this->findWritableSession($request, $sessionUid);
         $this->dutyConfirmations->consume($request, 'session-write', $session->session_uid, self::FIRE_EXTINGUISHER_TYPE_KEY);
         $data = $request->validate([
@@ -683,7 +683,7 @@ class InspectionSessionController extends Controller
     public function submit(Request $request, string $sessionUid): JsonResponse
     {
         $this->ensureEnabled();
-        $this->ensureInspectionPermission($request);
+        $this->ensureInspectionConductPermission($request);
         $session = $this->findReadableSession($request, $sessionUid);
         $user = $request->user();
         $data = $request->validate([
@@ -983,8 +983,17 @@ class InspectionSessionController extends Controller
         $routeId = ctype_digit($extinguisherId) ? (int) $extinguisherId : 0;
         $fireExtinguisherId = $catalogId > 0 ? $catalogId : ($routeId > 0 ? $routeId : null);
         $catalog = $fireExtinguisherId
-            ? InspectionFireExtinguisher::query()->where('is_active', true)->find($fireExtinguisherId)
+            ? InspectionFireExtinguisher::query()
+                ->where('is_active', true)
+                ->where('lifecycle_status', 'active')
+                ->find($fireExtinguisherId)
             : null;
+
+        if ($fireExtinguisherId && ! $catalog) {
+            throw ValidationException::withMessages([
+                'extinguisher' => ['This fire extinguisher is not active and cannot be inspected.'],
+            ]);
+        }
 
         $zone = $this->text($catalog?->zone ?? $payload['zone'] ?? '');
         $mainLocation = $this->text($catalog?->main_location_name ?? $payload['mainLocation'] ?? $payload['main_location'] ?? $payload['location'] ?? '');
@@ -1301,6 +1310,14 @@ class InspectionSessionController extends Controller
         $user = $request->user();
         if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.view')) {
             abort(403, 'Missing inspection report permission.');
+        }
+    }
+
+    private function ensureInspectionConductPermission(Request $request): void
+    {
+        $user = $request->user();
+        if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.conduct')) {
+            abort(403, 'Missing permission to conduct inspections.');
         }
     }
 

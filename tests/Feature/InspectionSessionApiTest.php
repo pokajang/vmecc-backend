@@ -270,6 +270,27 @@ class InspectionSessionApiTest extends TestCase
         $this->assertSame(0, InspectionExtinguisherResult::query()->count());
     }
 
+    public function test_out_of_service_extinguisher_cannot_be_completed_in_a_session(): void
+    {
+        $user = $this->inspectionUser('Out Of Service Inspector');
+        $extinguisher = $this->extinguisher();
+        $extinguisher->update([
+            'lifecycle_status' => 'out_of_service',
+            'out_of_service_at' => now(),
+            'out_of_service_reason' => 'Awaiting replacement',
+        ]);
+        $sessionUid = $this->actingAs($user)->postJson('/api/inspection/sessions', [
+            'inspectionType' => 'Fire Extinguisher Inspection',
+        ])->assertCreated()->json('data.sessionUid');
+
+        $this->postJson(
+            "/api/inspection/sessions/{$sessionUid}/extinguishers/{$extinguisher->id}/complete",
+            ['checkPayload' => $this->checkPayload($extinguisher), 'clientResultId' => 'out-of-service-check'],
+        )->assertUnprocessable()->assertJsonValidationErrors('extinguisher');
+
+        $this->assertDatabaseCount('inspection_extinguisher_results', 0);
+    }
+
     public function test_completed_defect_extinguisher_result_requires_remarks_but_photo_is_optional(): void
     {
         $user = $this->inspectionUser('Inspector A');
@@ -1304,16 +1325,15 @@ class InspectionSessionApiTest extends TestCase
     private function inspectionUser(string $name = 'Inspection User'): User
     {
         $user = User::factory()->create(['name' => $name, 'status' => 'active']);
-        $permission = Permission::query()->firstOrCreate([
-            'name' => 'reports.inspection.view',
-            'guard_name' => 'web',
-        ]);
         $role = Role::query()->firstOrCreate([
             'name' => 'Inspection Session Tester',
             'guard_name' => 'web',
         ]);
-        if (! $role->hasPermissionTo($permission)) {
-            $role->givePermissionTo($permission);
+        foreach (['reports.inspection.view', 'reports.inspection.conduct'] as $name) {
+            $permission = Permission::query()->firstOrCreate(['name' => $name, 'guard_name' => 'web']);
+            if (! $role->hasPermissionTo($permission)) {
+                $role->givePermissionTo($permission);
+            }
         }
         $user->assignRole($role);
 
@@ -1338,12 +1358,11 @@ class InspectionSessionApiTest extends TestCase
             'name' => 'Incident Commander',
             'guard_name' => 'web',
         ]);
-        $permission = Permission::query()->firstOrCreate([
-            'name' => 'reports.inspection.view',
-            'guard_name' => 'web',
-        ]);
-        if (! $role->hasPermissionTo($permission)) {
-            $role->givePermissionTo($permission);
+        foreach (['reports.inspection.view', 'reports.inspection.conduct'] as $name) {
+            $permission = Permission::query()->firstOrCreate(['name' => $name, 'guard_name' => 'web']);
+            if (! $role->hasPermissionTo($permission)) {
+                $role->givePermissionTo($permission);
+            }
         }
         $user->syncRoles([$role]);
     }

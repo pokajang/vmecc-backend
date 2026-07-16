@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\InspectionCheckRow;
 use App\Models\InspectionFireExtinguisher;
+use App\Models\InspectionFireExtinguisherIssue;
 use App\Models\Report;
 use App\Models\User;
 use App\Services\InspectionSiteLocationCatalogService;
@@ -92,6 +93,18 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             'is_active' => true,
             'sort_order' => 9999,
         ]);
+        $issue = InspectionFireExtinguisherIssue::query()->create([
+            'public_id' => '00000000-0000-4000-8000-000000009999',
+            'fire_extinguisher_id' => $stale->id,
+            'check_key' => 'operational-condition',
+            'check_name' => 'Operational condition',
+            'status' => 'open',
+            'severity' => 'medium',
+            'title' => 'Legacy extinguisher defect',
+            'first_detected_at' => now(),
+            'last_detected_at' => now(),
+            'active_key' => "fire-extinguisher:{$stale->id}:operational-condition",
+        ]);
 
         $this->seed(InspectionFireExtinguisherCatalogSeeder::class);
 
@@ -107,6 +120,35 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             ->count());
         $this->assertFalse($stale->fresh()->is_active);
         $this->assertNull($stale->fresh()->source_row_number);
+        $this->assertSame('retired', $stale->fresh()->lifecycle_status);
+        $this->assertSame('cancelled', $issue->fresh()->status);
+        $this->assertNull($issue->fresh()->active_key);
+        $this->assertDatabaseHas('inspection_fire_extinguisher_issue_events', [
+            'issue_id' => $issue->id,
+            'event_type' => 'cancelled',
+            'actor_user_id' => null,
+        ]);
+    }
+
+    public function test_catalog_reseed_does_not_reactivate_a_manually_retired_seeded_asset(): void
+    {
+        $this->seed(InspectionFireExtinguisherCatalogSeeder::class);
+        $retired = InspectionFireExtinguisher::query()->where('source_row_number', 7)->firstOrFail();
+        $retired->update([
+            'is_active' => false,
+            'lifecycle_status' => 'retired',
+            'active_identity_key' => null,
+            'retired_at' => now(),
+            'retirement_reason' => 'Removed by operations',
+            'lock_version' => $retired->lock_version + 1,
+        ]);
+
+        $this->seed(InspectionFireExtinguisherCatalogSeeder::class);
+
+        $retired->refresh();
+        $this->assertFalse($retired->is_active);
+        $this->assertSame('retired', $retired->lifecycle_status);
+        $this->assertSame('Removed by operations', $retired->retirement_reason);
     }
 
     public function test_fire_extinguisher_reseed_does_not_repurpose_a_changed_catalog_id(): void
@@ -1294,6 +1336,10 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantPermission($user, 'reports.inspection.view');
+        $this->grantPermission($user, 'reports.inspection.conduct');
+        $this->grantPermission($user, 'reports.inspection.extinguishers.manage');
+        $this->grantPermission($user, 'reports.inspection.issues.manage');
+        $this->grantPermission($user, 'reports.inspection.issues.verify');
         $this->actingAs($user);
 
         return $user;

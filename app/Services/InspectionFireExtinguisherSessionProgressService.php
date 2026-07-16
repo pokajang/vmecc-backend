@@ -49,7 +49,9 @@ class InspectionFireExtinguisherSessionProgressService
             'subLocation' => $this->text($scope['subLocation'] ?? ''),
         ];
         $catalogGroups = [];
-        $catalogQuery = InspectionFireExtinguisher::query()->where('is_active', true);
+        $catalogQuery = InspectionFireExtinguisher::query()
+            ->where('is_active', true)
+            ->where('lifecycle_status', 'active');
         if ($scope['mainLocation'] !== '') {
             $catalogQuery->where('main_location_name', $scope['mainLocation']);
         }

@@ -262,6 +262,9 @@ class ReportController extends Controller
         if ($isManagedWorkflow) {
             $this->ensureReportingModulePermission($request, $reportType);
         }
+        if ($isInspection) {
+            $this->ensureInspectionConductPermission($request);
+        }
         if ($reportType === 'drill') {
             if ($status === self::STATUS_DRAFT) {
                 $this->drillPayloadService->validateForDraft((array) $data['payload']);
@@ -472,7 +475,7 @@ class ReportController extends Controller
             }
         }
         if ($isInspection) {
-            $this->ensureInspectionPermission($request);
+            $this->ensureInspectionConductPermission($request);
             $existingPayload = is_array($report->payload) ? $report->payload : [];
             $isSessionFireExtinguisher = $this->inspectionSessionReportPayloadBuilder
                 ->isSessionFireExtinguisherPayload($existingPayload);
@@ -614,6 +617,9 @@ class ReportController extends Controller
     {
         $user = $request->user();
         $report = $this->findDeletableReport($request, $reportUid);
+        if ($this->isInspectionReport($report)) {
+            $this->ensureInspectionConductPermission($request);
+        }
         $dutyContext = null;
         if ($this->isInspectionReport($report) && $report->status !== self::STATUS_DRAFT) {
             $dutyContext = $this->dutyConfirmations->consume(
@@ -1192,6 +1198,14 @@ class ReportController extends Controller
     private function ensureInspectionPermission(Request $request): void
     {
         $this->ensureReportingModulePermission($request, 'inspection');
+    }
+
+    private function ensureInspectionConductPermission(Request $request): void
+    {
+        $user = $request->user();
+        if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.conduct')) {
+            abort(403, 'Missing permission to conduct inspections.');
+        }
     }
 
     private function ensureReportingModulePermission(Request $request, string $reportType): void

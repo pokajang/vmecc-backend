@@ -4,11 +4,16 @@ namespace App\Services;
 
 use App\Models\InspectionCheckRow;
 use App\Models\Report;
+use App\Services\InspectionFireExtinguishers\FireExtinguisherIssueSyncService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
 class InspectionCheckRowSyncService
 {
+    public function __construct(
+        private readonly FireExtinguisherIssueSyncService $fireExtinguisherIssueSyncService,
+    ) {}
+
     private const REPORT_TYPE_INSPECTION = 'inspection';
 
     private const STATUS_DRAFT = 'Draft';
@@ -166,6 +171,8 @@ class InspectionCheckRowSyncService
         }
 
         InspectionCheckRow::query()->insert($rows);
+
+        $this->fireExtinguisherIssueSyncService->syncReport((int) $report->id, $actorUserId);
 
         return count($rows);
     }

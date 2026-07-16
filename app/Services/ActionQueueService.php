@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Models\AiHelperResponseReport;
 use App\Models\FeedbackReport;
+use App\Models\InspectionFireExtinguisherIssue;
 use App\Models\Leave;
 use App\Models\OvertimeRecord;
 use App\Models\PayrollClaim;
@@ -55,6 +56,7 @@ class ActionQueueService
     {
         $items = collect()
             ->concat($this->reportItems($actor))
+            ->concat($this->fireExtinguisherIssueItems($actor))
             ->concat($this->leaveItems($actor))
             ->concat($this->overtimeItems($actor))
             ->concat($this->payrollItems($actor))
@@ -110,6 +112,60 @@ class ActionQueueService
                 "{$config['label']} returned for your correction",
                 $candidates->where('status', 'Rejected')->where('owner_user_id', $actor->id)->count(),
                 "{$config['path']}?status=Rejected",
+                'high',
+            );
+        }
+
+        return $items;
+    }
+
+    private function fireExtinguisherIssueItems(User $actor): array
+    {
+        if (! $this->enabled('reports.inspection')) {
+            return [];
+        }
+
+        $items = [];
+        $path = '/inspection/all-extinguishers?issues=with-issues';
+
+        if ($this->allowed($actor, 'reports.inspection.issues.manage|reports.manage')) {
+            $assigned = InspectionFireExtinguisherIssue::query()
+                ->whereIn('status', InspectionFireExtinguisherIssue::ACTIVE_STATUSES)
+                ->where('assigned_to_user_id', $actor->id)
+                ->count();
+            $overdue = InspectionFireExtinguisherIssue::query()
+                ->whereIn('status', InspectionFireExtinguisherIssue::ACTIVE_STATUSES)
+                ->where('due_at', '<', now())
+                ->count();
+
+            $items[] = $this->item(
+                'inspection.extinguisher-issues.assigned',
+                'inspection',
+                'resolve',
+                'Fire extinguisher issues assigned to you',
+                $assigned,
+                $path.'&assignee=me',
+                'high',
+            );
+            $items[] = $this->item(
+                'inspection.extinguisher-issues.overdue',
+                'inspection',
+                'resolve',
+                'Overdue fire extinguisher issues',
+                $overdue,
+                $path.'&overdue=1',
+                'high',
+            );
+        }
+
+        if ($this->allowed($actor, 'reports.inspection.issues.verify|reports.manage')) {
+            $items[] = $this->item(
+                'inspection.extinguisher-issues.verify',
+                'inspection',
+                'verify',
+                'Fire extinguisher issues pending verification',
+                InspectionFireExtinguisherIssue::query()->where('status', 'pending_verification')->count(),
+                $path.'&status=pending_verification',
                 'high',
             );
         }

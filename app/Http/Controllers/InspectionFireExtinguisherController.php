@@ -4,9 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\InspectionCheckRow;
 use App\Models\InspectionFireExtinguisher;
+use App\Models\InspectionFireExtinguisherIssue;
+use App\Models\InspectionFireExtinguisherIssueOccurrence;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\AuditLogger;
 use App\Services\InspectionFireExtinguisherBatchCreator;
 use App\Services\InspectionFireExtinguishers\FireExtinguisherCoverageService;
+use App\Services\InspectionFireExtinguishers\FireExtinguisherIssueWorkflowService;
 use App\Services\InspectionSiteLocationCatalogService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,6 +30,7 @@ class InspectionFireExtinguisherController extends Controller
         private readonly InspectionFireExtinguisherBatchCreator $batchCreator,
         private readonly InspectionSiteLocationCatalogService $siteLocationCatalog,
         private readonly FireExtinguisherCoverageService $coverageService,
+        private readonly FireExtinguisherIssueWorkflowService $issueWorkflow,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -37,7 +42,19 @@ class InspectionFireExtinguisherController extends Controller
         $subLocation = Str::of((string) $request->query('subLocation', ''))->squish()->toString();
         $search = Str::of((string) $request->query('search', ''))->squish()->toString();
 
-        $query = InspectionFireExtinguisher::query()->where('is_active', true);
+        $lifecycle = strtolower($this->text($request->query('lifecycleStatus', 'active'))) ?: 'active';
+        $query = InspectionFireExtinguisher::query()->withCount([
+            'issues as open_issues_count' => fn ($builder) => $builder->whereIn('status', InspectionFireExtinguisherIssue::ACTIVE_STATUSES),
+        ]);
+        if ($lifecycle === 'all') {
+            // Lifecycle management view includes retired assets.
+        } elseif ($lifecycle === 'retired') {
+            $query->where('lifecycle_status', 'retired');
+        } elseif ($lifecycle === 'out_of_service') {
+            $query->where('lifecycle_status', 'out_of_service');
+        } else {
+            $query->where('lifecycle_status', 'active')->where('is_active', true);
+        }
         if ($zone !== '') {
             $query->where('zone', $zone);
         }
@@ -134,7 +151,7 @@ class InspectionFireExtinguisherController extends Controller
     public function coverageDetail(Request $request, int $extinguisherId): JsonResponse
     {
         $this->ensureInspectionPermission($request);
-        $row = $this->findActiveRow($extinguisherId);
+        $row = InspectionFireExtinguisher::query()->findOrFail($extinguisherId);
         $result = $this->coverageService->detail($row, $request->query());
 
         return response()->json([
@@ -161,6 +178,7 @@ class InspectionFireExtinguisherController extends Controller
 
         $rows = InspectionFireExtinguisher::query()
             ->where('is_active', true)
+            ->where('lifecycle_status', 'active')
             ->where(function ($query) use ($locator): void {
                 $query
                     ->whereRaw('LOWER(TRIM(barcode_no)) = ?', [$locator])
@@ -210,7 +228,7 @@ class InspectionFireExtinguisherController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
 
         $data = $request->validate($this->rules(requireCompleteLocation: true));
         $this->validateRequiredCatalogIdentity($data);
@@ -227,6 +245,7 @@ class InspectionFireExtinguisherController extends Controller
                 'source' => 'custom',
                 'created_by' => $request->user()?->id,
                 'is_active' => true,
+                'lifecycle_status' => 'active',
                 'sort_order' => $this->nextSortOrder((string) ($data['mainLocation'] ?? $data['main_location'] ?? '')),
             ]);
 
@@ -259,12 +278,14 @@ class InspectionFireExtinguisherController extends Controller
         /** @var InspectionFireExtinguisher $row */
         $row = $result['row'];
 
+        AuditLogger::log($request, 'fire_extinguisher_created', null, ['fire_extinguisher_id' => $row->id]);
+
         return response()->json(['data' => $this->formatRow($row, $request)], 201);
     }
 
     public function storeBatch(Request $request): JsonResponse
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
 
         $data = $request->validate($this->batchRules());
         $location = [
@@ -334,6 +355,11 @@ class InspectionFireExtinguisherController extends Controller
         /** @var Collection<int, InspectionFireExtinguisher> $rows */
         $rows = $result['rows'];
 
+        AuditLogger::log($request, 'fire_extinguisher_batch_created', null, [
+            'fire_extinguisher_ids' => $rows->pluck('id')->values()->all(),
+            'count' => $rows->count(),
+        ]);
+
         return response()->json([
             'data' => $rows
                 ->map(fn (InspectionFireExtinguisher $row): array => $this->formatRow($row, $request))
@@ -344,35 +370,223 @@ class InspectionFireExtinguisherController extends Controller
 
     public function update(Request $request, int $extinguisherId): JsonResponse
     {
-        $this->ensureInspectionPermission($request);
-        $row = $this->findActiveRow($extinguisherId);
-
+        $this->ensureCatalogManagePermission($request);
         $data = $request->validate($this->rules());
-        $attributes = $this->payloadToAttributes($data);
-        if ($this->locatorChanged($row, $data)) {
-            $this->assertUniqueActiveLocator($data, $row->id);
-        }
-        if ($row->source === 'custom') {
-            $this->assertUniqueActiveIdentity($data, $row->id);
-        } else {
-            $attributes['active_identity_key'] = null;
-        }
-        $row->fill($attributes)->save();
+        [$row, $before] = DB::transaction(function () use ($data, $extinguisherId, $request): array {
+            $row = $this->findActiveRow($extinguisherId, lock: true);
+            $this->assertLifecycleVersion($request, $row);
+            $attributes = $this->payloadToAttributes($data);
+            if ($this->locatorChanged($row, $data)) {
+                $this->assertUniqueActiveLocator($data, $row->id, lock: true);
+            }
+            if ($row->source === 'custom') {
+                $this->assertUniqueActiveIdentity($data, $row->id, lock: true);
+            } else {
+                $attributes['active_identity_key'] = null;
+            }
+            $before = $row->only(['zone', 'main_location_name', 'sub_location_name', 'id_loc_no', 'barcode_no', 'fe_type', 'certification_validity']);
+            $row->fill($attributes + [
+                'updated_by' => $request->user()?->id,
+                'lock_version' => $row->lock_version + 1,
+            ])->save();
+
+            return [$row->fresh(), $before];
+        });
+
+        AuditLogger::log($request, 'fire_extinguisher_updated', null, [
+            'fire_extinguisher_id' => $row->id,
+            'before' => $before,
+            'after' => $row->only(array_keys($before)),
+        ]);
 
         return response()->json(['data' => $this->formatRow($row, $request)]);
     }
 
     public function destroy(Request $request, int $extinguisherId): JsonResponse|Response
     {
-        $this->ensureInspectionPermission($request);
-        $row = $this->findActiveRow($extinguisherId);
-
-        $row->update([
-            'is_active' => false,
-            'active_identity_key' => null,
-        ]);
+        $this->ensureCatalogManagePermission($request);
+        $this->retireRow($request, $extinguisherId, 'Retired through the legacy delete action.');
 
         return response()->noContent();
+    }
+
+    public function outOfService(Request $request, int $extinguisherId): JsonResponse
+    {
+        $this->ensureCatalogManagePermission($request);
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'max:5000'],
+            'lockVersion' => ['required', 'integer', 'min:1'],
+        ]);
+        $row = DB::transaction(function () use ($data, $extinguisherId, $request): InspectionFireExtinguisher {
+            $row = $this->findActiveRow($extinguisherId, lock: true);
+            $this->assertLifecycleVersion($request, $row);
+            if ($row->lifecycle_status !== 'active') {
+                throw ValidationException::withMessages(['lifecycleStatus' => ['Only an active extinguisher can be taken out of service.']]);
+            }
+            $row->update([
+                'lifecycle_status' => 'out_of_service',
+                'out_of_service_at' => now(),
+                'out_of_service_by' => $request->user()?->id,
+                'out_of_service_reason' => trim($data['reason']),
+                'updated_by' => $request->user()?->id,
+                'lock_version' => $row->lock_version + 1,
+            ]);
+
+            return $row->fresh();
+        });
+        AuditLogger::log($request, 'fire_extinguisher_out_of_service', null, ['fire_extinguisher_id' => $row->id, 'reason' => $data['reason']]);
+
+        return response()->json(['data' => $this->formatRow($row, $request)]);
+    }
+
+    public function returnToService(Request $request, int $extinguisherId): JsonResponse
+    {
+        $this->ensureCatalogManagePermission($request);
+        $request->validate(['lockVersion' => ['required', 'integer', 'min:1']]);
+        $row = DB::transaction(function () use ($extinguisherId, $request): InspectionFireExtinguisher {
+            $row = $this->findActiveRow($extinguisherId, lock: true);
+            $this->assertLifecycleVersion($request, $row);
+            if ($row->lifecycle_status !== 'out_of_service') {
+                throw ValidationException::withMessages(['lifecycleStatus' => ['Only an out-of-service extinguisher can return to service.']]);
+            }
+            $row->update([
+                'lifecycle_status' => 'active',
+                'out_of_service_at' => null,
+                'out_of_service_by' => null,
+                'out_of_service_reason' => null,
+                'updated_by' => $request->user()?->id,
+                'lock_version' => $row->lock_version + 1,
+            ]);
+
+            return $row->fresh();
+        });
+        AuditLogger::log($request, 'fire_extinguisher_returned_to_service', null, ['fire_extinguisher_id' => $row->id]);
+
+        return response()->json(['data' => $this->formatRow($row, $request)]);
+    }
+
+    public function retire(Request $request, int $extinguisherId): JsonResponse
+    {
+        $this->ensureCatalogManagePermission($request);
+        $data = $request->validate(['reason' => ['required', 'string', 'max:5000'], 'lockVersion' => ['required', 'integer', 'min:1']]);
+        $row = $this->retireRow($request, $extinguisherId, trim($data['reason']));
+
+        return response()->json(['data' => $this->formatRow($row, $request)]);
+    }
+
+    public function restore(Request $request, int $extinguisherId): JsonResponse
+    {
+        $this->ensureCatalogManagePermission($request);
+        $request->validate(['lockVersion' => ['required', 'integer', 'min:1']]);
+        $row = DB::transaction(function () use ($extinguisherId, $request): InspectionFireExtinguisher {
+            $row = InspectionFireExtinguisher::query()->lockForUpdate()->findOrFail($extinguisherId);
+            $this->assertLifecycleVersion($request, $row);
+            if ($row->lifecycle_status !== 'retired') {
+                throw ValidationException::withMessages(['lifecycleStatus' => ['Only a retired extinguisher can be restored.']]);
+            }
+            $identityData = [
+                'mainLocation' => $row->main_location_name,
+                'subLocation' => $row->sub_location_name,
+                'idLocNo' => $row->id_loc_no,
+                'barcodeNo' => $row->barcode_no,
+            ];
+            $identityKey = null;
+            if ($row->source === 'custom') {
+                $this->assertUniqueActiveIdentity($identityData, $row->id, lock: true);
+                $identityKey = $this->activeIdentityKey($identityData);
+            }
+            $row->update([
+                'lifecycle_status' => 'active',
+                'is_active' => true,
+                'active_identity_key' => $identityKey,
+                'out_of_service_at' => null,
+                'out_of_service_by' => null,
+                'out_of_service_reason' => null,
+                'retired_at' => null,
+                'retired_by' => null,
+                'retirement_reason' => null,
+                'restored_at' => now(),
+                'restored_by' => $request->user()?->id,
+                'updated_by' => $request->user()?->id,
+                'lock_version' => $row->lock_version + 1,
+            ]);
+
+            return $row->fresh();
+        });
+        AuditLogger::log($request, 'fire_extinguisher_restored', null, ['fire_extinguisher_id' => $row->id]);
+
+        return response()->json(['data' => $this->formatRow($row, $request)]);
+    }
+
+    public function inspectionHistory(Request $request, int $extinguisherId): JsonResponse
+    {
+        $this->ensureInspectionPermission($request);
+        InspectionFireExtinguisher::query()->findOrFail($extinguisherId);
+        $perPage = min(100, max(1, (int) $request->query('perPage', 25)));
+        $reports = InspectionCheckRow::query()
+            ->where('inspection_type_key', 'fire-extinguisher-inspection')
+            ->where('equipment_catalog_id', $extinguisherId)
+            ->whereNotNull('submitted_at')
+            ->selectRaw('report_id, MAX(submitted_at) as submitted_at')
+            ->groupBy('report_id')
+            ->orderByDesc('submitted_at')
+            ->paginate($perPage);
+        $reportIds = collect($reports->items())->pluck('report_id')->map(fn ($id) => (int) $id);
+        $rows = InspectionCheckRow::query()->with(['submittedBy:id,name', 'report:id,report_uid,display_id,payload'])
+            ->where('equipment_catalog_id', $extinguisherId)->whereIn('report_id', $reportIds)->get()->groupBy('report_id');
+
+        return response()->json([
+            'data' => $reportIds->map(fn (int $id) => $this->formatHistoryRecord($rows->get($id, collect())))->values(),
+            'meta' => ['page' => $reports->currentPage(), 'lastPage' => $reports->lastPage(), 'total' => $reports->total()],
+        ]);
+    }
+
+    public function inspectionHistoryDetail(Request $request, int $extinguisherId, int $reportId): JsonResponse
+    {
+        $this->ensureInspectionPermission($request);
+        InspectionFireExtinguisher::query()->findOrFail($extinguisherId);
+        $rows = InspectionCheckRow::query()->with(['submittedBy:id,name', 'report:id,report_uid,display_id,payload'])
+            ->where('inspection_type_key', 'fire-extinguisher-inspection')
+            ->where('equipment_catalog_id', $extinguisherId)->where('report_id', $reportId)->get();
+        abort_if($rows->isEmpty(), 404, 'Inspection history record was not found.');
+
+        return response()->json(['data' => $this->formatHistoryRecord($rows)]);
+    }
+
+    private function retireRow(Request $request, int $extinguisherId, string $reason): InspectionFireExtinguisher
+    {
+        $row = DB::transaction(function () use ($extinguisherId, $request, $reason): InspectionFireExtinguisher {
+            $row = $this->findActiveRow($extinguisherId, lock: true);
+            $this->assertLifecycleVersion($request, $row);
+            InspectionFireExtinguisherIssue::query()
+                ->where('fire_extinguisher_id', $row->id)
+                ->whereIn('status', InspectionFireExtinguisherIssue::ACTIVE_STATUSES)
+                ->lockForUpdate()->get()
+                ->each(fn ($issue) => $this->issueWorkflow->closeForRetirement($issue, (int) $request->user()->id, $reason));
+            $row->update([
+                'is_active' => false,
+                'lifecycle_status' => 'retired',
+                'active_identity_key' => null,
+                'retired_at' => now(),
+                'retired_by' => $request->user()?->id,
+                'retirement_reason' => $reason,
+                'updated_by' => $request->user()?->id,
+                'lock_version' => $row->lock_version + 1,
+            ]);
+
+            return $row->fresh();
+        });
+        AuditLogger::log($request, 'fire_extinguisher_retired', null, ['fire_extinguisher_id' => $row->id, 'reason' => $reason]);
+
+        return $row;
+    }
+
+    private function assertLifecycleVersion(Request $request, InspectionFireExtinguisher $row): void
+    {
+        $version = $request->input('lockVersion');
+        if ($version !== null && (int) $version !== (int) $row->lock_version) {
+            abort(409, 'The extinguisher was updated by another user. Refresh and try again.');
+        }
     }
 
     /**
@@ -511,9 +725,12 @@ class InspectionFireExtinguisherController extends Controller
         }
     }
 
-    private function findActiveRow(int $id): InspectionFireExtinguisher
+    private function findActiveRow(int $id, bool $lock = false): InspectionFireExtinguisher
     {
-        return InspectionFireExtinguisher::query()->where('is_active', true)->findOrFail($id);
+        return InspectionFireExtinguisher::query()
+            ->where('is_active', true)
+            ->when($lock, fn ($query) => $query->lockForUpdate())
+            ->findOrFail($id);
     }
 
     /**
@@ -565,10 +782,109 @@ class InspectionFireExtinguisherController extends Controller
             'daysLeftToExpire' => $this->daysLeftToExpire($validity),
             'sortOrder' => $row->sort_order,
             'isActive' => $row->is_active,
-            'canEdit' => true,
-            'canDelete' => true,
+            'lifecycleStatus' => (string) ($row->lifecycle_status ?: ($row->is_active ? 'active' : 'retired')),
+            'outOfServiceAt' => $row->out_of_service_at?->toIso8601String(),
+            'outOfServiceReason' => (string) ($row->out_of_service_reason ?? ''),
+            'retiredAt' => $row->retired_at?->toIso8601String(),
+            'retirementReason' => (string) ($row->retirement_reason ?? ''),
+            'restoredAt' => $row->restored_at?->toIso8601String(),
+            'lockVersion' => (int) ($row->lock_version ?: 1),
+            'openIssueCount' => (int) ($row->open_issues_count ?? 0),
+            'canEdit' => (bool) ($request->user() && $this->authorizationService->hasPermission($request->user(), 'reports.manage|reports.inspection.extinguishers.manage')),
+            'canDelete' => (bool) ($request->user() && $this->authorizationService->hasPermission($request->user(), 'reports.manage|reports.inspection.extinguishers.manage')),
             'lastInspection' => $this->formatLastInspection($lastInspection),
         ];
+    }
+
+    /** @param Collection<int, InspectionCheckRow> $rows */
+    private function formatHistoryRecord(Collection $rows): array
+    {
+        /** @var InspectionCheckRow|null $first */
+        $first = $rows->sortByDesc('submitted_at')->first();
+        if (! $first) {
+            return [];
+        }
+        $issueByCheckRow = InspectionFireExtinguisherIssueOccurrence::query()
+            ->with('issue:id,public_id,status,severity')
+            ->whereIn('inspection_check_row_id', $rows->pluck('id'))
+            ->get()->keyBy('inspection_check_row_id');
+        $checks = $rows->sortBy('sort_order')->map(function (InspectionCheckRow $row) use ($issueByCheckRow): array {
+            $occurrence = $issueByCheckRow->get($row->id);
+
+            return [
+                'key' => $this->coverageCheckColumnKey($row->check_key),
+                'checkKey' => $row->check_key,
+                'label' => $row->check_name,
+                'value' => $row->check_value,
+                'hasDefect' => (bool) $row->has_defect,
+                'remarks' => (string) ($row->remarks ?? ''),
+                'evidenceCount' => (int) $row->evidence_count,
+                'photos' => $this->historyPhotos($row),
+                'issue' => $occurrence?->issue ? [
+                    'id' => $occurrence->issue->id,
+                    'publicId' => $occurrence->issue->public_id,
+                    'status' => $occurrence->issue->status,
+                    'severity' => $occurrence->issue->severity,
+                ] : null,
+            ];
+        })->values();
+
+        return [
+            'reportId' => (int) $first->report_id,
+            'reportUid' => (string) $first->report_uid,
+            'displayId' => (string) $first->display_id,
+            'submittedAt' => $first->submitted_at?->toIso8601String(),
+            'submittedBy' => (string) ($first->submittedBy?->name ?? ''),
+            'status' => $checks->contains(fn (array $check): bool => $check['hasDefect']) ? 'issues' : 'checked',
+            'issueCount' => $checks->where('hasDefect', true)->count(),
+            'evidenceCount' => $checks->sum('evidenceCount'),
+            'checks' => $checks,
+        ];
+    }
+
+    private function coverageCheckColumnKey(string $checkKey): string
+    {
+        return match ($checkKey) {
+            'physical-condition' => 'physical',
+            'signage-condition' => 'signage',
+            'box-key-availability' => 'boxKey',
+            'box-glass-availability' => 'boxGlass',
+            'operational-condition' => 'operational',
+            default => $checkKey,
+        };
+    }
+
+    private function historyPhotos(InspectionCheckRow $row): array
+    {
+        $payload = is_array($row->report?->payload) ? $row->report->payload : [];
+        $items = $payload['fireExtinguisherChecks'] ?? $payload['fire_extinguisher_checks'] ?? [];
+        if (! is_array($items)) {
+            return [];
+        }
+        $photoKey = match ($row->check_key) {
+            'physical-condition' => 'physicalConditionPhotos',
+            'signage-condition' => 'signageConditionPhotos',
+            'box-key-availability' => 'boxKeyAvailabilityPhotos',
+            'box-glass-availability' => 'boxGlassAvailabilityPhotos',
+            'operational-condition' => 'operationalConditionPhotos',
+            default => '',
+        };
+        if ($photoKey === '') {
+            return [];
+        }
+        foreach ($items as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            if ($this->text($item['catalogId'] ?? $item['catalog_id'] ?? '') === $this->text($row->equipment_catalog_id)
+                || ($this->text($row->source_row_id) !== '' && $this->text($item['id'] ?? '') === $this->text($row->source_row_id))) {
+                $photos = $item[$photoKey] ?? $item[Str::snake($photoKey)] ?? [];
+
+                return is_array($photos) ? array_values($photos) : [];
+            }
+        }
+
+        return [];
     }
 
     /**
@@ -824,6 +1140,14 @@ class InspectionFireExtinguisherController extends Controller
         $user = $request->user();
         if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.view')) {
             abort(403, 'Missing inspection report permission.');
+        }
+    }
+
+    private function ensureCatalogManagePermission(Request $request): void
+    {
+        $user = $request->user();
+        if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.extinguishers.manage')) {
+            abort(403, 'Missing fire extinguisher catalogue management permission.');
         }
     }
 

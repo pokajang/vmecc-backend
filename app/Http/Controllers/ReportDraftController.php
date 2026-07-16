@@ -26,7 +26,7 @@ class ReportDraftController extends Controller
     private const INSPECTION_TYPE = 'inspection';
 
     private const REPORT_PERMISSIONS = [
-        'inspection' => 'reports.inspection.view',
+        'inspection' => 'reports.inspection.conduct',
         'erco' => 'reports.erco.view',
         'drill' => 'reports.drill.view',
         'fitness-test' => 'reports.fitness.view',

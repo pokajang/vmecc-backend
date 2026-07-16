@@ -850,21 +850,21 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
     private function makeImageDataUrl(int $bytes): string
     {
         $binary = str_repeat('A', max(1, $bytes));
+
         return 'data:image/png;base64,'.base64_encode($binary);
     }
 
     private function grantInspectionPermission(User $user, string $roleName = 'Inspection Analytics Tester'): void
     {
-        $permission = Permission::query()->firstOrCreate([
-            'name' => 'reports.inspection.view',
-            'guard_name' => 'web',
-        ]);
         $role = Role::query()->firstOrCreate([
             'name' => $roleName,
             'guard_name' => 'web',
         ]);
-        if (! $role->hasPermissionTo($permission)) {
-            $role->givePermissionTo($permission);
+        foreach (['reports.inspection.view', 'reports.inspection.conduct'] as $permissionName) {
+            $permission = Permission::query()->firstOrCreate(['name' => $permissionName, 'guard_name' => 'web']);
+            if (! $role->hasPermissionTo($permission)) {
+                $role->givePermissionTo($permission);
+            }
         }
         $user->assignRole($role);
     }

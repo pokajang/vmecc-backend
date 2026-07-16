@@ -73,6 +73,7 @@ class ReportDraftApiTest extends TestCase
             'status' => 'active',
         ]);
         $this->grantPermission($user, 'reports.inspection.view');
+        $this->grantPermission($user, 'reports.inspection.conduct');
         $this->actingAs($user);
 
         $response = $this->postJson('/api/reports/draft', [
@@ -111,6 +112,7 @@ class ReportDraftApiTest extends TestCase
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantPermission($user, 'reports.inspection.view');
+        $this->grantPermission($user, 'reports.inspection.conduct');
         $this->actingAs($user);
         $created = $this->postJson('/api/reports/drafts', [
             'report_type' => 'inspection',
@@ -146,6 +148,7 @@ class ReportDraftApiTest extends TestCase
         $owner = User::factory()->create(['status' => 'active']);
         $other = User::factory()->create(['status' => 'active']);
         $this->grantPermission($owner, 'reports.inspection.view');
+        $this->grantPermission($owner, 'reports.inspection.conduct');
         $created = $this->actingAs($owner)->postJson('/api/reports/drafts', [
             'report_type' => 'inspection',
             'payload' => ['incidentType' => 'General Inspection', 'description' => 'Owner only'],

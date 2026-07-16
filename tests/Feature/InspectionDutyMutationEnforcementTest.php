@@ -145,9 +145,13 @@ class InspectionDutyMutationEnforcementTest extends TestCase
     private function inspectionUser(string $name): User
     {
         $user = User::factory()->create(['name' => $name, 'status' => 'active']);
-        $permission = Permission::query()->firstOrCreate(['name' => 'reports.inspection.view', 'guard_name' => 'web']);
         $role = Role::query()->firstOrCreate(['name' => 'Duty Mutation Tester', 'guard_name' => 'web']);
-        $role->givePermissionTo($permission);
+        foreach (['reports.inspection.view', 'reports.inspection.conduct'] as $permissionName) {
+            $permission = Permission::query()->firstOrCreate(['name' => $permissionName, 'guard_name' => 'web']);
+            if (! $role->hasPermissionTo($permission)) {
+                $role->givePermissionTo($permission);
+            }
+        }
         $user->assignRole($role);
 
         return $user;
@@ -155,9 +159,13 @@ class InspectionDutyMutationEnforcementTest extends TestCase
 
     private function assignWorkflowRole(User $user, string $roleName): void
     {
-        $permission = Permission::query()->firstOrCreate(['name' => 'reports.inspection.view', 'guard_name' => 'web']);
         $role = Role::query()->firstOrCreate(['name' => $roleName, 'guard_name' => 'web']);
-        $role->givePermissionTo($permission);
+        foreach (['reports.inspection.view', 'reports.inspection.conduct'] as $permissionName) {
+            $permission = Permission::query()->firstOrCreate(['name' => $permissionName, 'guard_name' => 'web']);
+            if (! $role->hasPermissionTo($permission)) {
+                $role->givePermissionTo($permission);
+            }
+        }
         UserRoleAssignment::query()->create([
             'user_id' => $user->id,
             'role_id' => $role->id,

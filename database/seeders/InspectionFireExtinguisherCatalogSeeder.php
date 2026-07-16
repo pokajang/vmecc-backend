@@ -3,6 +3,8 @@
 namespace Database\Seeders;
 
 use App\Models\InspectionFireExtinguisher;
+use App\Models\InspectionFireExtinguisherIssue;
+use App\Services\InspectionFireExtinguishers\FireExtinguisherIssueWorkflowService;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -14,9 +16,12 @@ class InspectionFireExtinguisherCatalogSeeder extends Seeder
     public function run(): void
     {
         $rows = $this->loadSeedRows();
+        $issueWorkflow = app(FireExtinguisherIssueWorkflowService::class);
         $hasActiveIdentityKey = Schema::hasColumn('inspection_fire_extinguishers', 'active_identity_key');
+        $hasLifecycle = Schema::hasColumn('inspection_fire_extinguishers', 'lifecycle_status');
+        $hasIssues = Schema::hasTable('inspection_fire_extinguisher_issues');
 
-        DB::transaction(function () use ($rows, $hasActiveIdentityKey): void {
+        DB::transaction(function () use ($rows, $hasActiveIdentityKey, $hasLifecycle, $hasIssues, $issueWorkflow): void {
             $seededSourceRows = [];
 
             foreach ($rows as $index => $row) {
@@ -35,11 +40,19 @@ class InspectionFireExtinguisherCatalogSeeder extends Seeder
                 }
 
                 if ($existing && ! $this->hasSameIdentity($existing, $row)) {
-                    $this->archiveSeedRow($existing, $hasActiveIdentityKey);
+                    $this->archiveSeedRow($existing, $hasActiveIdentityKey, $hasLifecycle, $hasIssues, $issueWorkflow);
                     $existing = null;
                 }
 
                 if ($existing) {
+                    // A catalogue refresh must not silently reactivate an asset
+                    // that operations explicitly retired.
+                    if ($hasLifecycle && (! $existing->is_active || $existing->lifecycle_status === 'retired')) {
+                        unset($attributes['is_active']);
+                        $attributes['lifecycle_status'] = 'retired';
+                        $attributes['retired_at'] = $existing->retired_at ?: now();
+                        $attributes['retirement_reason'] = $existing->retirement_reason ?: 'Archived before lifecycle tracking.';
+                    }
                     $existing->fill($attributes)->save();
 
                     continue;
@@ -51,19 +64,19 @@ class InspectionFireExtinguisherCatalogSeeder extends Seeder
                 ]);
             }
 
-            $staleAttributes = [
-                'source_row_number' => null,
-                'is_active' => false,
-            ];
-            if ($hasActiveIdentityKey) {
-                $staleAttributes['active_identity_key'] = null;
-            }
-
             InspectionFireExtinguisher::query()
                 ->where('source', 'seed')
                 ->whereNotNull('source_row_number')
                 ->whereNotIn('source_row_number', $seededSourceRows)
-                ->update($staleAttributes);
+                ->lockForUpdate()
+                ->get()
+                ->each(fn (InspectionFireExtinguisher $row) => $this->archiveSeedRow(
+                    $row,
+                    $hasActiveIdentityKey,
+                    $hasLifecycle,
+                    $hasIssues,
+                    $issueWorkflow,
+                ));
         });
     }
 
@@ -150,14 +163,34 @@ class InspectionFireExtinguisherCatalogSeeder extends Seeder
 
     private function archiveSeedRow(
         InspectionFireExtinguisher $row,
-        bool $hasActiveIdentityKey
+        bool $hasActiveIdentityKey,
+        bool $hasLifecycle,
+        bool $hasIssues,
+        FireExtinguisherIssueWorkflowService $issueWorkflow,
     ): void {
+        $reason = 'Removed from the managed seed catalogue.';
         $attributes = [
             'source_row_number' => null,
             'is_active' => false,
         ];
         if ($hasActiveIdentityKey) {
             $attributes['active_identity_key'] = null;
+        }
+        if ($hasLifecycle) {
+            if ($hasIssues) {
+                InspectionFireExtinguisherIssue::query()
+                    ->where('fire_extinguisher_id', $row->id)
+                    ->whereIn('status', InspectionFireExtinguisherIssue::ACTIVE_STATUSES)
+                    ->lockForUpdate()
+                    ->get()
+                    ->each(fn (InspectionFireExtinguisherIssue $issue) => $issueWorkflow->closeForRetirement($issue, null, $reason));
+            }
+            $attributes += [
+                'lifecycle_status' => 'retired',
+                'retired_at' => now(),
+                'retirement_reason' => $reason,
+                'lock_version' => ((int) $row->lock_version) + 1,
+            ];
         }
 
         $row->forceFill($attributes)->save();
