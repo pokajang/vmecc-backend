@@ -9,10 +9,13 @@ use App\Models\WorkflowAttachment;
 use App\Services\AuditLogger;
 use App\Services\PayrollClaimWorkflowService;
 use App\Services\WorkflowNotificationService;
+use Carbon\Carbon;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -138,7 +141,7 @@ class PayrollClaimController extends Controller
         $submittedAt = now();
         $displayId = $this->workflowService->generateDisplayId($user->id, (int) $submittedAt->format('Y'));
         $historyEntry = [
-            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'id' => (string) Str::uuid(),
             'action' => 'Submitted',
             'by' => (string) ($user->name ?? ''),
             'byUserId' => (string) $user->id,
@@ -186,6 +189,7 @@ class PayrollClaimController extends Controller
                     'overtime_rate_snapshot' => is_array($overtimeSnapshot['rateSnapshot'] ?? null) ? $overtimeSnapshot['rateSnapshot'] : null,
                     'notes' => trim((string) ($data['notes'] ?? '')),
                     'attachment_id' => $claimAttachmentId,
+                    'version' => 1,
                 ]);
 
                 foreach ($items as $index => $item) {
@@ -332,7 +336,7 @@ class PayrollClaimController extends Controller
 
         $history = collect(is_array($row->approval_history) ? $row->approval_history : [])
             ->push([
-                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'id' => (string) Str::uuid(),
                 'action' => 'Edited',
                 'by' => (string) ($user->name ?? ''),
                 'byUserId' => (string) $user->id,
@@ -355,7 +359,17 @@ class PayrollClaimController extends Controller
         );
 
         $consumedDraftId = null;
-        DB::transaction(function () use ($row, $data, $workflow, $history, $items, $claimType, $periodValue, $payrollSnapshot, $overtimeSnapshot, $approvedOtPayout, $totalAmount, $adjustmentsTotal, $projectedNetPayout, $user, $sourceDraftId, $sourceDraftType, $claimAttachmentProvided, $claimAttachmentId, &$consumedDraftId) {
+        DB::transaction(function () use (&$row, $data, $workflow, $history, $items, $claimType, $periodValue, $payrollSnapshot, $overtimeSnapshot, $approvedOtPayout, $totalAmount, $adjustmentsTotal, $projectedNetPayout, $user, $sourceDraftId, $sourceDraftType, $claimAttachmentProvided, $claimAttachmentId, &$consumedDraftId) {
+            $row = PayrollClaim::query()
+                ->where('user_id', $user->id)
+                ->lockForUpdate()
+                ->findOrFail($row->id);
+            $this->assertExpectedVersion($row, $data['expected_version'] ?? null);
+            if (! in_array($row->status, ['Pending', 'Draft'], true)) {
+                throw ValidationException::withMessages([
+                    'status' => ['Only pending or draft claims can be edited.'],
+                ]);
+            }
             $row->update([
                 'claim_type' => $claimType,
                 'category' => trim((string) ($data['category'] ?? $row->category)),
@@ -377,6 +391,7 @@ class PayrollClaimController extends Controller
                 'overtime_rate_snapshot' => is_array($overtimeSnapshot['rateSnapshot'] ?? null) ? $overtimeSnapshot['rateSnapshot'] : null,
                 'notes' => trim((string) ($data['notes'] ?? $row->notes)),
                 'attachment_id' => $claimAttachmentProvided ? $claimAttachmentId : $row->attachment_id,
+                'version' => ((int) $row->version) + 1,
             ]);
 
             PayrollClaimItem::query()->where('payroll_claim_id', $row->id)->delete();
@@ -466,30 +481,35 @@ class PayrollClaimController extends Controller
     public function cancel(Request $request, int $id): JsonResponse
     {
         $user = $request->user();
-        $row = PayrollClaim::query()->where('user_id', $user->id)->with(['items.attachment', 'attachment'])->findOrFail($id);
-
-        if (! in_array($row->status, ['Pending', 'Approved'], true)) {
-            throw ValidationException::withMessages([
-                'status' => ['Only pending or approved claims can be cancelled.'],
-            ]);
-        }
-
         $payload = $request->validate([
             'remarks' => ['nullable', 'string', 'max:1000'],
+            'expected_version' => ['nullable', 'integer', 'min:1'],
         ]);
+        $row = DB::transaction(function () use ($user, $id, $payload) {
+            $row = PayrollClaim::query()
+                ->where('user_id', $user->id)
+                ->with(['items.attachment', 'attachment'])
+                ->lockForUpdate()
+                ->findOrFail($id);
+            if (! in_array($row->status, ['Pending', 'Approved'], true)) {
+                throw ValidationException::withMessages([
+                    'status' => ['Only pending or approved claims can be cancelled.'],
+                ]);
+            }
+            $this->assertExpectedVersion($row, $payload['expected_version'] ?? null);
+            $updates = $this->toColumnKeys($this->workflowService->advanceWorkflow(
+                snapshot: is_array($row->workflow_snapshot) ? $row->workflow_snapshot : [],
+                history: is_array($row->approval_history) ? $row->approval_history : [],
+                action: 'cancel',
+                actorUserId: (int) $user->id,
+                actorName: (string) ($user->name ?? ''),
+                remarks: $payload['remarks'] ?? null,
+            ));
+            $updates['version'] = ((int) $row->version) + 1;
+            $row->update($updates);
 
-        $snapshot = is_array($row->workflow_snapshot) ? $row->workflow_snapshot : [];
-        $updates = $this->workflowService->advanceWorkflow(
-            snapshot: $snapshot,
-            history: is_array($row->approval_history) ? $row->approval_history : [],
-            action: 'cancel',
-            actorUserId: (int) $user->id,
-            actorName: (string) ($user->name ?? ''),
-            remarks: $payload['remarks'] ?? null,
-        );
-
-        $row->update($this->toColumnKeys($updates));
-        $row->refresh()->load(['items.attachment', 'attachment']);
+            return $row->fresh(['items.attachment', 'attachment']);
+        });
 
         $module = $row->claim_type === 'salary' ? 'salary' : ($row->claim_type === 'exceptional' ? 'exceptional' : 'expense');
         $this->notificationService->emit(
@@ -602,7 +622,20 @@ class PayrollClaimController extends Controller
             'items.*.uploadState' => ['nullable', Rule::in(['idle', 'uploading', 'uploaded', 'failed'])],
             'items.*.needs_reattach' => ['nullable', 'boolean'],
             'items.*.needsReattach' => ['nullable', 'boolean'],
+            'expected_version' => ['nullable', 'integer', 'min:1'],
         ]);
+    }
+
+    private function assertExpectedVersion(PayrollClaim $claim, ?int $expectedVersion): void
+    {
+        if ($expectedVersion !== null && $expectedVersion !== (int) $claim->version) {
+            throw new HttpResponseException(response()->json([
+                'code' => 'PAYROLL_CLAIM_VERSION_CONFLICT',
+                'message' => 'This payroll claim changed. Reload the latest record before trying again.',
+                'currentVersion' => (int) $claim->version,
+                'currentRecord' => self::formatClaim($claim),
+            ], 409));
+        }
     }
 
     private function sanitizeItems(mixed $value): array
@@ -740,7 +773,7 @@ class PayrollClaimController extends Controller
         }
 
         try {
-            return \Carbon\Carbon::parse($raw)->toDateString();
+            return Carbon::parse($raw)->toDateString();
         } catch (\Throwable) {
             return null;
         }
@@ -835,7 +868,7 @@ class PayrollClaimController extends Controller
     private function formatPeriodValueLabel(string $periodValue): string
     {
         try {
-            return \Carbon\Carbon::createFromFormat('Y-m', $periodValue)->format('F Y');
+            return Carbon::createFromFormat('Y-m', $periodValue)->format('F Y');
         } catch (\Throwable) {
             return $periodValue;
         }
@@ -904,6 +937,7 @@ class PayrollClaimController extends Controller
         $items = $row->relationLoaded('items')
             ? $row->items->map(function (PayrollClaimItem $item) {
                 $itemMeta = is_array($item->item_meta) ? $item->item_meta : [];
+
                 return [
                     'id' => $item->id,
                     'lineNo' => $item->line_no,
@@ -962,6 +996,7 @@ class PayrollClaimController extends Controller
             'workflow_snapshot' => $row->workflow_snapshot ?? [],
             'next_action_role' => $row->next_action_role,
             'approval_history' => $row->approval_history ?? [],
+            'version' => (int) $row->version,
             'payment_date' => optional($row->payment_date)->toDateString(),
             'payment_reference' => trim((string) ($row->payment_reference ?? '')),
             'payment_note' => trim((string) ($row->payment_note ?? '')),

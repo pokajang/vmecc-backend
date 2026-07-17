@@ -8,8 +8,8 @@ use App\Services\AuditLogger;
 use App\Services\LeaveNotificationService;
 use App\Services\LeaveRosterImpactNotificationService;
 use App\Services\LeaveWorkflowService;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -17,8 +17,8 @@ use Illuminate\Validation\ValidationException;
 class LeaveWorkflowController extends Controller
 {
     public function __construct(
-        private readonly LeaveWorkflowService           $workflowService,
-        private readonly LeaveNotificationService       $notificationService,
+        private readonly LeaveWorkflowService $workflowService,
+        private readonly LeaveNotificationService $notificationService,
         private readonly LeaveRosterImpactNotificationService $rosterImpactNotifications,
         private readonly AssignmentAuthorizationService $authorizationService,
     ) {}
@@ -193,8 +193,8 @@ class LeaveWorkflowController extends Controller
 
         // Notifications
         $freshLeave = $leave->fresh(['attachment']);
-        $eventType  = $this->actionToEventType($action);
-        $snapshot   = $freshLeave->workflow_snapshot ?? [];
+        $eventType = $this->actionToEventType($action);
+        $snapshot = $freshLeave->workflow_snapshot ?? [];
 
         $nextRole = $freshLeave->next_action_role;
         $this->notificationService->emit(
@@ -208,10 +208,10 @@ class LeaveWorkflowController extends Controller
         );
 
         AuditLogger::log($request, "leave_{$action}d", null, [
-            'leave_id'   => $leave->id,
+            'leave_id' => $leave->id,
             'display_id' => $leave->display_id,
-            'owner_id'   => $userId,
-            'action'     => $action,
+            'owner_id' => $userId,
+            'action' => $action,
         ]);
 
         return response()->json(['data' => LeaveController::formatLeave($freshLeave)]);
@@ -228,7 +228,7 @@ class LeaveWorkflowController extends Controller
             ]);
         }
 
-        if ($action === 'cancel' && !in_array($leave->status, ['Pending', 'Approved'], true)) {
+        if ($action === 'cancel' && ! in_array($leave->status, ['Pending', 'Approved'], true)) {
             throw ValidationException::withMessages([
                 'status' => ['Only pending or approved leaves can be cancelled.'],
             ]);
@@ -246,11 +246,11 @@ class LeaveWorkflowController extends Controller
         }
 
         // For review/recommend/approve, enforce the workflow role
-        $snapshot         = $leave->workflow_snapshot ?? [];
-        $expectedStage    = $leave->workflow_stage;
-        $expectedRole     = $leave->next_action_role;
+        $snapshot = $leave->workflow_snapshot ?? [];
+        $expectedStage = $leave->workflow_stage;
+        $expectedRole = $leave->next_action_role;
 
-        if ($expectedRole && !in_array($expectedRole, $actorRoles, true)) {
+        if ($expectedRole && ! in_array($expectedRole, $actorRoles, true)) {
             throw ValidationException::withMessages([
                 'role' => ["This action requires the '{$expectedRole}' role."],
             ]);
@@ -258,10 +258,10 @@ class LeaveWorkflowController extends Controller
 
         // Stage must match action
         $stageForAction = match ($action) {
-            'review'    => 'review',
+            'review' => 'review',
             'recommend' => 'recommend',
-            'approve'   => 'approve',
-            default     => null,
+            'approve' => 'approve',
+            default => null,
         };
 
         if ($stageForAction && $expectedStage !== $stageForAction) {
@@ -285,20 +285,6 @@ class LeaveWorkflowController extends Controller
             ]);
         }
 
-        $actorRoles = $this->authorizationService->getActiveRoleNames($actor)->all();
-        if (in_array('System Administrator', $actorRoles, true)) {
-            return;
-        }
-
-        $expectedRole = trim((string) $leave->next_action_role);
-        if ($expectedRole === '' || ! in_array($expectedRole, $actorRoles, true)) {
-            throw ValidationException::withMessages([
-                'role' => [$expectedRole
-                    ? "This action requires the '{$expectedRole}' role."
-                    : 'This leave has no configured workflow action owner.'],
-            ]);
-        }
-
         $requiredStage = match ($action) {
             'review' => 'review',
             'recommend' => 'recommend',
@@ -310,6 +296,18 @@ class LeaveWorkflowController extends Controller
             throw ValidationException::withMessages([
                 'stage' => ["Current workflow stage is '{$leave->workflow_stage}', not '{$requiredStage}'."],
             ]);
+        }
+
+        $actorRoles = $this->authorizationService->getActiveRoleNames($actor)->all();
+        if (! in_array('System Administrator', $actorRoles, true)) {
+            $expectedRole = trim((string) $leave->next_action_role);
+            if ($expectedRole === '' || ! in_array($expectedRole, $actorRoles, true)) {
+                throw ValidationException::withMessages([
+                    'role' => [$expectedRole
+                        ? "This action requires the '{$expectedRole}' role."
+                        : 'This leave has no configured workflow action owner.'],
+                ]);
+            }
         }
 
         $snapshot = is_array($leave->workflow_snapshot) ? $leave->workflow_snapshot : [];
@@ -342,13 +340,13 @@ class LeaveWorkflowController extends Controller
     private function actionToEventType(string $action): string
     {
         return match ($action) {
-            'review'    => 'reviewed',
+            'review' => 'reviewed',
             'recommend' => 'recommended',
-            'approve'   => 'approved',
-            'reject'    => 'rejected',
-            'cancel'    => 'cancelled',
+            'approve' => 'approved',
+            'reject' => 'rejected',
+            'cancel' => 'cancelled',
             'request_correction' => 'correction_requested',
-            default     => $action,
+            default => $action,
         };
     }
 }

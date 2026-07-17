@@ -20,16 +20,20 @@ class SettingsControllerTest extends TestCase
     private function actingAsSettingsManager(string $permission = 'settings.manage'): User
     {
         $user = User::factory()->create(['status' => 'active']);
-        $role = Role::firstOrCreate(['name' => 'Admin', 'guard_name' => 'web']);
+        $role = Role::firstOrCreate([
+            'name' => 'Settings Test '.str_replace('.', ' ', $permission),
+            'guard_name' => 'web',
+        ]);
         Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'web']);
         $role->givePermissionTo($permission);
         UserRoleAssignment::create([
-            'user_id'    => $user->id,
-            'role_id'    => $role->id,
+            'user_id' => $user->id,
+            'role_id' => $role->id,
             'scope_type' => RoleCatalog::GLOBAL,
             'is_primary' => true,
         ]);
         $this->actingAs($user);
+
         return $user;
     }
 
@@ -37,11 +41,11 @@ class SettingsControllerTest extends TestCase
     {
         return [
             'normal_start' => '08:00',
-            'normal_end'   => '17:00',
-            'day_start'    => '07:00',
-            'day_end'      => '19:00',
-            'night_start'  => '19:00',
-            'night_end'    => '07:00',
+            'normal_end' => '17:00',
+            'day_start' => '07:00',
+            'day_end' => '19:00',
+            'night_start' => '19:00',
+            'night_end' => '07:00',
         ];
     }
 
@@ -158,9 +162,9 @@ class SettingsControllerTest extends TestCase
     {
         $this->actingAsSettingsManager();
         $res = $this->postJson('/api/settings/custom-shifts', [
-            'name'  => 'Evening',
+            'name' => 'Evening',
             'start' => '17:00',
-            'end'   => '21:00',
+            'end' => '21:00',
         ]);
         $res->assertStatus(201)->assertJsonPath('data.name', 'Evening');
         $this->assertDatabaseHas('custom_shifts', ['name' => 'Evening']);
@@ -172,9 +176,9 @@ class SettingsControllerTest extends TestCase
         CustomShift::create(['name' => 'Evening', 'start' => '17:00', 'end' => '21:00']);
 
         $this->postJson('/api/settings/custom-shifts', [
-            'name'  => 'Evening',
+            'name' => 'Evening',
             'start' => '18:00',
-            'end'   => '22:00',
+            'end' => '22:00',
         ])->assertStatus(422);
     }
 
@@ -182,9 +186,9 @@ class SettingsControllerTest extends TestCase
     {
         $this->actingAsSettingsManager();
         $this->postJson('/api/settings/custom-shifts', [
-            'name'  => 'Bad',
+            'name' => 'Bad',
             'start' => 'abc',
-            'end'   => '21:00',
+            'end' => '21:00',
         ])->assertStatus(422);
     }
 
@@ -193,7 +197,7 @@ class SettingsControllerTest extends TestCase
         $this->actingAsSettingsManager();
         $this->postJson('/api/settings/custom-shifts', [
             'start' => '08:00',
-            'end'   => '16:00',
+            'end' => '16:00',
         ])->assertStatus(422);
     }
 
@@ -205,11 +209,11 @@ class SettingsControllerTest extends TestCase
         }
 
         $this->postJson('/api/settings/custom-shifts', [
-            'name'  => 'Overflow',
+            'name' => 'Overflow',
             'start' => '08:00',
-            'end'   => '16:00',
+            'end' => '16:00',
         ])->assertStatus(422)
-          ->assertJsonPath('message', 'Custom shift limit reached (50).');
+            ->assertJsonPath('message', 'Custom shift limit reached (50).');
     }
 
     public function test_update_custom_shift_changes_record(): void
@@ -218,9 +222,9 @@ class SettingsControllerTest extends TestCase
         $shift = CustomShift::create(['name' => 'Flexi', 'start' => '10:00', 'end' => '18:00']);
 
         $res = $this->putJson("/api/settings/custom-shifts/{$shift->id}", [
-            'name'  => 'Flexi Updated',
+            'name' => 'Flexi Updated',
             'start' => '10:30',
-            'end'   => '18:30',
+            'end' => '18:30',
         ]);
         $res->assertOk()->assertJsonPath('data.name', 'Flexi Updated');
         $this->assertDatabaseHas('custom_shifts', ['id' => $shift->id, 'name' => 'Flexi Updated']);
@@ -232,9 +236,9 @@ class SettingsControllerTest extends TestCase
         $shift = CustomShift::create(['name' => 'Split', 'start' => '06:00', 'end' => '14:00']);
 
         $this->putJson("/api/settings/custom-shifts/{$shift->id}", [
-            'name'  => 'Split',
+            'name' => 'Split',
             'start' => '06:30',
-            'end'   => '14:30',
+            'end' => '14:30',
         ])->assertOk();
     }
 
@@ -245,9 +249,9 @@ class SettingsControllerTest extends TestCase
         $beta = CustomShift::create(['name' => 'Beta', 'start' => '09:00', 'end' => '17:00']);
 
         $this->putJson("/api/settings/custom-shifts/{$beta->id}", [
-            'name'  => 'Alpha',
+            'name' => 'Alpha',
             'start' => '09:00',
-            'end'   => '17:00',
+            'end' => '17:00',
         ])->assertStatus(422);
     }
 
@@ -255,9 +259,9 @@ class SettingsControllerTest extends TestCase
     {
         $this->actingAsSettingsManager();
         $this->putJson('/api/settings/custom-shifts/99999', [
-            'name'  => 'Ghost',
+            'name' => 'Ghost',
             'start' => '08:00',
-            'end'   => '16:00',
+            'end' => '16:00',
         ])->assertStatus(404);
     }
 
@@ -306,8 +310,8 @@ class SettingsControllerTest extends TestCase
     {
         $this->actingAsSettingsManager();
         $this->postJson('/api/settings/overtime-rate-settings', [
-            'weekdayMultiplier'       => 1.5,
-            'weekendMultiplier'       => 2.0,
+            'weekdayMultiplier' => 1.5,
+            'weekendMultiplier' => 2.0,
             'publicHolidayMultiplier' => 3.0,
         ])->assertOk();
     }
@@ -320,8 +324,8 @@ class SettingsControllerTest extends TestCase
         $this->postJson('/api/settings/leave-approval-rules', [
             'rules' => [[
                 'applicantRole' => 'Ghost Role',
-                'reviewRole'    => 'Admin',
-                'approveRole'   => 'Admin',
+                'reviewRole' => 'Admin',
+                'approveRole' => 'Admin',
             ]],
         ])->assertStatus(422);
     }
@@ -330,12 +334,19 @@ class SettingsControllerTest extends TestCase
     {
         $this->actingAsSettingsManager();
         Role::firstOrCreate(['name' => 'Staff', 'guard_name' => 'web']);
+        $leaveManagerRole = Role::firstOrCreate(['name' => 'Human Resource', 'guard_name' => 'web']);
+        $leavePermission = Permission::firstOrCreate([
+            'name' => 'staff.leave.manage',
+            'guard_name' => 'web',
+        ]);
+        $leaveManagerRole->givePermissionTo($leavePermission);
 
         $this->postJson('/api/settings/leave-approval-rules', [
             'rules' => [[
                 'applicantRole' => 'Staff',
-                'reviewRole'    => 'Admin',
-                'approveRole'   => 'Admin',
+                'reviewRole' => 'Human Resource',
+                'recommendRole' => 'Human Resource',
+                'approveRole' => 'Human Resource',
             ]],
         ])->assertOk();
     }
@@ -350,11 +361,16 @@ class SettingsControllerTest extends TestCase
         ])->assertStatus(422);
     }
 
-    public function test_update_salary_rules_accepts_null_role_fields(): void
+    public function test_update_salary_rules_rejects_null_role_fields(): void
     {
         $this->actingAsSettingsManager();
         $this->postJson('/api/settings/salary-workflow-rules', [
             'fallback' => ['checkRole' => null, 'reviewRole' => null, 'approveRole' => null],
-        ])->assertOk();
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors([
+                'fallback.checkRole',
+                'fallback.reviewRole',
+                'fallback.approveRole',
+            ]);
     }
 }

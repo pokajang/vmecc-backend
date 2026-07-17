@@ -123,6 +123,7 @@ class AiHelperDocumentApiTest extends TestCase
         $this->assertCount(1, $guidance);
         $this->assertSame('Emergency Response Plan', $guidance[0]['title']);
         $this->assertSame([[
+            'source_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
             'document_id' => $document->id,
             'title' => 'Emergency Response Plan',
             'source_mime' => 'application/pdf',

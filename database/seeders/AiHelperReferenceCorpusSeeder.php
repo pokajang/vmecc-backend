@@ -129,6 +129,7 @@ class AiHelperReferenceCorpusSeeder extends Seeder
         $entryAttributes = [
             'uploaded_by' => $uploaderId,
             'source_document_id' => $document->id,
+            'knowledge_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
             'module_key' => null,
             'route_key' => null,
             'title' => Str::limit($title, 140, ''),

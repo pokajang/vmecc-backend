@@ -17,6 +17,15 @@ class AiHelperMarkdownKnowledgeParser
         'version',
         'summary',
         'active',
+        'knowledge_type',
+        'module_gate',
+        'required_permissions',
+        'permission_match',
+        'allowed_roles',
+        'owner',
+        'reviewed_on',
+        'review_due_on',
+        'release_status',
     ];
 
     /**
@@ -58,7 +67,7 @@ class AiHelperMarkdownKnowledgeParser
     }
 
     /**
-     * @param array<string, mixed> $frontmatter
+     * @param  array<string, mixed>  $frontmatter
      */
     public function requiredString(array $frontmatter, string $key, string $source): string
     {
@@ -80,15 +89,14 @@ class AiHelperMarkdownKnowledgeParser
     }
 
     /**
-     * @param array<int, string> $extraTags
-     *
+     * @param  array<int, string>  $extraTags
      * @return array<int, string>
      */
     public function tags(mixed $rawTags, array $extraTags = []): array
     {
-        $tags = is_string($rawTags)
-            ? preg_split('/\s*,\s*/', $rawTags)
-            : [];
+        $tags = is_array($rawTags)
+            ? $rawTags
+            : (is_string($rawTags) ? preg_split('/\s*,\s*/', $rawTags) : []);
 
         return collect($tags ?: [])
             ->merge($extraTags)
@@ -105,9 +113,19 @@ class AiHelperMarkdownKnowledgeParser
     private function parseFrontmatter(string $frontmatter, string $source): array
     {
         $values = [];
-        foreach (preg_split('/\R/', $frontmatter) ?: [] as $line) {
-            $line = trim($line);
+        $activeListKey = null;
+        foreach (preg_split('/\R/', $frontmatter) ?: [] as $rawLine) {
+            $line = trim($rawLine);
             if ($line === '' || str_starts_with($line, '#')) {
+                continue;
+            }
+
+            if (str_starts_with($line, '- ')) {
+                if ($activeListKey === null) {
+                    throw new RuntimeException("Invalid Ask AI knowledge frontmatter list in {$source}: {$line}");
+                }
+                $values[$activeListKey][] = $this->scalarValue(trim(substr($line, 2)));
+
                 continue;
             }
 
@@ -119,9 +137,28 @@ class AiHelperMarkdownKnowledgeParser
             if (! in_array($key, self::ALLOWED_FRONTMATTER_KEYS, true)) {
                 throw new RuntimeException("Unsupported Ask AI knowledge frontmatter key in {$source}: {$key}");
             }
-            $values[$key] = $value;
+            if ($value === '[]') {
+                $values[$key] = [];
+                $activeListKey = $key;
+            } elseif ($value === '') {
+                $values[$key] = [];
+                $activeListKey = $key;
+            } else {
+                $values[$key] = $this->scalarValue($value);
+                $activeListKey = null;
+            }
         }
 
         return $values;
+    }
+
+    private function scalarValue(string $value): mixed
+    {
+        $trimmed = trim($value, " \t\n\r\0\x0B\"'");
+        if (in_array(Str::lower($trimmed), ['true', 'false'], true)) {
+            return Str::lower($trimmed) === 'true';
+        }
+
+        return $trimmed;
     }
 }

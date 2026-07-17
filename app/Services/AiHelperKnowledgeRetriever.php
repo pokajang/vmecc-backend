@@ -15,6 +15,7 @@ class AiHelperKnowledgeRetriever
         private readonly AiHelperEmbeddingService $embeddings,
         private readonly AiHelperRetrievalRankFusion $rankFusion,
         private readonly AiHelperPassageReranker $reranker,
+        private readonly AiHelperKnowledgeAudienceResolver $audienceResolver,
     ) {}
 
     /** @return array{analysis: array<string, mixed>, guidance: array<int, array<string, mixed>>, trace: array<string, mixed>} */
@@ -56,7 +57,13 @@ class AiHelperKnowledgeRetriever
             ]];
         }
 
-        $entries = $this->usableEntries($user)
+        $audience = $this->audienceResolver->resolve($user, $context);
+        $rankingContext = $context;
+        $rankingContext['route_key'] = $audience->routeKey ?? ($context['route_key'] ?? null);
+        $rankingContext['module_key'] = $audience->moduleKey ?? ($context['module_key'] ?? null);
+        $authorizedIds = $this->authorizedEntryIds($user, $audience, $message);
+        $entries = AiHelperKnowledgeEntry::query()
+            ->whereKey($authorizedIds)
             ->with('sourceDocument:id,title,source_filename')
             ->get();
         $queryEmbedding = null;
@@ -70,8 +77,8 @@ class AiHelperKnowledgeRetriever
             }
         }
 
-        $rankedDocuments = $entries->map(function (AiHelperKnowledgeEntry $entry) use ($analysis, $context, $queryEmbedding) {
-            return ['entry' => $entry, 'score' => $this->documentScore($entry, $analysis, $context, $queryEmbedding)];
+        $rankedDocuments = $entries->map(function (AiHelperKnowledgeEntry $entry) use ($analysis, $rankingContext, $queryEmbedding, $message) {
+            return ['entry' => $entry, 'score' => $this->documentScore($entry, $analysis, $rankingContext, $queryEmbedding, $message)];
         })->sortByDesc('score')->values();
         $documentLimit = max(1, (int) config('ai_helper.knowledge_document_candidate_limit', 12));
         $exactDocuments = $rankedDocuments->filter(fn (array $item) => $this->isExactDocumentMatch($item['entry'], $analysis));
@@ -176,17 +183,20 @@ class AiHelperKnowledgeRetriever
         $sourceIds = [];
         $nextSourceNumber = 1;
         $guidance = $selected->values()
-            ->map(function (array $item) use ($context, &$sourceIds, &$nextSourceNumber) {
-                $key = implode(':', [
-                    (int) $item['entry']->source_document_id,
-                    (int) ($item['chunk']->page_start ?? 0),
-                    (int) ($item['chunk']->page_end ?? 0),
-                ]);
+            ->map(function (array $item) use ($rankingContext, &$sourceIds, &$nextSourceNumber) {
+                $key = $item['entry']->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT
+                    ? implode(':', [
+                        'reference',
+                        (int) $item['entry']->source_document_id,
+                        (int) ($item['chunk']->page_start ?? 0),
+                        (int) ($item['chunk']->page_end ?? 0),
+                    ])
+                    : implode(':', ['entry', (int) $item['entry']->id]);
                 if (! isset($sourceIds[$key])) {
                     $sourceIds[$key] = 'S'.$nextSourceNumber++;
                 }
 
-                return $this->formatGuidance($item, $context, $sourceIds[$key]);
+                return $this->formatGuidance($item, $rankingContext, $sourceIds[$key]);
             })
             ->all();
 
@@ -213,14 +223,28 @@ class AiHelperKnowledgeRetriever
         ]];
     }
 
-    public function usableEntries(?User $user)
+    public function usableEntries(?User $user, array $context = [], string $message = '')
     {
+        $audience = $this->audienceResolver->resolve($user, $context);
+
         return AiHelperKnowledgeEntry::query()
+            ->whereKey($this->authorizedEntryIds($user, $audience, $message));
+    }
+
+    /** @return array<int, int> */
+    private function authorizedEntryIds(?User $user, AiHelperKnowledgeAudience $audience, string $message): array
+    {
+        $candidates = AiHelperKnowledgeEntry::query()
+            ->select([
+                'id', 'uploaded_by', 'source_document_id', 'knowledge_type', 'required_permissions',
+                'permission_match', 'allowed_roles', 'module_gate', 'source_path', 'visibility',
+                'module_key', 'route_key', 'guide_owner', 'status', 'review_status', 'active',
+                'review_due_at', 'source_mime',
+            ])
             ->where('source_mime', 'text/markdown')
             ->where('active', true)
             ->whereIn('status', [AiHelperKnowledgeEntry::STATUS_ACTIVE, AiHelperKnowledgeEntry::STATUS_PROCESSING])
             ->where('review_status', AiHelperKnowledgeEntry::REVIEW_APPROVED)
-            ->whereNotNull('source_document_id')
             ->where(function ($query) use ($user) {
                 $query->where('visibility', AiHelperKnowledgeEntry::VISIBILITY_SHARED);
                 if ($user) {
@@ -228,11 +252,50 @@ class AiHelperKnowledgeRetriever
                         ->where('visibility', AiHelperKnowledgeEntry::VISIBILITY_PERSONAL)
                         ->where('uploaded_by', $user->id));
                 }
-            });
+            })
+            ->where(function ($types) {
+                $types->where(function ($reference) {
+                    $reference->where('knowledge_type', AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT)
+                        ->whereNotNull('source_document_id');
+                })->orWhere('knowledge_type', AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE)
+                    ->orWhere('knowledge_type', AiHelperKnowledgeEntry::KNOWLEDGE_UPLOADED_MARKDOWN);
+            })
+            ->get();
+
+        $sourceMode = $this->questionSourceMode($message);
+
+        return $candidates
+            ->filter(function (AiHelperKnowledgeEntry $entry) use ($audience) {
+                return match ($entry->knowledge_type) {
+                    AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT => $entry->source_document_id !== null,
+                    AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE => $this->audienceResolver->allowsSystemGuide($entry, $audience),
+                    AiHelperKnowledgeEntry::KNOWLEDGE_UPLOADED_MARKDOWN => ! str_starts_with((string) $entry->source_path, 'seed:'),
+                    default => false,
+                };
+            })
+            ->filter(function (AiHelperKnowledgeEntry $entry) use ($sourceMode) {
+                if ($sourceMode === 'reference') {
+                    return $entry->knowledge_type !== AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE;
+                }
+                if ($sourceMode === 'system') {
+                    return $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE;
+                }
+
+                return true;
+            })
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
     }
 
-    private function documentScore(AiHelperKnowledgeEntry $entry, array $analysis, array $context, ?array $queryEmbedding): float
-    {
+    private function documentScore(
+        AiHelperKnowledgeEntry $entry,
+        array $analysis,
+        array $context,
+        ?array $queryEmbedding,
+        string $message,
+    ): float {
         $document = $entry->sourceDocument;
         $title = Str::lower(trim(($document?->title ?? $entry->title).' '.($document?->source_filename ?? '').' '.($entry->summary ?? '')));
         $score = $this->termScore($title, $analysis['terms'] ?? []) * 35;
@@ -252,9 +315,13 @@ class AiHelperKnowledgeRetriever
             }
         }
         if ($entry->route_key && $entry->route_key === ($context['route_key'] ?? null)) {
-            $score += 80;
+            $score += $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE ? 900 : 80;
         } elseif ($entry->module_key && $entry->module_key === ($context['module_key'] ?? null)) {
-            $score += 50;
+            $score += $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE ? 500 : 50;
+        }
+        if ($entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
+            && in_array($this->questionSourceMode($message), ['system', 'mixed'], true)) {
+            $score += 300;
         }
         if ($queryEmbedding && is_array($entry->embedding)) {
             $score += max(0, $this->cosineSimilarity($queryEmbedding, $entry->embedding)) * 500;
@@ -612,6 +679,8 @@ class AiHelperKnowledgeRetriever
 
         return [
             'source_id' => $sourceId,
+            'source_type' => $entry->knowledge_type,
+            'knowledge_type' => $entry->knowledge_type,
             'id' => $entry->id,
             'source_document_id' => $entry->source_document_id,
             'chunk_id' => $chunk->id,
@@ -625,7 +694,31 @@ class AiHelperKnowledgeRetriever
             'source_scope' => $this->sourceScope($chunk->module_key, $chunk->route_key, $context),
             'page_start' => $chunk->page_start,
             'page_end' => $chunk->page_end,
+            'guide_version' => $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
+                ? (int) $entry->version
+                : null,
+            'display_label' => $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
+                ? AiHelperSystemGuideCatalog::DISPLAY_LABEL
+                : null,
         ];
+    }
+
+    private function questionSourceMode(string $message): string
+    {
+        $system = preg_match('/\b(?:how (?:do|can|should) i|where (?:do|can) i|which button|what status|navigate|screen|page|form|field)\b/i', $message) === 1;
+        $reference = preg_match('/\b(?:emergency|policy|telephone|phone number|procedure|annex|erp)\b/i', $message) === 1;
+
+        if ($system && $reference) {
+            return 'mixed';
+        }
+        if ($system) {
+            return 'system';
+        }
+        if ($reference) {
+            return 'reference';
+        }
+
+        return 'any';
     }
 
     private function sourceScope(?string $module, ?string $route, array $context): string

@@ -5,6 +5,8 @@ namespace Tests\Feature;
 use App\Models\AiHelperDocument;
 use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
+use Database\Seeders\AiHelperReferenceCorpusSeeder;
+use Database\Seeders\AiHelperSystemGuideSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Tests\TestCase;
@@ -33,7 +35,7 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
         $this->assertStringContainsString('"retrieval_configuration_valid":false', Artisan::output());
     }
 
-    public function test_production_gate_requires_enforced_verification_and_semantic_coverage(): void
+    public function test_production_gate_also_requires_the_complete_reference_and_system_guide_corpora(): void
     {
         $this->createReadyKnowledge(withEmbedding: true);
         config([
@@ -55,11 +57,49 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
 
         config(['ai_helper.grounding_verification_mode' => 'enforce']);
 
-        $this->assertSame(0, Artisan::call('ai-helper:knowledge-readiness', [
+        $this->assertSame(1, Artisan::call('ai-helper:knowledge-readiness', [
             '--production' => true,
             '--json' => true,
         ]));
-        $this->assertStringContainsString('"production_configuration_valid":true', Artisan::output());
+        $output = Artisan::output();
+        $this->assertStringContainsString('"production_configuration_valid":true', $output);
+        $this->assertStringContainsString('"reference_knowledge_ready":false', $output);
+        $this->assertStringContainsString('"system_guides_ready":false', $output);
+    }
+
+    public function test_readiness_keeps_unaudited_system_guide_drafts_out_of_release(): void
+    {
+        config([
+            'ai_helper.embedding_enabled' => false,
+            'ai_helper.system_guides_enabled' => true,
+        ]);
+        $this->seed(AiHelperReferenceCorpusSeeder::class);
+        $this->seed(AiHelperSystemGuideSeeder::class);
+
+        $this->assertSame(1, Artisan::call('ai-helper:knowledge-readiness', ['--json' => true]));
+        $output = Artisan::output();
+        $this->assertStringContainsString('"reference_knowledge_ready":true', $output);
+        $this->assertStringContainsString('"system_guides_ready":false', $output);
+        $this->assertStringContainsString('"role_aware_retrieval_ready":false', $output);
+        $this->assertStringContainsString('"linked_to_pdf":34', $output);
+        $this->assertStringContainsString('"valid_catalog_metadata":51', $output);
+    }
+
+    public function test_readiness_requires_active_status_and_an_index_for_each_entry(): void
+    {
+        config(['ai_helper.embedding_enabled' => false]);
+        $this->createReadyKnowledge();
+        $entry = AiHelperKnowledgeEntry::query()->firstOrFail();
+        $entry->forceFill(['status' => AiHelperKnowledgeEntry::STATUS_DISABLED])->save();
+
+        $this->assertSame(1, Artisan::call('ai-helper:knowledge-readiness', ['--json' => true]));
+        $this->assertStringContainsString('"status_active":0', Artisan::output());
+
+        $entry->forceFill(['status' => AiHelperKnowledgeEntry::STATUS_ACTIVE])->save();
+        $entry->chunks()->delete();
+
+        $this->assertSame(1, Artisan::call('ai-helper:knowledge-readiness', ['--json' => true]));
+        $this->assertStringContainsString('"indexed":0', Artisan::output());
     }
 
     private function createReadyKnowledge(bool $withEmbedding = false): void

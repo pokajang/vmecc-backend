@@ -14,6 +14,11 @@ use Throwable;
 
 class AiHelperKnowledgeProcessingService
 {
+    public const SYSTEM_GUIDE_MAINTAINER_HEADINGS = [
+        'Source-of-truth code references for maintainers',
+        'Guide maintenance',
+    ];
+
     public function __construct(private readonly AiHelperMarkdownStructureParser $markdownStructure) {}
 
     public function process(int $entryId, ?string $expectedRunId = null): void
@@ -61,7 +66,7 @@ class AiHelperKnowledgeProcessingService
         bool $extractionComplete = true,
     ): bool {
         $content = $this->normalizeSourceContent($content, $entry);
-        $chunks = $this->chunkPages($pages, $content, $extractionMode);
+        $chunks = $this->chunkPages($pages, $content, $extractionMode, $entry);
         if ($chunks === []) {
             $this->markFailed($entry->id, $expectedRunId, 'Could not prepare readable guidance from this knowledge source.');
 
@@ -170,13 +175,30 @@ class AiHelperKnowledgeProcessingService
     }
 
     /** @return array<int, array<string, mixed>> */
-    private function chunkPages(array $pages, string $fallbackContent, string $fallbackMode): array
-    {
+    private function chunkPages(
+        array $pages,
+        string $fallbackContent,
+        string $fallbackMode,
+        AiHelperKnowledgeEntry $entry,
+    ): array {
         if ($pages === []) {
-            return collect($this->markdownStructure->chunks(
+            $chunks = collect($this->markdownStructure->chunks(
                 $fallbackContent,
                 max(600, (int) config('ai_helper.knowledge_chunk_characters', 1500)),
-            ))->map(fn (array $chunk) => $chunk + ['extraction_mode' => $fallbackMode])->all();
+            ));
+            if ($entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE) {
+                $chunks = $chunks->reject(fn (array $chunk) => collect($chunk['heading_path'] ?? [])
+                    ->contains(fn (string $heading) => in_array(
+                        $heading,
+                        self::SYSTEM_GUIDE_MAINTAINER_HEADINGS,
+                        true,
+                    )));
+            }
+
+            return $chunks
+                ->map(fn (array $chunk) => $chunk + ['extraction_mode' => $fallbackMode])
+                ->values()
+                ->all();
         }
 
         $chunks = [];

@@ -5,8 +5,8 @@ namespace App\Services;
 use App\Models\Leave;
 use App\Models\LeaveAssignment;
 use App\Models\Setting;
-use Carbon\Carbon;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class LeaveWorkflowService
 {
@@ -14,9 +14,13 @@ class LeaveWorkflowService
 
     private const WORKFLOW_STAGES = ['review', 'recommend', 'approve', 'correction', 'done'];
 
-    public function __construct(private readonly LeavePolicyService $policyService)
-    {
-    }
+    private const DEFAULT_APPROVAL_RULES = [
+        'reviewRole' => 'Human Resource',
+        'recommendRole' => 'Human Resource',
+        'approveRole' => 'Human Resource',
+    ];
+
+    public function __construct(private readonly LeavePolicyService $policyService) {}
 
     // ── Approval Rules ────────────────────────────────────────────────────────
 
@@ -42,29 +46,34 @@ class LeaveWorkflowService
 
         $rules = [];
         foreach ((array) ($policy['rules'] ?? []) as $rule) {
-            if (!is_array($rule)) continue;
+            if (! is_array($rule)) {
+                continue;
+            }
             $rules[] = [
-                'id'            => $rule['id'] ?? (string) Str::uuid(),
+                'id' => $rule['id'] ?? (string) Str::uuid(),
                 'applicantRole' => trim((string) ($rule['applicantRole'] ?? '')),
-                'reviewRole'    => trim((string) ($rule['reviewRole'] ?? '')),
+                'reviewRole' => trim((string) ($rule['reviewRole'] ?? '')),
                 'recommendRole' => trim((string) ($rule['recommendRole'] ?? '')),
-                'approveRole'   => trim((string) ($rule['approveRole'] ?? '')),
-                'active'        => ($rule['active'] ?? true) !== false,
+                'approveRole' => trim((string) ($rule['approveRole'] ?? '')),
+                'active' => ($rule['active'] ?? true) !== false,
             ];
         }
 
         $fallback = $policy['fallback'] ?? [];
-        $options  = $policy['options'] ?? [];
+        $options = $policy['options'] ?? [];
+        $fallbackReviewRole = trim((string) ($fallback['reviewRole'] ?? '')) ?: self::DEFAULT_APPROVAL_RULES['reviewRole'];
+        $fallbackRecommendRole = trim((string) ($fallback['recommendRole'] ?? '')) ?: self::DEFAULT_APPROVAL_RULES['recommendRole'];
+        $fallbackApproveRole = trim((string) ($fallback['approveRole'] ?? '')) ?: self::DEFAULT_APPROVAL_RULES['approveRole'];
 
         return [
-            'rules'    => $rules,
+            'rules' => $rules,
             'fallback' => [
-                'reviewRole'    => trim((string) ($fallback['reviewRole'] ?? '')),
-                'recommendRole' => trim((string) ($fallback['recommendRole'] ?? '')),
-                'approveRole'   => trim((string) ($fallback['approveRole'] ?? '')),
+                'reviewRole' => $fallbackReviewRole,
+                'recommendRole' => $fallbackRecommendRole,
+                'approveRole' => $fallbackApproveRole,
             ],
             'options' => [
-                'requireRecommendation'    => ($options['requireRecommendation'] ?? true) !== false,
+                'requireRecommendation' => ($options['requireRecommendation'] ?? true) !== false,
                 'enforceDistinctApprovers' => ($options['enforceDistinctApprovers'] ?? false) === true,
             ],
         ];
@@ -104,13 +113,17 @@ class LeaveWorkflowService
      */
     public function buildWorkflowForSubmission(array $applicantRoles): array
     {
-        $policy      = $this->loadApprovalRules();
+        $policy = $this->loadApprovalRules();
         $resolvedRule = $this->resolveApprovalRule($policy, $applicantRoles);
 
         $requireRecommendation = ($policy['options']['requireRecommendation'] ?? true) !== false;
-        $reviewRole    = trim((string) ($resolvedRule['reviewRole'] ?? ''));
-        $recommendRole = trim((string) ($resolvedRule['recommendRole'] ?? ''));
-        $approveRole   = trim((string) ($resolvedRule['approveRole'] ?? ''));
+        $fallback = is_array($policy['fallback'] ?? null) ? $policy['fallback'] : [];
+        $reviewRole = trim((string) ($resolvedRule['reviewRole'] ?? ''))
+            ?: trim((string) ($fallback['reviewRole'] ?? ''));
+        $recommendRole = trim((string) ($resolvedRule['recommendRole'] ?? ''))
+            ?: trim((string) ($fallback['recommendRole'] ?? ''));
+        $approveRole = trim((string) ($resolvedRule['approveRole'] ?? ''))
+            ?: trim((string) ($fallback['approveRole'] ?? ''));
 
         $normalizedRoles = array_values(array_unique(array_filter(
             array_map(fn ($r) => trim((string) $r), $applicantRoles)
@@ -118,13 +131,13 @@ class LeaveWorkflowService
 
         return [
             'workflowSnapshot' => [
-                'reviewRole'            => $reviewRole,
-                'recommendRole'         => $recommendRole,
-                'approveRole'           => $approveRole,
+                'reviewRole' => $reviewRole,
+                'recommendRole' => $recommendRole,
+                'approveRole' => $approveRole,
                 'requireRecommendation' => $requireRecommendation,
                 'enforceDistinctApprovers' => ($policy['options']['enforceDistinctApprovers'] ?? false) === true,
             ],
-            'workflowStage'  => 'review',
+            'workflowStage' => 'review',
             'nextActionRole' => $reviewRole ?: null,
             'applicantRoles' => $normalizedRoles,
         ];
@@ -138,28 +151,31 @@ class LeaveWorkflowService
      */
     public function advanceWorkflow(Leave $leave, string $action, int $actorUserId, string $actorName, ?string $remarks = ''): array
     {
-        $snapshot              = $leave->workflow_snapshot ?? [];
+        $snapshot = $leave->workflow_snapshot ?? [];
         $requireRecommendation = ($snapshot['requireRecommendation'] ?? true) !== false;
-        $approveRole           = $snapshot['approveRole'] ?? null;
-        $recommendRole         = $snapshot['recommendRole'] ?? null;
+        $approveRole = $snapshot['approveRole'] ?? null;
+        $recommendRole = $snapshot['recommendRole'] ?? null;
 
         $historyEntry = [
-            'id'        => (string) Str::uuid(),
-            'at'        => now()->toIso8601String(),
-            'action'    => $this->actionLabel($action),
-            'by'        => $actorName,
-            'byUserId'  => (string) $actorUserId,
-            'remarks'   => $remarks ?? '',
+            'id' => (string) Str::uuid(),
+            'at' => now()->toIso8601String(),
+            'action' => $this->actionLabel($action),
+            'by' => $actorName,
+            'byUserId' => (string) $actorUserId,
+            'remarks' => $remarks ?? '',
         ];
 
-        $history = array_merge($leave->approval_history ?? [], [$historyEntry]);
+        $history = collect(array_merge($leave->approval_history ?? [], [$historyEntry]))
+            ->take(-30)
+            ->values()
+            ->all();
 
         if ($action === 'reject') {
             return [
-                'status'            => 'Rejected',
-                'workflow_stage'    => 'done',
-                'next_action_role'  => null,
-                'approval_history'  => $history,
+                'status' => 'Rejected',
+                'workflow_stage' => 'done',
+                'next_action_role' => null,
+                'approval_history' => $history,
             ];
         }
 
@@ -174,10 +190,10 @@ class LeaveWorkflowService
 
         if ($action === 'cancel') {
             return [
-                'status'            => 'Cancelled',
-                'workflow_stage'    => 'done',
-                'next_action_role'  => null,
-                'approval_history'  => $history,
+                'status' => 'Cancelled',
+                'workflow_stage' => 'done',
+                'next_action_role' => null,
+                'approval_history' => $history,
             ];
         }
 
@@ -186,32 +202,33 @@ class LeaveWorkflowService
         if ($action === 'review') {
             if ($requireRecommendation) {
                 return [
-                    'workflow_stage'  => 'recommend',
-                    'next_action_role'=> $recommendRole ?: null,
-                    'approval_history'=> $history,
+                    'workflow_stage' => 'recommend',
+                    'next_action_role' => $recommendRole ?: null,
+                    'approval_history' => $history,
                 ];
             }
+
             return [
-                'workflow_stage'  => 'approve',
-                'next_action_role'=> $approveRole ?: null,
-                'approval_history'=> $history,
+                'workflow_stage' => 'approve',
+                'next_action_role' => $approveRole ?: null,
+                'approval_history' => $history,
             ];
         }
 
         if ($action === 'recommend') {
             return [
-                'workflow_stage'  => 'approve',
-                'next_action_role'=> $approveRole ?: null,
-                'approval_history'=> $history,
+                'workflow_stage' => 'approve',
+                'next_action_role' => $approveRole ?: null,
+                'approval_history' => $history,
             ];
         }
 
         if ($action === 'approve') {
             return [
-                'status'          => 'Approved',
-                'workflow_stage'  => 'done',
-                'next_action_role'=> null,
-                'approval_history'=> $history,
+                'status' => 'Approved',
+                'workflow_stage' => 'done',
+                'next_action_role' => null,
+                'approval_history' => $history,
             ];
         }
 
@@ -238,7 +255,7 @@ class LeaveWorkflowService
     {
         $this->adjustBalance($leave->user_id, $leave->leave_type, $leave->start_date->year, [
             'pending' => -$leave->days,
-            'used'    => $leave->days,
+            'used' => $leave->days,
         ]);
     }
 
@@ -277,7 +294,7 @@ class LeaveWorkflowService
 
         $last = Leave::withTrashed()
             ->where('user_id', $userId)
-            ->where('display_id', 'like', $prefix . '%')
+            ->where('display_id', 'like', $prefix.'%')
             ->orderByDesc('id')
             ->value('display_id');
 
@@ -287,7 +304,7 @@ class LeaveWorkflowService
             $seq = ((int) end($parts)) + 1;
         }
 
-        return $prefix . str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
+        return $prefix.str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -302,14 +319,14 @@ class LeaveWorkflowService
             ->first();
 
         if (! $assignment) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
+            throw ValidationException::withMessages([
                 'leave_type' => ['No leave entitlement assignment exists for this leave type and year.'],
             ]);
         }
 
         $available = (float) $assignment->entitlement - (float) $assignment->used - (float) $assignment->pending;
         if (($deltas['pending'] ?? 0) > 0 && $available + 0.0001 < (float) $deltas['pending']) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
+            throw ValidationException::withMessages([
                 'days' => ['Requested leave days exceed the available leave balance.'],
             ]);
         }
@@ -327,15 +344,15 @@ class LeaveWorkflowService
     private function actionLabel(string $action): string
     {
         return match ($action) {
-            'submit'    => 'Submitted',
-            'review'    => 'Reviewed',
+            'submit' => 'Submitted',
+            'review' => 'Reviewed',
             'recommend' => 'Recommended',
-            'approve'   => 'Approved',
-            'reject'    => 'Rejected',
-            'cancel'    => 'Cancelled',
+            'approve' => 'Approved',
+            'reject' => 'Rejected',
+            'cancel' => 'Cancelled',
             'request_correction' => 'Correction Requested',
-            'edit'      => 'Edited',
-            default     => ucfirst($action),
+            'edit' => 'Edited',
+            default => ucfirst($action),
         };
     }
 }

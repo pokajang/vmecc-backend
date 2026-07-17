@@ -8,7 +8,7 @@ use App\Models\AiHelperKnowledgeEntry;
 use App\Models\AiHelperMessage;
 use App\Models\User;
 use App\Services\AiHelperOpenAiService;
-use Database\Seeders\AiHelperKnowledgeSeeder;
+use Database\Seeders\AiHelperReferenceCorpusSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Spatie\Permission\Models\Role;
@@ -25,7 +25,7 @@ class AiHelperApiTest extends TestCase
 
     public function test_context_reports_guidance_availability_without_exposing_private_markdown(): void
     {
-        $this->seed(AiHelperKnowledgeSeeder::class);
+        $this->seed(AiHelperReferenceCorpusSeeder::class);
         $this->actingAs(User::factory()->create(['status' => 'active']));
 
         $this->getJson('/api/ai-helper/context?path=/inspection&route_name=Inspection')
@@ -63,7 +63,11 @@ class AiHelperApiTest extends TestCase
 
     public function test_stream_sse_contract_remains_available(): void
     {
-        config(['ai_helper.enabled' => true, 'ai_helper.api_key' => 'test-key']);
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'test-key',
+            'ai_helper.knowledge_strict_readiness' => false,
+        ]);
         $this->actingAs(User::factory()->create(['status' => 'active']));
         $this->mock(AiHelperOpenAiService::class, function ($mock) {
             $mock->shouldReceive('isAvailable')->andReturnTrue();
@@ -131,6 +135,7 @@ class AiHelperApiTest extends TestCase
             'ai_helper.embedding_enabled' => false,
             'ai_helper.rerank_enabled' => false,
             'ai_helper.retrieval_v3' => true,
+            'ai_helper.knowledge_strict_readiness' => false,
         ]);
         $this->actingAs(User::factory()->create(['status' => 'active']));
         $this->mock(AiHelperOpenAiService::class, function ($mock) {

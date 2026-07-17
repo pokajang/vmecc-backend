@@ -760,11 +760,17 @@ class AiHelperController extends Controller
                 ->where('status', AiHelperKnowledgeEntry::STATUS_FAILED)
                 ->latest('updated_at')
                 ->limit(10)
-                ->get(['id', 'title', 'source_filename', 'error', 'updated_at'])
+                ->get(['id', 'title', 'knowledge_type', 'source_filename', 'source_path', 'error', 'updated_at'])
                 ->map(fn (AiHelperKnowledgeEntry $entry) => [
                     'id' => $entry->id,
                     'title' => $entry->title,
-                    'source_filename' => $entry->source_filename,
+                    'knowledge_type' => $entry->knowledge_type,
+                    'guide_key' => $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
+                        ? Str::after((string) $entry->source_path, 'seed:system-guide:')
+                        : null,
+                    'source_filename' => $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
+                        ? null
+                        : $entry->source_filename,
                     'error' => $entry->error,
                     'updated_at' => optional($entry->updated_at)->toIso8601String(),
                 ])
@@ -875,6 +881,12 @@ class AiHelperController extends Controller
                     'code' => 'AI_HELPER_KNOWLEDGE_NOT_FOUND',
                 ], 404);
             }
+            if ($entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE) {
+                return response()->json([
+                    'message' => 'Code-controlled system guides can only be changed by deployment and reseeding.',
+                    'code' => 'AI_HELPER_SYSTEM_GUIDE_CODE_CONTROLLED',
+                ], 409);
+            }
 
             $updates = [
                 'review_note' => trim((string) ($validated['review_note'] ?? '')) ?: null,
@@ -957,6 +969,12 @@ class AiHelperController extends Controller
                     'message' => 'Knowledge entry not found.',
                     'code' => 'AI_HELPER_KNOWLEDGE_NOT_FOUND',
                 ], 404);
+            }
+            if ($entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE) {
+                return response()->json([
+                    'message' => 'Code-controlled system guides cannot be deleted through the API.',
+                    'code' => 'AI_HELPER_SYSTEM_GUIDE_CODE_CONTROLLED',
+                ], 409);
             }
 
             $this->knowledgeLifecycle->purge($entry);
@@ -1599,6 +1617,23 @@ class AiHelperController extends Controller
         return [
             'id' => $entry->id,
             'title' => $entry->title,
+            'knowledge_type' => $entry->knowledge_type,
+            'guide_key' => $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
+                ? Str::after((string) $entry->source_path, 'seed:system-guide:')
+                : null,
+            'guide_version' => $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
+                ? (int) $entry->version
+                : null,
+            'guide_owner' => $entry->guide_owner,
+            'module_gate' => $entry->module_gate,
+            'access_rule' => $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
+                ? [
+                    'permission_match' => $entry->permission_match,
+                    'required_permissions' => $entry->required_permissions ?? [],
+                    'allowed_roles' => $entry->allowed_roles ?? [],
+                ]
+                : null,
+            'review_due_at' => optional($entry->review_due_at)->toIso8601String(),
             'module_key' => $entry->module_key,
             'route_key' => $entry->route_key,
             'scope_type' => $entry->scope_type,
@@ -1611,7 +1646,9 @@ class AiHelperController extends Controller
             'reviewer' => $this->formatUser($entry->relationLoaded('reviewer') ? $entry->reviewer : null),
             'review_note' => (string) ($entry->review_note ?? ''),
             'chunks_count' => $entry->chunks_count ?? null,
-            'source_filename' => $entry->source_filename,
+            'source_filename' => $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
+                ? null
+                : $entry->source_filename,
             'source_mime' => $entry->source_mime,
             'source_size' => $entry->source_size,
             'source_document_id' => $entry->source_document_id,

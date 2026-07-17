@@ -10,30 +10,32 @@ use App\Services\AuditLogger;
 use App\Services\HolidayGuidanceFeatureGate;
 use App\Services\HolidayGuidanceTelemetry;
 use App\Services\HolidayResolver;
-use App\Services\LeaveNotificationService;
 use App\Services\LeaveClaimGuardService;
+use App\Services\LeaveNotificationService;
 use App\Services\LeaveRosterImpactService;
 use App\Services\LeaveWorkflowService;
 use App\Services\WorkingDayCalculator;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class LeaveController extends Controller
 {
     public function __construct(
-        private readonly LeaveWorkflowService        $workflowService,
-        private readonly LeaveClaimGuardService      $claimGuardService,
-        private readonly LeaveRosterImpactService    $rosterImpactService,
-        private readonly LeaveNotificationService    $notificationService,
+        private readonly LeaveWorkflowService $workflowService,
+        private readonly LeaveClaimGuardService $claimGuardService,
+        private readonly LeaveRosterImpactService $rosterImpactService,
+        private readonly LeaveNotificationService $notificationService,
         private readonly AssignmentAuthorizationService $authorizationService,
-        private readonly WorkingDayCalculator        $workingDayCalculator,
-        private readonly HolidayResolver             $holidayResolver,
-        private readonly HolidayGuidanceFeatureGate  $guidanceGate,
-        private readonly HolidayGuidanceTelemetry    $guidanceTelemetry,
+        private readonly WorkingDayCalculator $workingDayCalculator,
+        private readonly HolidayResolver $holidayResolver,
+        private readonly HolidayGuidanceFeatureGate $guidanceGate,
+        private readonly HolidayGuidanceTelemetry $guidanceTelemetry,
     ) {}
 
     // ── List own leaves ───────────────────────────────────────────────────────
@@ -54,8 +56,8 @@ class LeaveController extends Controller
             $search = $request->input('search');
             $query->where(function ($q) use ($search) {
                 $q->where('display_id', 'like', "%{$search}%")
-                  ->orWhere('reason', 'like', "%{$search}%")
-                  ->orWhere('leave_type', 'like', "%{$search}%");
+                    ->orWhere('reason', 'like', "%{$search}%")
+                    ->orWhere('leave_type', 'like', "%{$search}%");
             });
         }
         if ($request->filled('year')) {
@@ -79,7 +81,7 @@ class LeaveController extends Controller
 
     public function show(Request $request, int $id): JsonResponse
     {
-        $user  = $request->user();
+        $user = $request->user();
         $leave = Leave::where('user_id', $user->id)->with('attachment')->findOrFail($id);
 
         return response()->json(['data' => $this->formatLeave($leave)]);
@@ -140,7 +142,7 @@ class LeaveController extends Controller
             'start_time_slot' => ['nullable', 'string', 'max:50'],
             'end_time_slot' => ['nullable', 'string', 'max:50'],
         ]);
-        if (\Illuminate\Support\Carbon::parse($data['start_date'])->diffInDays(\Illuminate\Support\Carbon::parse($data['end_date'])) > 366) {
+        if (Carbon::parse($data['start_date'])->diffInDays(Carbon::parse($data['end_date'])) > 366) {
             throw ValidationException::withMessages([
                 'end_date' => ['Roster duty guidance is limited to 366 days.'],
             ]);
@@ -166,7 +168,7 @@ class LeaveController extends Controller
             $workflow = $this->workflowService->buildWorkflowForSubmission($actorRoles);
             $year = (int) date('Y', strtotime($data['start_date']));
             $historyEntry = [
-                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'id' => (string) Str::uuid(),
                 'at' => now()->toIso8601String(),
                 'action' => 'Submitted',
                 'by' => $lockedUser->name,
@@ -216,7 +218,7 @@ class LeaveController extends Controller
         );
 
         AuditLogger::log($request, 'leave_submitted', $user, [
-            'leave_id'   => $leave->id,
+            'leave_id' => $leave->id,
             'display_id' => $leave->display_id,
             'leave_type' => $leave->leave_type,
         ]);
@@ -280,13 +282,14 @@ class LeaveController extends Controller
             $isResubmission = $leave->status === 'Needs Correction';
             $history = is_array($leave->approval_history) ? $leave->approval_history : [];
             $history[] = [
-                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'id' => (string) Str::uuid(),
                 'at' => now()->toIso8601String(),
                 'action' => $isResubmission ? 'Resubmitted' : 'Edited',
                 'by' => $lockedUser->name,
                 'byUserId' => (string) $lockedUser->id,
                 'remarks' => $isResubmission ? 'Leave request corrected and resubmitted.' : 'Leave request updated before review.',
             ];
+            $history = collect($history)->take(-30)->values()->all();
             $oldLeave = clone $leave;
 
             $leave->update([
@@ -460,38 +463,38 @@ class LeaveController extends Controller
         $attachment = $leave->relationLoaded('attachment') ? $leave->attachment : null;
 
         return [
-            'id'               => $leave->id,
-            'display_id'       => $leave->display_id,
-            'user_id'          => $leave->user_id,
-            'leave_type'       => $leave->leave_type,
-            'status'           => $leave->status,
-            'start_date'       => optional($leave->start_date)->toDateString(),
-            'end_date'         => optional($leave->end_date)->toDateString(),
-            'days'             => (float) $leave->days,
-            'work_shift'       => $leave->work_shift,
-            'start_time_slot'  => $leave->start_time_slot,
-            'end_time_slot'    => $leave->end_time_slot,
-            'reason'           => $leave->reason,
-            'cover_by'         => $leave->cover_by,
-            'applied_at'       => optional($leave->applied_at)->toIso8601String(),
-            'workflow_stage'   => $leave->workflow_stage,
-            'workflow_snapshot'=> $leave->workflow_snapshot,
+            'id' => $leave->id,
+            'display_id' => $leave->display_id,
+            'user_id' => $leave->user_id,
+            'leave_type' => $leave->leave_type,
+            'status' => $leave->status,
+            'start_date' => optional($leave->start_date)->toDateString(),
+            'end_date' => optional($leave->end_date)->toDateString(),
+            'days' => (float) $leave->days,
+            'work_shift' => $leave->work_shift,
+            'start_time_slot' => $leave->start_time_slot,
+            'end_time_slot' => $leave->end_time_slot,
+            'reason' => $leave->reason,
+            'cover_by' => $leave->cover_by,
+            'applied_at' => optional($leave->applied_at)->toIso8601String(),
+            'workflow_stage' => $leave->workflow_stage,
+            'workflow_snapshot' => $leave->workflow_snapshot,
             'next_action_role' => $leave->next_action_role,
-            'applicant_roles'  => $leave->applicant_roles ?? [],
+            'applicant_roles' => $leave->applicant_roles ?? [],
             'approval_history' => $leave->approval_history ?? [],
             'roster_impact_snapshot' => $leave->roster_impact_snapshot,
-            'submitted_by'     => $leave->submitted_by,
-            'version'          => (int) $leave->version,
-            'attachment'       => $attachment ? [
-                'id'            => $attachment->id,
+            'submitted_by' => $leave->submitted_by,
+            'version' => (int) $leave->version,
+            'attachment' => $attachment ? [
+                'id' => $attachment->id,
                 'original_name' => $attachment->original_name,
-                'mime_type'     => $attachment->mime_type,
-                'size'          => $attachment->size,
+                'mime_type' => $attachment->mime_type,
+                'size' => $attachment->size,
                 'original_size' => $attachment->original_size,
-                'was_compressed'=> $attachment->was_compressed,
+                'was_compressed' => $attachment->was_compressed,
             ] : null,
-            'created_at'       => optional($leave->created_at)->toIso8601String(),
-            'updated_at'       => optional($leave->updated_at)->toIso8601String(),
+            'created_at' => optional($leave->created_at)->toIso8601String(),
+            'updated_at' => optional($leave->updated_at)->toIso8601String(),
         ];
     }
 
@@ -526,6 +529,7 @@ class LeaveController extends Controller
         }
 
         $history = is_array($leave->approval_history) ? $leave->approval_history : [];
+
         return ! collect($history)->contains(function ($entry) {
             return in_array((string) ($entry['action'] ?? ''), ['Reviewed', 'Recommended', 'Approved'], true);
         });
@@ -583,14 +587,14 @@ class LeaveController extends Controller
     private function buildComputationMeta($user, float $computedDays, mixed $clientDays, string $endpoint): array
     {
         $guidanceEnabled = $this->guidanceGate->leaveEnabledForUser($user);
-        if (!$guidanceEnabled) {
+        if (! $guidanceEnabled) {
             return [
                 'guidance_enabled' => false,
             ];
         }
 
         $effectiveState = $this->holidayResolver->resolveEmployeeState($user);
-        if (!$effectiveState) {
+        if (! $effectiveState) {
             $context = [
                 'module' => 'leave',
                 'endpoint' => $endpoint,

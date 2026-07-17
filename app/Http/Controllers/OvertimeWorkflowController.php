@@ -7,10 +7,10 @@ use App\Services\AuditLogger;
 use App\Services\OvertimeManagementScopeService;
 use App\Services\OvertimeWorkflowService;
 use App\Services\WorkflowNotificationService;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class OvertimeWorkflowController extends Controller
@@ -19,8 +19,7 @@ class OvertimeWorkflowController extends Controller
         private readonly OvertimeWorkflowService $workflowService,
         private readonly WorkflowNotificationService $notificationService,
         private readonly OvertimeManagementScopeService $scopeService,
-    ) {
-    }
+    ) {}
 
     public function review(Request $request, int $ownerId, int $recordId): JsonResponse
     {
@@ -60,7 +59,7 @@ class OvertimeWorkflowController extends Controller
             'expected_version' => ['nullable', 'integer', 'min:1'],
         ]);
 
-        if ($action === 'request_correction' && !trim((string) ($payload['remarks'] ?? ''))) {
+        if ($action === 'request_correction' && ! trim((string) ($payload['remarks'] ?? ''))) {
             throw ValidationException::withMessages([
                 'remarks' => ['Remarks are required when requesting correction.'],
             ]);
@@ -145,28 +144,9 @@ class OvertimeWorkflowController extends Controller
             ]);
         }
 
-        if ($action === 'cancel' && !in_array($record->status, ['Pending', 'Approved'], true)) {
+        if ($action === 'cancel' && ! in_array($record->status, ['Pending', 'Approved'], true)) {
             throw ValidationException::withMessages([
                 'status' => ['Only pending or approved overtime records can be cancelled.'],
-            ]);
-        }
-
-        if ($this->scopeService->isSystemAdministrator($actor)) {
-            return;
-        }
-
-        if ($action === 'cancel') {
-            throw ValidationException::withMessages([
-                'role' => ['Only a system administrator can cancel another employee\'s overtime claim.'],
-            ]);
-        }
-
-        $expectedRole = trim((string) ($record->next_action_role ?? ''));
-        if ($expectedRole === '' || ! $this->scopeService->canPerformWorkflowRole($actor, $record, $expectedRole)) {
-            throw ValidationException::withMessages([
-                'role' => [$expectedRole !== ''
-                    ? "This action requires the '{$expectedRole}' role for the employee's team."
-                    : 'This overtime claim has no configured workflow action owner.'],
             ]);
         }
 
@@ -183,6 +163,24 @@ class OvertimeWorkflowController extends Controller
             throw ValidationException::withMessages([
                 'stage' => ["Current workflow stage is '{$expectedStage}', not '{$requiredStage}'."],
             ]);
+        }
+
+        $isSystemAdministrator = $this->scopeService->isSystemAdministrator($actor);
+        if ($action === 'cancel' && ! $isSystemAdministrator) {
+            throw ValidationException::withMessages([
+                'role' => ['Only a system administrator can cancel another employee\'s overtime claim.'],
+            ]);
+        }
+
+        if (! $isSystemAdministrator) {
+            $expectedRole = trim((string) ($record->next_action_role ?? ''));
+            if ($expectedRole === '' || ! $this->scopeService->canPerformWorkflowRole($actor, $record, $expectedRole)) {
+                throw ValidationException::withMessages([
+                    'role' => [$expectedRole !== ''
+                        ? "This action requires the '{$expectedRole}' role for the employee's team."
+                        : 'This overtime claim has no configured workflow action owner.'],
+                ]);
+            }
         }
 
         $snapshot = is_array($record->workflow_snapshot) ? $record->workflow_snapshot : [];
@@ -211,6 +209,7 @@ class OvertimeWorkflowController extends Controller
                 default => $key,
             }] = $value;
         }
+
         return $mapped;
     }
 

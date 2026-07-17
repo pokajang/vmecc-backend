@@ -46,6 +46,7 @@ class PayrollClaim extends Model
         'payment_note',
         'notes',
         'attachment_id',
+        'version',
     ];
 
     protected $casts = [
@@ -65,6 +66,7 @@ class PayrollClaim extends Model
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
+        'version' => 'integer',
     ];
 
     public function user(): BelongsTo

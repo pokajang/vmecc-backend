@@ -9,9 +9,11 @@ use App\Services\AuditLogger;
 use App\Services\PayrollClaimWorkflowService;
 use App\Services\WorkflowNotificationService;
 use Carbon\Carbon;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class PayrollClaimWorkflowController extends Controller
@@ -20,8 +22,7 @@ class PayrollClaimWorkflowController extends Controller
         private readonly PayrollClaimWorkflowService $workflowService,
         private readonly WorkflowNotificationService $notificationService,
         private readonly AssignmentAuthorizationService $authorizationService,
-    ) {
-    }
+    ) {}
 
     public function check(Request $request, int $ownerId, int $claimId): JsonResponse
     {
@@ -55,21 +56,22 @@ class PayrollClaimWorkflowController extends Controller
             'payment_date' => ['required', 'date'],
             'payment_reference' => ['nullable', 'string', 'max:255'],
             'payment_note' => ['nullable', 'string', 'max:2000'],
+            'expected_version' => ['nullable', 'integer', 'min:1'],
         ]);
 
-        $claim = PayrollClaim::query()
-            ->where('user_id', $ownerId)
-            ->with(['items.attachment', 'attachment', 'paidByUser'])
-            ->findOrFail($claimId);
-
-        $this->assertMarkPaidAllowed($claim, $actor);
-
-        DB::transaction(function () use ($claim, $actor, $payload): void {
+        $claim = DB::transaction(function () use ($ownerId, $claimId, $actor, $payload): PayrollClaim {
+            $claim = PayrollClaim::query()
+                ->where('user_id', $ownerId)
+                ->with(['items.attachment', 'attachment', 'paidByUser'])
+                ->lockForUpdate()
+                ->findOrFail($claimId);
+            $this->assertMarkPaidAllowed($claim, $actor);
+            $this->assertExpectedVersion($claim, $payload['expected_version'] ?? null);
             $paymentDate = Carbon::parse((string) $payload['payment_date'])->toDateString();
             $now = now();
             $history = is_array($claim->approval_history) ? $claim->approval_history : [];
             $history[] = [
-                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'id' => (string) Str::uuid(),
                 'action' => 'Paid',
                 'by' => (string) ($actor->name ?? ''),
                 'byUserId' => (string) ($actor->id ?? ''),
@@ -99,6 +101,7 @@ class PayrollClaimWorkflowController extends Controller
                 'updated_by_name' => (string) ($actor->name ?? ''),
                 'approval_history' => $history,
                 'payslip_snapshot' => $snapshot !== [] ? $snapshot : null,
+                'version' => ((int) $claim->version) + 1,
             ]);
 
             PayrollClaimPaymentEvent::query()->create([
@@ -110,6 +113,8 @@ class PayrollClaimWorkflowController extends Controller
                 'reason' => null,
                 'acted_by_user_id' => (int) $actor->id,
             ]);
+
+            return $claim;
         });
 
         $claim->refresh()->load(['items.attachment', 'attachment', 'paidByUser']);
@@ -129,21 +134,22 @@ class PayrollClaimWorkflowController extends Controller
         $actor = $request->user();
         $payload = $request->validate([
             'reason' => ['required', 'string', 'max:1000'],
+            'expected_version' => ['nullable', 'integer', 'min:1'],
         ]);
 
-        $claim = PayrollClaim::query()
-            ->where('user_id', $ownerId)
-            ->with(['items.attachment', 'attachment', 'paidByUser'])
-            ->findOrFail($claimId);
-
-        $this->assertUnmarkPaidAllowed($claim, $actor);
-
-        DB::transaction(function () use ($claim, $actor, $payload): void {
+        $claim = DB::transaction(function () use ($ownerId, $claimId, $actor, $payload): PayrollClaim {
+            $claim = PayrollClaim::query()
+                ->where('user_id', $ownerId)
+                ->with(['items.attachment', 'attachment', 'paidByUser'])
+                ->lockForUpdate()
+                ->findOrFail($claimId);
+            $this->assertUnmarkPaidAllowed($claim, $actor);
+            $this->assertExpectedVersion($claim, $payload['expected_version'] ?? null);
             $reason = trim((string) ($payload['reason'] ?? ''));
             $now = now();
             $history = is_array($claim->approval_history) ? $claim->approval_history : [];
             $history[] = [
-                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'id' => (string) Str::uuid(),
                 'action' => 'Unmarked Paid',
                 'by' => (string) ($actor->name ?? ''),
                 'byUserId' => (string) ($actor->id ?? ''),
@@ -183,7 +189,10 @@ class PayrollClaimWorkflowController extends Controller
                 'updated_by_name' => (string) ($actor->name ?? ''),
                 'approval_history' => $history,
                 'payslip_snapshot' => $snapshot !== [] ? $snapshot : null,
+                'version' => ((int) $claim->version) + 1,
             ]);
+
+            return $claim;
         });
 
         $claim->refresh()->load(['items.attachment', 'attachment', 'paidByUser']);
@@ -204,6 +213,7 @@ class PayrollClaimWorkflowController extends Controller
             'entries' => ['required', 'array', 'min:1', 'max:200'],
             'entries.*.owner_id' => ['required', 'integer'],
             'entries.*.claim_id' => ['required', 'integer'],
+            'entries.*.expected_version' => ['nullable', 'integer', 'min:1'],
             'payment_date' => ['required', 'date'],
             'payment_reference' => ['nullable', 'string', 'max:255'],
             'payment_note' => ['nullable', 'string', 'max:2000'],
@@ -218,33 +228,31 @@ class PayrollClaimWorkflowController extends Controller
             $claimId = (int) ($entry['claim_id'] ?? 0);
             if ($ownerId <= 0 || $claimId <= 0) {
                 $skipped[] = ['owner_id' => $ownerId, 'claim_id' => $claimId, 'reason' => 'invalid_entry'];
+
                 continue;
             }
 
-            $claim = PayrollClaim::query()
-                ->where('user_id', $ownerId)
-                ->with(['items.attachment', 'attachment', 'paidByUser'])
-                ->find($claimId);
-            if (! $claim instanceof PayrollClaim) {
-                $skipped[] = ['owner_id' => $ownerId, 'claim_id' => $claimId, 'reason' => 'record_not_found'];
-                continue;
-            }
-
-            $blockedReason = $this->getMarkPaidBlockedReason($claim, $actor);
-            if ($blockedReason !== '') {
-                $skipped[] = [
-                    'owner_id' => $ownerId,
-                    'claim_id' => $claimId,
-                    'reason' => $blockedReason,
-                ];
-                continue;
-            }
-
-            DB::transaction(function () use ($claim, $actor, $payload, $paymentDate): void {
+            $result = DB::transaction(function () use ($ownerId, $claimId, $entry, $actor, $payload, $paymentDate): array {
+                $claim = PayrollClaim::query()
+                    ->where('user_id', $ownerId)
+                    ->with(['items.attachment', 'attachment', 'paidByUser'])
+                    ->lockForUpdate()
+                    ->find($claimId);
+                if (! $claim instanceof PayrollClaim) {
+                    return ['reason' => 'record_not_found'];
+                }
+                $blockedReason = $this->getMarkPaidBlockedReason($claim, $actor);
+                if ($blockedReason !== '') {
+                    return ['reason' => $blockedReason];
+                }
+                $expectedVersion = isset($entry['expected_version']) ? (int) $entry['expected_version'] : null;
+                if ($expectedVersion !== null && $expectedVersion !== (int) $claim->version) {
+                    return ['reason' => 'version_conflict'];
+                }
                 $now = now();
                 $history = is_array($claim->approval_history) ? $claim->approval_history : [];
                 $history[] = [
-                    'id' => (string) \Illuminate\Support\Str::uuid(),
+                    'id' => (string) Str::uuid(),
                     'action' => 'Paid',
                     'by' => (string) ($actor->name ?? ''),
                     'byUserId' => (string) ($actor->id ?? ''),
@@ -274,6 +282,7 @@ class PayrollClaimWorkflowController extends Controller
                     'updated_by_name' => (string) ($actor->name ?? ''),
                     'approval_history' => $history,
                     'payslip_snapshot' => $snapshot !== [] ? $snapshot : null,
+                    'version' => ((int) $claim->version) + 1,
                 ]);
 
                 PayrollClaimPaymentEvent::query()->create([
@@ -285,8 +294,20 @@ class PayrollClaimWorkflowController extends Controller
                     'reason' => null,
                     'acted_by_user_id' => (int) $actor->id,
                 ]);
+
+                return ['claim' => $claim];
             });
 
+            $claim = $result['claim'] ?? null;
+            if (! $claim instanceof PayrollClaim) {
+                $skipped[] = [
+                    'owner_id' => $ownerId,
+                    'claim_id' => $claimId,
+                    'reason' => $result['reason'] ?? 'not_updated',
+                ];
+
+                continue;
+            }
             $claim->refresh()->load(['items.attachment', 'attachment', 'paidByUser']);
             $updatedRows[] = PayrollClaimController::formatClaim($claim, $actor);
         }
@@ -312,6 +333,7 @@ class PayrollClaimWorkflowController extends Controller
             'entries' => ['required', 'array', 'min:1', 'max:200'],
             'entries.*.owner_id' => ['required', 'integer'],
             'entries.*.claim_id' => ['required', 'integer'],
+            'entries.*.expected_version' => ['nullable', 'integer', 'min:1'],
             'reason' => ['required', 'string', 'max:1000'],
         ]);
 
@@ -324,33 +346,31 @@ class PayrollClaimWorkflowController extends Controller
             $claimId = (int) ($entry['claim_id'] ?? 0);
             if ($ownerId <= 0 || $claimId <= 0) {
                 $skipped[] = ['owner_id' => $ownerId, 'claim_id' => $claimId, 'reason' => 'invalid_entry'];
+
                 continue;
             }
 
-            $claim = PayrollClaim::query()
-                ->where('user_id', $ownerId)
-                ->with(['items.attachment', 'attachment', 'paidByUser'])
-                ->find($claimId);
-            if (! $claim instanceof PayrollClaim) {
-                $skipped[] = ['owner_id' => $ownerId, 'claim_id' => $claimId, 'reason' => 'record_not_found'];
-                continue;
-            }
-
-            $blockedReason = $this->getUnmarkPaidBlockedReason($claim, $actor);
-            if ($blockedReason !== '') {
-                $skipped[] = [
-                    'owner_id' => $ownerId,
-                    'claim_id' => $claimId,
-                    'reason' => $blockedReason,
-                ];
-                continue;
-            }
-
-            DB::transaction(function () use ($claim, $actor, $reason): void {
+            $result = DB::transaction(function () use ($ownerId, $claimId, $entry, $actor, $reason): array {
+                $claim = PayrollClaim::query()
+                    ->where('user_id', $ownerId)
+                    ->with(['items.attachment', 'attachment', 'paidByUser'])
+                    ->lockForUpdate()
+                    ->find($claimId);
+                if (! $claim instanceof PayrollClaim) {
+                    return ['reason' => 'record_not_found'];
+                }
+                $blockedReason = $this->getUnmarkPaidBlockedReason($claim, $actor);
+                if ($blockedReason !== '') {
+                    return ['reason' => $blockedReason];
+                }
+                $expectedVersion = isset($entry['expected_version']) ? (int) $entry['expected_version'] : null;
+                if ($expectedVersion !== null && $expectedVersion !== (int) $claim->version) {
+                    return ['reason' => 'version_conflict'];
+                }
                 $now = now();
                 $history = is_array($claim->approval_history) ? $claim->approval_history : [];
                 $history[] = [
-                    'id' => (string) \Illuminate\Support\Str::uuid(),
+                    'id' => (string) Str::uuid(),
                     'action' => 'Unmarked Paid',
                     'by' => (string) ($actor->name ?? ''),
                     'byUserId' => (string) ($actor->id ?? ''),
@@ -390,9 +410,22 @@ class PayrollClaimWorkflowController extends Controller
                     'updated_by_name' => (string) ($actor->name ?? ''),
                     'approval_history' => $history,
                     'payslip_snapshot' => $snapshot !== [] ? $snapshot : null,
+                    'version' => ((int) $claim->version) + 1,
                 ]);
+
+                return ['claim' => $claim];
             });
 
+            $claim = $result['claim'] ?? null;
+            if (! $claim instanceof PayrollClaim) {
+                $skipped[] = [
+                    'owner_id' => $ownerId,
+                    'claim_id' => $claimId,
+                    'reason' => $result['reason'] ?? 'not_updated',
+                ];
+
+                continue;
+            }
             $claim->refresh()->load(['items.attachment', 'attachment', 'paidByUser']);
             $updatedRows[] = PayrollClaimController::formatClaim($claim, $actor);
         }
@@ -415,31 +448,47 @@ class PayrollClaimWorkflowController extends Controller
         $actor = $request->user();
         $payload = $request->validate([
             'remarks' => ['nullable', 'string', 'max:1000'],
+            'expected_version' => ['nullable', 'integer', 'min:1'],
         ]);
-
-        $claim = PayrollClaim::query()->where('user_id', $ownerId)->with(['items.attachment', 'attachment', 'paidByUser'])->findOrFail($claimId);
-
-        $this->assertActionAllowed($claim, $action, $actor);
-
-        $snapshot = is_array($claim->workflow_snapshot) ? $claim->workflow_snapshot : [];
-        $history = is_array($claim->approval_history) ? $claim->approval_history : [];
-        $updates = $this->workflowService->advanceWorkflow(
-            snapshot: $snapshot,
-            history: $history,
-            action: $action,
-            actorUserId: (int) $actor->id,
-            actorName: (string) ($actor->name ?? ''),
-            remarks: $payload['remarks'] ?? null,
-        );
-
-        $claim->update($this->toColumnKeys($updates));
-        if ($action === 'approve' && (string) ($claim->status ?? '') === 'Approved') {
-            $approvedAt = $this->resolveLatestWorkflowActionTimestamp($claim->approval_history, 'approved');
-            $claim->update([
-                'payslip_snapshot' => $this->buildApprovedPayslipSnapshot($claim, $approvedAt),
+        if (in_array($action, ['reject', 'cancel'], true)
+            && trim((string) ($payload['remarks'] ?? '')) === '') {
+            throw ValidationException::withMessages([
+                'remarks' => ['Remarks are required for this action.'],
             ]);
         }
-        $claim->refresh()->load(['items.attachment', 'attachment', 'paidByUser']);
+
+        $claim = DB::transaction(function () use ($ownerId, $claimId, $action, $actor, $payload) {
+            $claim = PayrollClaim::query()
+                ->where('user_id', $ownerId)
+                ->with(['items.attachment', 'attachment', 'paidByUser'])
+                ->lockForUpdate()
+                ->findOrFail($claimId);
+
+            $this->assertActionAllowed($claim, $action, $actor);
+            $this->assertExpectedVersion($claim, $payload['expected_version'] ?? null);
+
+            $snapshot = is_array($claim->workflow_snapshot) ? $claim->workflow_snapshot : [];
+            $history = is_array($claim->approval_history) ? $claim->approval_history : [];
+            $updates = $this->toColumnKeys($this->workflowService->advanceWorkflow(
+                snapshot: $snapshot,
+                history: $history,
+                action: $action,
+                actorUserId: (int) $actor->id,
+                actorName: (string) ($actor->name ?? ''),
+                remarks: $payload['remarks'] ?? null,
+            ));
+            $updates['version'] = ((int) $claim->version) + 1;
+            $claim->update($updates);
+
+            if ($action === 'approve' && (string) ($claim->status ?? '') === 'Approved') {
+                $approvedAt = $this->resolveLatestWorkflowActionTimestamp($claim->approval_history, 'approved');
+                $claim->update([
+                    'payslip_snapshot' => $this->buildApprovedPayslipSnapshot($claim, $approvedAt),
+                ]);
+            }
+
+            return $claim->fresh(['items.attachment', 'attachment', 'paidByUser']);
+        });
 
         $eventType = match ($action) {
             'check' => 'checked',
@@ -491,18 +540,39 @@ class PayrollClaimWorkflowController extends Controller
             ]);
         }
 
-        if ($action === 'cancel' && !in_array($claim->status, ['Pending', 'Approved'], true)) {
+        if ($action === 'cancel' && ! in_array($claim->status, ['Pending', 'Approved'], true)) {
             throw ValidationException::withMessages([
                 'status' => ['Only pending or approved claims can be cancelled.'],
             ]);
         }
 
+        $requiredStage = match ($action) {
+            'check' => 'check',
+            'review' => 'review',
+            'approve' => 'approve',
+            'reject' => trim((string) ($claim->workflow_stage ?? '')),
+            default => '',
+        };
+
+        if ($requiredStage !== '' && $claim->workflow_stage !== $requiredStage) {
+            throw ValidationException::withMessages([
+                'stage' => ["Current workflow stage is '{$claim->workflow_stage}', not '{$requiredStage}'."],
+            ]);
+        }
+
         $roles = $this->authorizationService->getActiveRoleNames($actor)->all();
-        if (in_array('System Administrator', $roles, true)) {
+        $isSystemAdministrator = in_array('System Administrator', $roles, true);
+        if ($action === 'cancel') {
+            if (! $isSystemAdministrator) {
+                throw ValidationException::withMessages([
+                    'role' => ['Only a system administrator can cancel another employee\'s claim.'],
+                ]);
+            }
+
             return;
         }
 
-        if (in_array($action, ['reject', 'cancel'], true)) {
+        if ($isSystemAdministrator) {
             return;
         }
 
@@ -514,18 +584,17 @@ class PayrollClaimWorkflowController extends Controller
                     : "This action requires the '{$requiredRole}' role."],
             ]);
         }
+    }
 
-        $requiredStage = match ($action) {
-            'check' => 'check',
-            'review' => 'review',
-            'approve' => 'approve',
-            default => '',
-        };
-
-        if ($requiredStage !== '' && $claim->workflow_stage !== $requiredStage) {
-            throw ValidationException::withMessages([
-                'stage' => ["Current workflow stage is '{$claim->workflow_stage}', not '{$requiredStage}'."],
-            ]);
+    private function assertExpectedVersion(PayrollClaim $claim, ?int $expectedVersion): void
+    {
+        if ($expectedVersion !== null && $expectedVersion !== (int) $claim->version) {
+            throw new HttpResponseException(response()->json([
+                'code' => 'PAYROLL_CLAIM_VERSION_CONFLICT',
+                'message' => 'This payroll claim changed. Reload the latest record before trying again.',
+                'currentVersion' => (int) $claim->version,
+                'currentRecord' => PayrollClaimController::formatClaim($claim),
+            ], 409));
         }
     }
 
@@ -540,29 +609,35 @@ class PayrollClaimWorkflowController extends Controller
                 default => $key,
             }] = $value;
         }
+
         return $mapped;
     }
 
-    private function resolveLatestWorkflowActionTimestamp(array|null $history, string $action): ?\Carbon\Carbon
+    private function resolveLatestWorkflowActionTimestamp(?array $history, string $action): ?Carbon
     {
         $rows = is_array($history) ? $history : [];
         $match = collect($rows)
             ->reverse()
             ->first(function ($entry) use ($action) {
-                if (! is_array($entry)) return false;
+                if (! is_array($entry)) {
+                    return false;
+                }
                 $currentAction = strtolower(trim((string) ($entry['action'] ?? '')));
+
                 return $currentAction === strtolower(trim($action));
             });
         $at = is_array($match) ? trim((string) ($match['at'] ?? '')) : '';
-        if ($at === '') return null;
+        if ($at === '') {
+            return null;
+        }
         try {
-            return \Carbon\Carbon::parse($at);
+            return Carbon::parse($at);
         } catch (\Throwable) {
             return null;
         }
     }
 
-    private function buildApprovedPayslipSnapshot(PayrollClaim $claim, ?\Carbon\Carbon $approvedAt): array
+    private function buildApprovedPayslipSnapshot(PayrollClaim $claim, ?Carbon $approvedAt): array
     {
         $periodValue = trim((string) ($claim->period_value ?? ''));
         $periodLabel = trim((string) ($claim->period ?? ''));
@@ -574,6 +649,7 @@ class PayrollClaimWorkflowController extends Controller
             $itemType = strtolower(trim((string) ($item->item_type ?? '')));
             $isDeduction = in_array($itemType, ['deduction', 'deduct', 'minus'], true) || $rawAmount < 0;
             $amount = round(abs($rawAmount), 2);
+
             return [
                 'lineNo' => (int) ($item->line_no ?? 0),
                 'itemType' => trim((string) ($item->item_type ?? '')),

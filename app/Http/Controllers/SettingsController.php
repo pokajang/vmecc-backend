@@ -4,17 +4,19 @@ namespace App\Http\Controllers;
 
 use App\Models\CustomShift;
 use App\Models\Setting;
+use App\Services\AuditLogger;
 use App\Services\InspectionWorkflowService;
-use App\Services\ReportingWorkflowService;
 use App\Services\LeaveWorkflowService;
 use App\Services\OvertimeWorkflowService;
 use App\Services\PayrollClaimWorkflowService;
-use App\Services\AuditLogger;
+use App\Services\ReportingWorkflowService;
 use App\Services\SystemMaintenanceService;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Database\QueryException;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+use Spatie\Permission\Models\Role;
 
 class SettingsController extends Controller
 {
@@ -28,17 +30,22 @@ class SettingsController extends Controller
     ) {}
 
     private const SHIFT_WINDOWS_KEY = 'shift_windows';
+
     private const SALARY_STATUTORY_RATES_KEY = 'salary_statutory_rates';
+
     private const PAYROLL_COMPANY_PROFILE_KEY = 'payroll_company_profile';
+
     private const DEFAULT_WINDOWS = [
         'normal_start' => '08:00',
-        'normal_end'   => '17:00',
-        'day_start'    => '07:00',
-        'day_end'      => '19:00',
-        'night_start'  => '19:00',
-        'night_end'    => '07:00',
+        'normal_end' => '17:00',
+        'day_start' => '07:00',
+        'day_end' => '19:00',
+        'night_start' => '19:00',
+        'night_end' => '07:00',
     ];
+
     private const TIME_REGEX = '/^(?:[01]\d|2[0-3]):[0-5]\d$/';
+
     private const DEFAULT_SALARY_STATUTORY_RATES = [
         'epf' => ['employeeRate' => 0.11, 'employerRate' => 0.13],
         'perkeso' => ['employeeRate' => 0.005, 'employerRate' => 0.005],
@@ -46,6 +53,7 @@ class SettingsController extends Controller
         'updatedAt' => null,
         'updatedBy' => '',
     ];
+
     private const DEFAULT_PAYROLL_COMPANY_PROFILE = [
         'legalName' => '',
         'registrationNumber' => '',
@@ -76,14 +84,14 @@ class SettingsController extends Controller
 
     public function updateShiftWindows(Request $request): JsonResponse
     {
-        $r = ['required', 'regex:' . self::TIME_REGEX];
+        $r = ['required', 'regex:'.self::TIME_REGEX];
         $data = $request->validate([
             'normal_start' => $r,
-            'normal_end'   => $r,
-            'day_start'    => $r,
-            'day_end'      => $r,
-            'night_start'  => $r,
-            'night_end'    => $r,
+            'normal_end' => $r,
+            'day_start' => $r,
+            'day_end' => $r,
+            'night_start' => $r,
+            'night_end' => $r,
         ]);
 
         try {
@@ -119,10 +127,10 @@ class SettingsController extends Controller
     {
         $custom = CustomShift::orderBy('sort_order')->orderBy('name')->get()
             ->map(fn ($s) => [
-                'slug'    => $s->name,
-                'name'    => $s->name,
-                'start'   => $s->start,
-                'end'     => $s->end,
+                'slug' => $s->name,
+                'name' => $s->name,
+                'start' => $s->start,
+                'end' => $s->end,
                 'builtin' => false,
             ])->values()->toArray();
 
@@ -136,9 +144,9 @@ class SettingsController extends Controller
         }
 
         $data = $request->validate([
-            'name'  => ['required', 'string', 'max:100', 'unique:custom_shifts,name'],
-            'start' => ['required', 'regex:' . self::TIME_REGEX],
-            'end'   => ['required', 'regex:' . self::TIME_REGEX],
+            'name' => ['required', 'string', 'max:100', 'unique:custom_shifts,name'],
+            'start' => ['required', 'regex:'.self::TIME_REGEX],
+            'end' => ['required', 'regex:'.self::TIME_REGEX],
         ]);
 
         $shift = CustomShift::create($data);
@@ -151,9 +159,9 @@ class SettingsController extends Controller
     public function updateCustomShift(Request $request, CustomShift $customShift): JsonResponse
     {
         $data = $request->validate([
-            'name'  => ['required', 'string', 'max:100', Rule::unique('custom_shifts', 'name')->ignore($customShift->id)],
-            'start' => ['required', 'regex:' . self::TIME_REGEX],
-            'end'   => ['required', 'regex:' . self::TIME_REGEX],
+            'name' => ['required', 'string', 'max:100', Rule::unique('custom_shifts', 'name')->ignore($customShift->id)],
+            'start' => ['required', 'regex:'.self::TIME_REGEX],
+            'end' => ['required', 'regex:'.self::TIME_REGEX],
         ]);
 
         $customShift->update($data);
@@ -200,21 +208,39 @@ class SettingsController extends Controller
         $roleRequired = ['required', 'string', 'max:255', Rule::exists('roles', 'name')];
         $roleNullable = ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')];
         $data = $request->validate([
-            'rules'                             => ['required', 'array'],
-            'rules.*.id'                        => ['nullable', 'string'],
-            'rules.*.applicantRole'             => $roleRequired,
-            'rules.*.reviewRole'                => $roleRequired,
-            'rules.*.recommendRole'             => $roleNullable,
-            'rules.*.approveRole'               => $roleRequired,
-            'rules.*.active'                    => ['nullable', 'boolean'],
-            'fallback'                          => ['nullable', 'array'],
-            'fallback.reviewRole'               => $roleNullable,
-            'fallback.recommendRole'            => $roleNullable,
-            'fallback.approveRole'              => $roleNullable,
-            'options'                           => ['nullable', 'array'],
-            'options.requireRecommendation'     => ['nullable', 'boolean'],
-            'options.enforceDistinctApprovers'  => ['nullable', 'boolean'],
+            'rules' => ['required', 'array'],
+            'rules.*.id' => ['nullable', 'string'],
+            'rules.*.applicantRole' => $roleRequired,
+            'rules.*.reviewRole' => $roleRequired,
+            'rules.*.recommendRole' => $roleNullable,
+            'rules.*.approveRole' => $roleRequired,
+            'rules.*.active' => ['nullable', 'boolean'],
+            'fallback' => ['nullable', 'array'],
+            'fallback.reviewRole' => $roleNullable,
+            'fallback.recommendRole' => $roleNullable,
+            'fallback.approveRole' => $roleNullable,
+            'options' => ['nullable', 'array'],
+            'options.requireRecommendation' => ['nullable', 'boolean'],
+            'options.enforceDistinctApprovers' => ['nullable', 'boolean'],
         ]);
+        $normalized = $this->leaveWorkflowService->normalizeApprovalRules($data);
+        $roleFields = [];
+        foreach ($normalized['rules'] as $index => $rule) {
+            if (($rule['active'] ?? true) === false) {
+                continue;
+            }
+            $roleFields["rules.{$index}.reviewRole"] = $rule['reviewRole'] ?? '';
+            $roleFields["rules.{$index}.approveRole"] = $rule['approveRole'] ?? '';
+            if (($normalized['options']['requireRecommendation'] ?? true) !== false) {
+                $roleFields["rules.{$index}.recommendRole"] = $rule['recommendRole'] ?? '';
+            }
+        }
+        $roleFields['fallback.reviewRole'] = $normalized['fallback']['reviewRole'] ?? '';
+        $roleFields['fallback.approveRole'] = $normalized['fallback']['approveRole'] ?? '';
+        if (($normalized['options']['requireRecommendation'] ?? true) !== false) {
+            $roleFields['fallback.recommendRole'] = $normalized['fallback']['recommendRole'] ?? '';
+        }
+        $this->assertWorkflowRolesHavePermission($roleFields, 'staff.leave.manage');
 
         try {
             $this->leaveWorkflowService->saveApprovalRules($data);
@@ -224,7 +250,7 @@ class SettingsController extends Controller
 
         return response()->json([
             'message' => 'Leave approval rules updated.',
-            'data'    => $this->leaveWorkflowService->loadApprovalRules(),
+            'data' => $this->leaveWorkflowService->loadApprovalRules(),
         ]);
     }
 
@@ -389,13 +415,13 @@ class SettingsController extends Controller
     {
         $multiplierRule = ['nullable', 'numeric', 'min:0', 'max:100'];
         $data = $request->validate([
-            'weekdayMultiplier'      => $multiplierRule,
-            'weekendMultiplier'      => $multiplierRule,
-            'publicHolidayMultiplier'=> $multiplierRule,
-            'otApplicability'        => ['nullable', 'array'],
-            'otApplicability.roles'  => ['nullable', 'array'],
-            'otApplicability.roles.*'=> ['string', 'max:255', Rule::exists('roles', 'name')],
-            'baseHourCalculation'    => ['nullable', 'array'],
+            'weekdayMultiplier' => $multiplierRule,
+            'weekendMultiplier' => $multiplierRule,
+            'publicHolidayMultiplier' => $multiplierRule,
+            'otApplicability' => ['nullable', 'array'],
+            'otApplicability.roles' => ['nullable', 'array'],
+            'otApplicability.roles.*' => ['string', 'max:255', Rule::exists('roles', 'name')],
+            'baseHourCalculation' => ['nullable', 'array'],
             'baseHourCalculation.mode' => ['nullable', Rule::in(['auto_statutory', 'month_days_division'])],
             'baseHourCalculation.monthlyDivisor' => ['nullable', 'numeric', 'min:0', 'max:366'],
             'baseHourCalculation.globalNormalHoursPerDay' => ['nullable', 'numeric', 'min:0', 'max:24'],
@@ -430,13 +456,18 @@ class SettingsController extends Controller
 
     public function updateSalaryWorkflowRules(Request $request): JsonResponse
     {
-        $roleNullable = ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')];
+        $roleRequired = ['required', 'string', 'max:255', Rule::exists('roles', 'name')];
         $data = $request->validate([
-            'fallback'             => ['nullable', 'array'],
-            'fallback.checkRole'   => $roleNullable,
-            'fallback.reviewRole'  => $roleNullable,
-            'fallback.approveRole' => $roleNullable,
+            'fallback' => ['required', 'array'],
+            'fallback.checkRole' => $roleRequired,
+            'fallback.reviewRole' => $roleRequired,
+            'fallback.approveRole' => $roleRequired,
         ]);
+        $this->assertWorkflowRolesHavePermission([
+            'fallback.checkRole' => data_get($data, 'fallback.checkRole'),
+            'fallback.reviewRole' => data_get($data, 'fallback.reviewRole'),
+            'fallback.approveRole' => data_get($data, 'fallback.approveRole'),
+        ], 'staff.salary.manage');
 
         try {
             $this->payrollClaimWorkflowService->saveWorkflowRules($data);
@@ -460,6 +491,32 @@ class SettingsController extends Controller
         }
 
         return response()->json(['data' => $this->normalizeSalaryStatutoryRates($stored)]);
+    }
+
+    private function assertWorkflowRolesHavePermission(array $fieldRoles, string $permission): void
+    {
+        $roles = Role::query()
+            ->with('permissions:id,name')
+            ->whereIn('name', collect($fieldRoles)->filter()->unique()->values()->all())
+            ->get()
+            ->keyBy('name');
+        $errors = [];
+
+        foreach ($fieldRoles as $field => $roleName) {
+            $roleName = trim((string) $roleName);
+            $role = $roles->get($roleName);
+            $hasPermission = $roleName === 'System Administrator'
+                || ($role && $role->permissions->contains('name', $permission));
+            if ($roleName === '') {
+                $errors[$field] = ['A workflow role is required for this stage.'];
+            } elseif (! $hasPermission) {
+                $errors[$field] = ["The '{$roleName}' role is missing the required {$permission} permission."];
+            }
+        }
+
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
     }
 
     public function updateSalaryStatutoryRates(Request $request): JsonResponse
@@ -695,7 +752,10 @@ class SettingsController extends Controller
             'updatedBy' => trim((string) ($value['updatedBy'] ?? $defaults['updatedBy'])),
             'history' => collect(is_array($value['history'] ?? null) ? $value['history'] : [])
                 ->map(function ($entry) {
-                    if (!is_array($entry)) return null;
+                    if (! is_array($entry)) {
+                        return null;
+                    }
+
                     return [
                         'updatedAt' => trim((string) ($entry['updatedAt'] ?? '')),
                         'updatedBy' => trim((string) ($entry['updatedBy'] ?? '')),

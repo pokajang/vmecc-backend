@@ -39,6 +39,24 @@ class AiHelperKnowledgeEntry extends Model
 
     public const SCOPE_MODULE = 'module';
 
+    public const KNOWLEDGE_REFERENCE_DOCUMENT = 'reference_document';
+
+    public const KNOWLEDGE_SYSTEM_GUIDE = 'system_guide';
+
+    public const KNOWLEDGE_UPLOADED_MARKDOWN = 'uploaded_markdown';
+
+    public const KNOWLEDGE_TYPES = [
+        self::KNOWLEDGE_REFERENCE_DOCUMENT,
+        self::KNOWLEDGE_SYSTEM_GUIDE,
+        self::KNOWLEDGE_UPLOADED_MARKDOWN,
+    ];
+
+    public const PERMISSION_MATCH_ANY = 'any';
+
+    public const PERMISSION_MATCH_ALL = 'all';
+
+    public const PERMISSION_MATCHES = [self::PERMISSION_MATCH_ANY, self::PERMISSION_MATCH_ALL];
+
     public const USER_UPLOAD_MODULE_KEYS = [
         'dashboard',
         'messages',
@@ -76,6 +94,13 @@ class AiHelperKnowledgeEntry extends Model
     protected $fillable = [
         'uploaded_by',
         'source_document_id',
+        'knowledge_type',
+        'required_permissions',
+        'permission_match',
+        'allowed_roles',
+        'module_gate',
+        'guide_owner',
+        'review_due_at',
         'module_key',
         'route_key',
         'title',
@@ -132,6 +157,9 @@ class AiHelperKnowledgeEntry extends Model
 
     protected $casts = [
         'tags' => 'array',
+        'required_permissions' => 'array',
+        'allowed_roles' => 'array',
+        'review_due_at' => 'datetime',
         'retrieval_metadata' => 'array',
         'embedding' => 'array',
         'embedded_at' => 'datetime',
@@ -161,6 +189,17 @@ class AiHelperKnowledgeEntry extends Model
         'ingestion_started_at' => 'datetime',
         'ingestion_completed_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (self $entry): void {
+            if (! $entry->isDirty('knowledge_type')) {
+                $entry->knowledge_type = $entry->source_document_id
+                    ? self::KNOWLEDGE_REFERENCE_DOCUMENT
+                    : self::KNOWLEDGE_UPLOADED_MARKDOWN;
+            }
+        });
+    }
 
     public function uploader(): BelongsTo
     {

@@ -42,4 +42,33 @@ class AiHelperKnowledgeServiceReliabilityTest extends TestCase
         $this->assertStringContainsString('Jawapan tidak ditemui', $missing);
         $this->assertStringContainsString('Credential information', $credential);
     }
+
+    public function test_system_guide_citations_have_no_download_or_private_storage_metadata(): void
+    {
+        $citations = app(AiHelperKnowledgeService::class)->citationsForGuidance([[
+            'source_id' => 'S2',
+            'source_type' => 'system_guide',
+            'id' => 55,
+            'source_document_id' => null,
+            'title' => 'Applying for Leave',
+            'guide_version' => 2,
+            'module_key' => 'leave',
+            'route_key' => 'leave',
+            'source_path' => 'seed:system-guide:leave-self-service',
+            'chunk_id' => 991,
+        ]]);
+
+        $this->assertSame([[
+            'source_id' => 'S2',
+            'source_type' => 'system_guide',
+            'document_id' => null,
+            'title' => 'Applying for Leave',
+            'guide_version' => 2,
+            'module_key' => 'leave',
+            'route_key' => 'leave',
+            'display_label' => 'VMECC System Guide',
+        ]], $citations);
+        $this->assertArrayNotHasKey('source_path', $citations[0]);
+        $this->assertArrayNotHasKey('chunk_id', $citations[0]);
+    }
 }

@@ -45,18 +45,21 @@ class PayrollClaimPaymentWorkflowApiTest extends TestCase
                 'payment_date' => '2026-04-23',
                 'payment_reference' => 'BANK-TRX-001',
                 'payment_note' => 'Salary credited.',
+                'expected_version' => 1,
             ])
             ->assertOk()
             ->assertJsonPath('data.status', 'Paid')
             ->assertJsonPath('data.payment_date', '2026-04-23')
             ->assertJsonPath('data.payment_reference', 'BANK-TRX-001')
-            ->assertJsonPath('data.paid_by_user_id', $manager->id);
+            ->assertJsonPath('data.paid_by_user_id', $manager->id)
+            ->assertJsonPath('data.version', 2);
 
         $claim->refresh();
         $this->assertSame('Paid', $claim->status);
         $this->assertSame('2026-04-23', optional($claim->payment_date)->toDateString());
         $this->assertNotNull($claim->paid_at);
         $this->assertSame($manager->id, (int) $claim->paid_by_user_id);
+        $this->assertSame(2, $claim->version);
 
         $this->assertDatabaseHas('payroll_claim_payment_events', [
             'claim_id' => $claim->id,
@@ -88,6 +91,7 @@ class PayrollClaimPaymentWorkflowApiTest extends TestCase
         $this->actingAs($manager)
             ->postJson("/api/staff/salary-claims/records/{$owner->id}/{$claim->id}/unmark-paid", [
                 'reason' => 'Payment reversal for correction.',
+                'expected_version' => 1,
             ])
             ->assertOk()
             ->assertJsonPath('data.status', 'Approved')
@@ -126,8 +130,8 @@ class PayrollClaimPaymentWorkflowApiTest extends TestCase
         $response = $this->actingAs($manager)
             ->postJson('/api/staff/salary-claims/records/mark-paid/bulk', [
                 'entries' => [
-                    ['owner_id' => $owner->id, 'claim_id' => $approvedClaim->id],
-                    ['owner_id' => $owner->id, 'claim_id' => $pendingClaim->id],
+                    ['owner_id' => $owner->id, 'claim_id' => $approvedClaim->id, 'expected_version' => 1],
+                    ['owner_id' => $owner->id, 'claim_id' => $pendingClaim->id, 'expected_version' => 1],
                 ],
                 'payment_date' => '2026-04-23',
                 'payment_reference' => 'BULK-TRX-01',
@@ -143,6 +147,31 @@ class PayrollClaimPaymentWorkflowApiTest extends TestCase
         $pendingClaim->refresh();
         $this->assertSame('Paid', $approvedClaim->status);
         $this->assertSame('Pending', $pendingClaim->status);
+    }
+
+    public function test_mark_paid_rejects_a_stale_version_without_payment_side_effects(): void
+    {
+        $manager = User::factory()->create(['status' => 'Active']);
+        $this->grantPermission($manager, 'staff.salary.pay');
+        $owner = User::factory()->create(['status' => 'Active']);
+        $claim = $this->createSalaryClaim($owner, [
+            'status' => 'Approved',
+            'version' => 2,
+        ]);
+
+        $this->actingAs($manager)
+            ->postJson("/api/staff/salary-claims/records/{$owner->id}/{$claim->id}/mark-paid", [
+                'payment_date' => '2026-04-23',
+                'expected_version' => 1,
+            ])
+            ->assertConflict()
+            ->assertJsonPath('code', 'PAYROLL_CLAIM_VERSION_CONFLICT')
+            ->assertJsonPath('currentVersion', 2);
+
+        $claim->refresh();
+        $this->assertSame('Approved', $claim->status);
+        $this->assertNull($claim->paid_at);
+        $this->assertDatabaseCount('payroll_claim_payment_events', 0);
     }
 
     private function grantPermission(User $user, string $permissionName): void

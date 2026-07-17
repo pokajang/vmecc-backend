@@ -2,6 +2,11 @@
 
 namespace App\Providers;
 
+use App\Models\Leave;
+use App\Models\OvertimeRecord;
+use App\Models\PayrollClaim;
+use App\Models\Report;
+use App\Observers\WorkflowTransitionObserver;
 use App\Validation\SafeEmailValidator;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Support\Facades\Validator;
@@ -22,6 +27,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Leave::observe(WorkflowTransitionObserver::class);
+        OvertimeRecord::observe(WorkflowTransitionObserver::class);
+        PayrollClaim::observe(WorkflowTransitionObserver::class);
+        Report::observe(WorkflowTransitionObserver::class);
+
         Validator::resolver(function ($translator, $data, $rules, $messages, $attributes) {
             return new SafeEmailValidator($translator, $data, $rules, $messages, $attributes);
         });

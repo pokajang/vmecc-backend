@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 class ReportingWorkflowService
 {
     private const SETTINGS_KEY = 'reporting_workflow_rules';
+
     private const LEGACY_INSPECTION_SETTING_KEY = 'inspection_workflow_rules';
 
     private const REPORTING_MODULE_KEYS = [
@@ -72,9 +73,7 @@ class ReportingWorkflowService
         ],
     ];
 
-    public function __construct(private readonly AssignmentAuthorizationService $authorizationService)
-    {
-    }
+    public function __construct(private readonly AssignmentAuthorizationService $authorizationService) {}
 
     public function isManagedModule(?string $moduleKey): bool
     {
@@ -522,6 +521,10 @@ class ReportingWorkflowService
         $role = trim($role);
         if ($role === '') {
             return false;
+        }
+
+        if ($this->authorizationService->isSystemAdministrator($actor)) {
+            return true;
         }
 
         if ($teamId === null) {
