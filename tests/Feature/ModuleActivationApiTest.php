@@ -71,12 +71,28 @@ class ModuleActivationApiTest extends TestCase
         $this->getJson('/api/payroll/claims')
             ->assertStatus(403)
             ->assertJsonPath('code', 'MODULE_DISABLED')
-            ->assertJsonPath('module', 'payroll.self_service')
+            ->assertJsonPath('module', 'payroll.claims')
             ->assertJsonPath('blocking_module', 'payroll');
     }
 
+    public function test_payroll_claims_and_payslips_use_their_distinct_child_gates(): void
+    {
+        $this->actingAsUserWithPermissions(['settings.manage']);
+        $this->putJson('/api/settings/modules', [
+            'configured' => [
+                'payroll.claims' => false,
+            ],
+        ])->assertOk();
+
+        $this->actingAsUserWithPermissions(['self.payroll']);
+        $this->getJson('/api/payroll/claims')
+            ->assertStatus(403)
+            ->assertJsonPath('module', 'payroll.claims');
+        $this->getJson('/api/payroll/payslips')->assertOk();
+    }
+
     /**
-     * @param array<int, string> $permissions
+     * @param  array<int, string>  $permissions
      */
     private function actingAsUserWithPermissions(array $permissions): User
     {

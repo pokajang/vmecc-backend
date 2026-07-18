@@ -10,78 +10,51 @@ required_permissions:
   - settings.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
-  - reports
+  - inspection
   - workflow
+  - settings
   - system-guide
-active: false
+active: true
 ---
-
 # Inspection Workflow Settings
 
 ## Purpose
 
-Explain the supported VMECC inspection workflow settings workflow without exposing records, hidden controls or another permission tier.
+Configure the roles and safeguards used when an inspection moves from submission through review and approval.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of settings.manage.
+Identify the review role, fallback review role, approval role, team-scoping policy, missing-team policy, IC fallback policy, and self-action restrictions.
 
-## Required permission/module state
+## Steps
 
-The reports.inspection gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Reporting Settings** and open **Inspection**.
+2. Open **Inspection Workflow Settings** and load the current saved rules.
+3. Select existing roles for Review, Fallback Review, and Approve.
+4. Set Team-scoped AIC, Allow submit without team, Allow IC fallback review, Prevent self-review, and Prevent self-approve deliberately.
+5. Save and reload the settings to verify the persisted values.
+6. Test one representative submission and confirm its computed next role before production use.
 
-## Where to find the page
+## What happens next
 
-Open /settings or /reporting-settings.
+Settings do not move reports. They govern Submitted -> Reviewed -> Approved and Rejected from Submitted or Reviewed.
 
-## Prerequisites
+After saving, the responsible system owner verifies the rules. Future inspections use the saved team assignments and role sequence.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+All three fallback role names are required strings up to 255 characters and must exist. Each workflow option uses a Yes or No selection.
 
-1. Open the intended record or New page, complete only the sections and findings shown, save supported draft work, attach media within displayed limits, and use only the workflow action offered for the current state.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Workflow settings contain no attachments.
 
-## Fields and validation
+An unknown role returns validation errors. If submissions become blocked, restore a known valid role path and verify team assignments; do not disable safeguards without owner review.
 
-Report type, team scope, dates, sections, media, findings, issue state, workflow action and export eligibility are validated by each report API.
+## Related tasks
 
-## Statuses and transitions
-
-Draft, submission, review, verification and resolution states depend on report type and configured workflow; follow only displayed transitions.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the settings route family and reports.inspection gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use **Inspection** for report work and **Reporting Settings** for the other report workflows.

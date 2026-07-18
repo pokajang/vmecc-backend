@@ -10,78 +10,51 @@ required_permissions:
   - settings.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: System Administration
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - settings
-  - workflow
+  - modules
+  - activation
   - system-guide
-active: false
+active: true
 ---
-
 # Module Activation
 
 ## Purpose
 
-Explain the supported VMECC module activation workflow without exposing records, hidden controls or another permission tier.
+Enable or disable registered VMECC modules while respecting locked roots, parents, and dependencies.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of settings.manage.
+Review the feature, its parent and related features, its current state, the affected users, and how you will restore the previous setting if needed.
 
-## Required permission/module state
+## Steps
 
-The settings.module_activation gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Settings** and open **Module Activation**.
+2. Review the page and confirm that no configuration warning is shown.
+3. Locate the exact feature and inspect its parent, related features, child features, and current state.
+4. Toggle only the intended module; review every child shown as inactive from a parent or dependency.
+5. Select **Save**, then reload the page and confirm the selected states remain displayed.
+6. Verify affected navigation and system access with representative authorized users.
 
-## Where to find the page
+## What happens next
 
-Open /settings or /reporting-settings.
+A feature becomes **Enabled** or **Disabled**. It can also remain unavailable because its parent or a required related feature is disabled. Locked features remain enabled.
 
-## Prerequisites
+The System Administrator checks the affected pages with representative users after saving.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Choose **Enabled** or **Disabled** only for features displayed on the page. A child feature cannot be used while its parent or a required related feature is disabled.
 
-1. Review the current effective configuration, change only approved supported values, validate dependencies and stage order where shown, save once, then reload and verify the effective result.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Module activation has no attachments.
 
-## Fields and validation
+Resolve any configuration warning before release. If a child remains unavailable, enable its parent and required related features. To roll back, restore the previous selections and save again.
 
-Only registered settings, modules, roles and permissions are accepted.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact System Administration when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the settings route family and settings.module_activation gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: System Administration. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use Role Permissions after activation to confirm who can access the enabled capability.

@@ -32,6 +32,26 @@ class FireExtinguisherIssueWorkflowService
         });
     }
 
+    public function unassign(InspectionFireExtinguisherIssue $issue, int $actorId, ?string $note = null): InspectionFireExtinguisherIssue
+    {
+        return $this->mutate($issue, $actorId, function (InspectionFireExtinguisherIssue $locked) use ($note): array {
+            if (! in_array($locked->status, InspectionFireExtinguisherIssue::ACTIVE_STATUSES, true)) {
+                throw ValidationException::withMessages(['status' => ['Only an active issue can be unassigned.']]);
+            }
+            if (! $locked->assigned_to_user_id) {
+                throw ValidationException::withMessages(['assignedToUserId' => ['The issue is already unassigned.']]);
+            }
+            $previousAssigneeId = (int) $locked->assigned_to_user_id;
+            $from = $locked->status;
+            $locked->assigned_to_user_id = null;
+            if ($locked->status === 'in_progress') {
+                $locked->status = 'open';
+            }
+
+            return ['unassigned', $from, $locked->status, $note, ['previous_assigned_to_user_id' => $previousAssigneeId]];
+        });
+    }
+
     public function start(InspectionFireExtinguisherIssue $issue, int $actorId, ?string $note = null): InspectionFireExtinguisherIssue
     {
         return $this->transition($issue, $actorId, ['open'], 'in_progress', 'started', $note, function ($locked): void {
@@ -61,6 +81,11 @@ class FireExtinguisherIssueWorkflowService
             function ($locked) use ($actorId, $note): void {
                 if (trim($note) === '') {
                     throw ValidationException::withMessages(['note' => ['Verification notes are required.']]);
+                }
+                if ((int) $locked->resolved_by_user_id === $actorId) {
+                    throw ValidationException::withMessages([
+                        'verifier' => ['The resolver cannot verify their own corrective work.'],
+                    ]);
                 }
                 $locked->verified_at = now();
                 $locked->verified_by_user_id = $actorId;

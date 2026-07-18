@@ -10,78 +10,50 @@ required_permissions:
   - audit.view
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: System Administration
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - audit
-  - workflow
+  - security
+  - history
   - system-guide
-active: false
+active: true
 ---
-
 # Audit Logs
 
 ## Purpose
 
-Explain the supported VMECC audit logs workflow without exposing records, hidden controls or another permission tier.
+Review the read-only history of important actions by person, affected record, and time period.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of audit.view.
+Prepare the action, person, affected record, start time, end time, and expected change you want to investigate.
 
-## Required permission/module state
+## Steps
 
-The audit gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Audit Logs**.
+2. Open **Audit Logs** and set the narrowest relevant action, actor, subject, and date filters.
+3. Compare event ID, timestamp, action, actor identity, subject, IP address, user agent, and details.
+4. Cross-check related events and the current target record before drawing a conclusion.
+5. Record the required event numbers under the approved incident or review process.
 
-## Where to find the page
+## What happens next
 
-Open /admin/audit.
+The page is read-only. Audit events do not transition and cannot be edited from this interface.
 
-## Prerequisites
+The authorized investigator or system owner follows the applicable security, access-review, or operational procedure.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Use the action, person, affected-record, and date filters to narrow the list. The page normally shows 200 events and can show up to 500 at a time.
 
-1. Open the stated page, select the intended record or section, complete only visible supported fields, review the summary and current state, then use the enabled primary action once.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Audit logs contain no file attachments. Open an event to read the additional details recorded for that action.
 
-## Fields and validation
+Broaden a filter only after checking the event number and time zone. An empty result does not prove that an event did not occur outside the selected date range or under another action name.
 
-Audit filters are read-only and audit events cannot be edited.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact System Administration when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the audit route family and audit gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: System Administration. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use User Administration for subject-specific session and account state; use the relevant business record for current state.

@@ -156,7 +156,10 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
     public function test_issue_can_be_assigned_resolved_verified_and_reopened(): void
     {
         $user = $this->userWithPermissions([
-            'reports.inspection.view', 'reports.inspection.issues.manage', 'reports.inspection.issues.verify',
+            'reports.inspection.view', 'reports.inspection.issues.manage',
+        ]);
+        $verifier = $this->userWithPermissions([
+            'reports.inspection.view', 'reports.inspection.issues.verify',
         ]);
         $asset = $this->asset();
         $report = $this->report($user, $asset, 'Not Good', 'Gauge failed');
@@ -194,12 +197,39 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
             ->where('parent_type', 'fire_extinguisher_issue_resolution')
             ->where('parent_key', $issue->public_id)
             ->exists());
+        $this->actingAs($verifier);
         $verified = $this->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/verify", [
             'note' => 'Verified on site', 'lockVersion' => $resolved->json('data.lockVersion'),
         ])->assertOk()->assertJsonPath('data.status', 'closed');
-        $this->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/reopen", [
+        $this->actingAs($user)->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/reopen", [
             'note' => 'Defect returned', 'lockVersion' => $verified->json('data.lockVersion'),
         ])->assertOk()->assertJsonPath('data.status', 'open');
+    }
+
+    public function test_resolver_cannot_verify_their_own_corrective_work(): void
+    {
+        $user = $this->userWithPermissions([
+            'reports.inspection.view', 'reports.inspection.issues.manage', 'reports.inspection.issues.verify',
+        ]);
+        $asset = $this->asset();
+        $report = $this->report($user, $asset, 'Not Good', 'Gauge failed');
+        app(InspectionCheckRowSyncService::class)->syncForReport($report, $user->id);
+        $issue = InspectionFireExtinguisherIssue::query()->firstOrFail();
+        $this->actingAs($user);
+
+        $resolved = $this->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/resolve", [
+            'correctiveAction' => 'Replaced pressure gauge',
+            'resolutionNotes' => 'Pressure test passed',
+            'resolutionPhotos' => [],
+            'lockVersion' => $issue->lock_version,
+        ])->assertOk();
+
+        $this->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/verify", [
+            'note' => 'Self verified',
+            'lockVersion' => $resolved->json('data.lockVersion'),
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('verifier');
+        $this->assertSame('pending_verification', $issue->fresh()->status);
     }
 
     public function test_issue_actions_reject_a_stale_client_version(): void
@@ -247,6 +277,7 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
     {
         $user = $this->userWithPermissions(['reports.inspection.view', 'reports.inspection.issues.manage']);
         $inactiveUser = User::factory()->create(['status' => 'inactive']);
+        $unauthorizedUser = User::factory()->create(['status' => 'active']);
         $deletedUser = User::factory()->create(['status' => 'active']);
         $deletedUser->delete();
         $asset = $this->asset();
@@ -261,6 +292,9 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
         $this->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/assign", [
             'assignedToUserId' => $deletedUser->id, 'lockVersion' => $issue->lock_version,
         ])->assertUnprocessable();
+        $this->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/assign", [
+            'assignedToUserId' => $unauthorizedUser->id, 'lockVersion' => $issue->lock_version,
+        ])->assertUnprocessable();
 
         $cancelled = $this->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/cancel", [
             'note' => 'Duplicate issue', 'lockVersion' => $issue->lock_version,
@@ -268,6 +302,44 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
         $this->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/assign", [
             'assignedToUserId' => $user->id, 'lockVersion' => $cancelled->json('data.lockVersion'),
         ])->assertUnprocessable();
+    }
+
+    public function test_issue_can_be_reassigned_and_unassigned_with_an_audit_event(): void
+    {
+        $manager = $this->userWithPermissions(['reports.inspection.view', 'reports.inspection.issues.manage']);
+        $secondManager = $this->userWithPermissions(['reports.inspection.view', 'reports.inspection.issues.manage']);
+        $asset = $this->asset();
+        $report = $this->report($manager, $asset, 'Not Good', 'Gauge failed');
+        app(InspectionCheckRowSyncService::class)->syncForReport($report, $manager->id);
+        $issue = InspectionFireExtinguisherIssue::query()->firstOrFail();
+        $this->actingAs($manager);
+
+        $this->getJson('/api/inspection/fire-extinguisher-issues/assignees')
+            ->assertOk()
+            ->assertJsonFragment(['id' => $manager->id])
+            ->assertJsonFragment(['id' => $secondManager->id]);
+        $assigned = $this->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/assign", [
+            'assignedToUserId' => $secondManager->id,
+            'lockVersion' => $issue->lock_version,
+        ])->assertOk()->assertJsonPath('data.assignee.id', $secondManager->id);
+        $started = $this->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/start", [
+            'note' => 'Maintenance started',
+            'lockVersion' => $assigned->json('data.lockVersion'),
+        ])->assertOk()->assertJsonPath('data.status', 'in_progress');
+        $this->postJson("/api/inspection/fire-extinguisher-issues/{$issue->id}/unassign", [
+            'note' => 'Returned to the shared queue',
+            'lockVersion' => $started->json('data.lockVersion'),
+        ])->assertOk()
+            ->assertJsonPath('data.assignee', null)
+            ->assertJsonPath('data.status', 'open');
+
+        $this->assertDatabaseHas('inspection_fire_extinguisher_issue_events', [
+            'issue_id' => $issue->id,
+            'event_type' => 'unassigned',
+            'actor_user_id' => $manager->id,
+            'from_status' => 'in_progress',
+            'to_status' => 'open',
+        ]);
     }
 
     public function test_retirement_cancels_active_issues_and_blocks_reopening_until_restore(): void

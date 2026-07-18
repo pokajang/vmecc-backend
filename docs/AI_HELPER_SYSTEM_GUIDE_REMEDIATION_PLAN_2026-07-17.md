@@ -1,5 +1,7 @@
 # Final System-Guide Remediation Plan
 
+> Superseded on 2026-07-17 by `AI_HELPER_SYSTEM_GUIDE_LAYMAN_MVP_CONTRACT_2026-07-17.md`. Approval-manifest proposals below are historical and must not be used for deployment.
+
 Date: 2026-07-17
 
 Target: 51 final, code-controlled, role-aware VMECC system guides

@@ -1,6 +1,6 @@
 # Review dossier: ask-ai-usage
 
-Status: candidate authored; System Administration approval pending.
+Status: version 3 final workflow verification.
 
 1. Frontend route/guard: global header panel; authenticated application shell.
 2. Page and labels: `AiHelperPanel.js`; **Chat**, **History**, **Knowledge**, **Send**, **Report**.
@@ -14,4 +14,20 @@ Status: candidate authored; System Administration approval pending.
 10. Recovery: generation error remains non-actioning; user retries once or contacts the guide owner.
 11. Tests: `AiHelperApiTest.php`, `AiHelperSystemGuideRetrievalTest.php`, frontend `AiHelperPanel.test.jsx` and `MessageBubble.test.jsx`.
 12. Discrepancies: generic template removed; guide distinguishes application guidance from operational policy.
-13. Approval: owner System Administration; v3 body; approval reference, approver, date, and SHA-256 pending.
+
+- Frontend route evidence: `vmecc-frontend/src/routes.js`.
+- Backend route and authorization evidence: `vmecc-backend/routes/api.php`.
+## Verified user workflow
+
+- Route registration: `vmecc-frontend/src/routes.js`.
+- Visible page, labels, fields, and sequencing: `vmecc-frontend/src/components/ai-helper/AiHelperPanel.js`.
+- API registration and middleware boundary: `vmecc-backend/routes/api.php`.
+- Validation, authorization, or workflow enforcement: `vmecc-backend/app/Http/Controllers/AiHelperController.php`.
+
+## Verification coverage
+
+- Focused automated evidence: `vmecc-backend/tests/Feature/AiHelperApiTest.php`.
+
+## Discrepancies
+
+No unresolved guide-to-code discrepancy remains after the final-label and workflow audit.

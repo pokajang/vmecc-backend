@@ -1084,6 +1084,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         $page->assertJsonPath('meta.page', 2);
         $page->assertJsonPath('meta.perPage', 1);
         $page->assertJsonPath('meta.lastPage', 2);
+        $page->assertJsonPath('meta.paginationStrategy', 'database-page');
         $this->assertCount(1, $page->json('data'));
 
         $filtered = $this->getJson('/api/inspection/fire-extinguishers/coverage?search=PUMP-003&perPage=10');
@@ -1093,6 +1094,38 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         $filtered->assertJsonPath('meta.filtered', 1);
         $filtered->assertJsonPath('data.0.idLocNo', 'PUMP-003');
         $this->assertContains('Coverage Pump House', $filtered->json('meta.options.locations'));
+    }
+
+    public function test_fire_extinguisher_database_pagination_safely_sorts_supported_zone_labels(): void
+    {
+        $this->actingAsInspectionUser();
+
+        foreach ([
+            ['zone' => 'Zone 10', 'id' => 'ORDER-010'],
+            ['zone' => '3', 'id' => 'ORDER-003'],
+            ['zone' => 'Zone 2 Annex', 'id' => 'ORDER-002'],
+        ] as $index => $row) {
+            InspectionFireExtinguisher::query()->create([
+                'zone' => $row['zone'],
+                'main_location_name' => 'Coverage Order Yard',
+                'sub_location_name' => 'Area '.$index,
+                'id_loc_no' => $row['id'],
+                'barcode_no' => 'BAR-'.$row['id'],
+                'fe_type' => 'DP 6KG',
+                'certification_validity' => '2026-12-31',
+                'source' => 'custom',
+                'is_active' => true,
+            ]);
+        }
+
+        $response = $this->getJson('/api/inspection/fire-extinguishers/coverage?search=ORDER-&perPage=10');
+
+        $response->assertOk()
+            ->assertJsonPath('meta.paginationStrategy', 'database-page');
+        $this->assertSame(
+            ['ORDER-002', 'ORDER-003', 'ORDER-010'],
+            collect($response->json('data'))->pluck('idLocNo')->all(),
+        );
     }
 
     private function firePayload(): array

@@ -1,6 +1,6 @@
 # Review dossier: messages
 
-Status: candidate authored; System Administration approval pending.
+Status: version 3 final workflow verification.
 
 1. Frontend route/guard: `/messages`; Messages module.
 2. Page and labels: `Messages.js`, `ChatList.js`, `ChatThread.js`; New chat, Unread, Send message, Delete message, Delete conversation.
@@ -14,4 +14,20 @@ Status: candidate authored; System Administration approval pending.
 10. Recovery: remove/reselect rejected image; reload threads once; local draft persistence.
 11. Tests: message UI tests plus controller/API tests.
 12. Discrepancies: template omitted deletion scope, attachment authorization, and exact limits.
-13. Approval: owner System Administration; v3 body; approval reference, approver, date, and SHA-256 pending.
+
+- Frontend route evidence: `vmecc-frontend/src/routes.js`.
+- Backend route and authorization evidence: `vmecc-backend/routes/api.php`.
+## Verified user workflow
+
+- Route registration: `vmecc-frontend/src/routes.js`.
+- Visible page, labels, fields, and sequencing: `vmecc-frontend/src/views/messages/Messages.js`.
+- API registration and middleware boundary: `vmecc-backend/routes/api.php`.
+- Validation, authorization, or workflow enforcement: `vmecc-backend/app/Http/Controllers/MessageController.php`.
+
+## Verification coverage
+
+- Focused automated evidence: `vmecc-backend/tests/Feature/UserManagementSecurityTest.php`.
+
+## Discrepancies
+
+No unresolved guide-to-code discrepancy remains after the final-label and workflow audit.

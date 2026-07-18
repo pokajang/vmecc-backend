@@ -59,8 +59,10 @@ class AiHelperKnowledgeRetriever
 
         $audience = $this->audienceResolver->resolve($user, $context);
         $rankingContext = $context;
-        $rankingContext['route_key'] = $audience->routeKey ?? ($context['route_key'] ?? null);
-        $rankingContext['module_key'] = $audience->moduleKey ?? ($context['module_key'] ?? null);
+        // Page metadata supplied by the browser is never trusted directly. An
+        // unknown path receives no route/module ranking boost.
+        $rankingContext['route_key'] = $audience->routeKey;
+        $rankingContext['module_key'] = $audience->moduleKey;
         $authorizedIds = $this->authorizedEntryIds($user, $audience, $message);
         $entries = AiHelperKnowledgeEntry::query()
             ->whereKey($authorizedIds)

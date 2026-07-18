@@ -10,78 +10,50 @@ required_permissions:
   - reports.erco.view
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - reports
-  - workflow
+  - erco
   - system-guide
-active: false
+active: true
 ---
-
 # ERCO Reports
 
 ## Purpose
 
-Explain the supported VMECC erco reports workflow without exposing records, hidden controls or another permission tier.
+Create, review, and retrieve Emergency Response Call-Out reports within the ERCO workflow.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of reports.erco.view.
+Confirm the incident, response facts, participating personnel, report owner, and current status and history before saving or acting.
 
-## Required permission/module state
+## Steps
 
-The reports.erco gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Reports** and open **ERCO**.
+2. On **ERCO**, select **New ERCO Report** or open an existing ERCO record.
+3. Complete the ERCO form and use **Save Draft** to retain incomplete work.
+4. Review every required section, accept the submission declaration, and submit the report.
+5. On an assigned record, use **Review**, **Approve**, or **Reject** only when the matching action is shown; rejection requires remarks.
+6. Reload the detail and verify its status, latest details, and timeline.
 
-## Where to find the page
+## What happens next
 
-Open /report/erco.
+The normal sequence is **Draft**, **Submitted**, **Reviewed**, then **Approved**. A submitted or reviewed report can instead be **Rejected**. If someone else changes the report first, reload it before acting.
 
-## Prerequisites
+The owner submits. The saved ERCO settings select the assigned review role, fallback review role, and approval role.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Complete the required ERCO details before submitting. Rejection remarks are limited to 2,000 characters.
 
-1. Open the intended record or New page, complete only the sections and findings shown, save supported draft work, attach media within displayed limits, and use only the workflow action offered for the current state.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Add photos in **Post-Incident Analysis** under **Photos**. Use **Download** when a PDF copy of the report is required.
 
-## Fields and validation
+If another user changed the report, reload it and review the latest details before acting again. If a validation message appears, return to the named ERCO section. If access is denied, ask an administrator to check your assignment.
 
-Report type, team scope, dates, sections, media, findings, issue state, workflow action and export eligibility are validated by each report API.
+## Related tasks
 
-## Statuses and transitions
-
-Draft, submission, review, verification and resolution states depend on report type and configured workflow; follow only displayed transitions.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-Use only the upload control shown. File type, size, count, ownership and retrieval authorization are enforced by the attachment API.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the erco route family and reports.erco gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use **ERCO** for records and **Reporting Settings** to manage the ERCO review sequence.

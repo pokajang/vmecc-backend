@@ -1,6 +1,6 @@
 ---
 key: staff-directory
-title: Viewing the Staff Directory and Profiles
+title: Viewing the Staff Directory
 knowledge_type: system_guide
 scope_type: module
 module_key: staff
@@ -10,78 +10,49 @@ required_permissions:
   - staff.view
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Human Resources
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - staff
-  - workflow
+  - directory
+  - profile
   - system-guide
-active: false
+active: true
 ---
-
-# Viewing the Staff Directory and Profiles
+# Viewing the Staff Directory
 
 ## Purpose
 
-Explain the supported VMECC viewing the staff directory and profiles workflow without exposing records, hidden controls or another permission tier.
+Find staff and view the limited directory profile information available to your role.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of staff.view.
+Use the correct staff identity and team context. Directory information may reflect the user's current active team membership and role assignments.
 
-## Required permission/module state
+## Steps
 
-The staff.directory gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Staff**.
+2. Open **Staff**, search by the visible name or directory fields, and apply available team/status filters.
+3. Select the intended person and review only the directory sections returned by the system.
+4. Use the displayed contact or message action when authorized; return to the list before selecting another person.
 
-## Where to find the page
+## What happens next
 
-Open /staff/details.
+The directory is read-only. Active, inactive, locked, or deleted account management is not performed from this access tier.
 
-## Prerequisites
+Human Resources or a user administrator updates incorrect staff/account information under separate access rights.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+The system controls which identity, team, contact, avatar, and role-summary fields appear. Missing restricted fields are intentional and must not be inferred.
 
-1. Open the stated page, select the intended record or section, complete only visible supported fields, review the summary and current state, then use the enabled primary action once.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Profile images may be displayed through authorized storage URLs. Directory viewers cannot upload or replace another user's image.
 
-## Fields and validation
+Clear the filters when a known person is not listed. An **Access denied** message means your role, team assignment, or the Staff feature does not allow that profile. Contact Human Resources rather than requesting hidden fields through Ask AI.
 
-Identity and employment fields are validated by the staff API; sensitive self-profile fields have separate permissions.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Human Resources when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the staff route family and staff.directory gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Human Resources. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Staff record management, user administration, teams, and role assignments are separate tasks for authorized users.

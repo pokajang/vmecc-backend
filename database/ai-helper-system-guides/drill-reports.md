@@ -10,78 +10,50 @@ required_permissions:
   - reports.drill.view
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - reports
-  - workflow
+  - drill
   - system-guide
-active: false
+active: true
 ---
-
 # Drill Reports
 
 ## Purpose
 
-Explain the supported VMECC drill reports workflow without exposing records, hidden controls or another permission tier.
+Record a drill, retain a draft, submit the completed report, and follow its controlled review path.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of reports.drill.view.
+Collect the drill date and time, scenario, objectives, participants, observations, outcomes, and corrective actions before submission.
 
-## Required permission/module state
+## Steps
 
-The reports.drill gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Reports** and open **Drill**.
+2. On **Drill**, select **New Drill Report**.
+3. Complete the drill sections and use **Save Draft** while required submission data is incomplete.
+4. Review the report, accept the declaration, and submit it.
+5. Assigned reviewers and approvers open the detail and use the action matching the current state.
+6. Reload and verify status, latest details, timeline, and any rejection remarks.
 
-## Where to find the page
+## What happens next
 
-Open /report/drill.
+The normal sequence is **Draft**, **Submitted**, **Reviewed**, then **Approved**. A submitted or reviewed report can instead be **Rejected**, with remarks explaining why.
 
-## Prerequisites
+The owner submits; the configured Drill review role acts next, followed by the configured approval role.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Complete the required drill details before submitting. Rejection remarks are limited to 2,000 characters.
 
-1. Open the intended record or New page, complete only the sections and findings shown, save supported draft work, attach media within displayed limits, and use only the workflow action offered for the current state.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Add photos in **Post-Exercise Analysis**. Use **Download** after the report is ready.
 
-## Fields and validation
+If the report changed while you were viewing it, reload and review the latest details. Complete the exact field named in the message. If an action is unavailable, ask an administrator to check your assignment and whether **Drill** is enabled.
 
-Report type, team scope, dates, sections, media, findings, issue state, workflow action and export eligibility are validated by each report API.
+## Related tasks
 
-## Statuses and transitions
-
-Draft, submission, review, verification and resolution states depend on report type and configured workflow; follow only displayed transitions.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-Use only the upload control shown. File type, size, count, ownership and retrieval authorization are enforced by the attachment API.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the drill route family and reports.drill gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use **Drill** for report work and **Reporting Settings** to manage the Drill review sequence.

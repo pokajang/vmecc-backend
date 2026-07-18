@@ -10,12 +10,6 @@ use Tests\TestCase;
 
 class AiHelperKnowledgeAudienceResolverTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-        config(['ai_helper.system_guide_approval_enforced' => false]);
-    }
-
     public function test_permission_any_and_all_are_enforced(): void
     {
         config(['ai_helper.system_guides_enabled' => true]);

@@ -8,80 +8,54 @@ route_key: inspection
 module_gate: reports.inspection
 required_permissions:
   - reports.manage
+  - reports.inspection.conduct
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
-  - reports
+  - inspection
+  - conduct
   - workflow
   - system-guide
-active: false
+active: true
 ---
-
 # Creating and Managing Inspections
 
 ## Purpose
 
-Explain the supported VMECC creating and managing inspections workflow without exposing records, hidden controls or another permission tier.
+Conduct an inspection, save work safely, submit the completed report, and perform authorized workflow actions.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of reports.manage.
+Confirm duty context, inspection type, location or asset, inspector identity, checklist data, evidence, and network state before final submission.
 
-## Required permission/module state
+## Steps
 
-The reports.inspection gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Inspection**.
+2. Open **New Inspection** and choose the implemented inspection type.
+3. Confirm the required duty context and complete each location, asset, checklist, finding, and evidence section.
+4. Save the draft, then reopen it and verify the recovered content before continuing.
+5. Review all findings and submit once every required field is complete.
+6. For assigned workflow work, open the record and select **Review**, **Approve**, or **Reject** only when that action is shown; reload and verify the new status.
 
-## Where to find the page
+## What happens next
 
-Open /inspection.
+The normal sequence is **Draft**, **Submitted**, **Reviewed**, then **Approved**. A submitted or reviewed inspection can instead be **Rejected**. If someone else changes the inspection first, reload it before acting.
 
-## Prerequisites
+The inspector submits. The **AIC** for the assigned team or the fallback reviewer acts next, followed by the configured approver. The saved self-review and self-approval rules still apply.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Complete every required inspection detail and check before submitting. Workflow remarks can contain up to 2,000 characters. Reload the inspection before retrying an action after a conflict.
 
-1. Open the intended record or New page, complete only the sections and findings shown, save supported draft work, attach media within displayed limits, and use only the workflow action offered for the current state.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Add evidence through the report's **Attachments** area and wait for each file to finish uploading before submitting.
 
-## Fields and validation
+Restore a saved draft after an interruption. Correct the exact field named in the message. If duty or workflow information is missing, complete it before submitting again.
 
-Report type, team scope, dates, sections, media, findings, issue state, workflow action and export eligibility are validated by each report API.
+## Related tasks
 
-## Statuses and transitions
-
-Draft, submission, review, verification and resolution states depend on report type and configured workflow; follow only displayed transitions.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-Use only the upload control shown. File type, size, count, ownership and retrieval authorization are enforced by the attachment API.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the inspection route family and reports.inspection gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use **Inspection** for records, **Fire Extinguishers** for assets, and **Inspection Workflow Settings** for workflow configuration.

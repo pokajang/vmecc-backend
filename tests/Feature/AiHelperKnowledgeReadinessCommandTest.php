@@ -43,6 +43,8 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
             'ai_helper.api_key' => 'test-key',
             'ai_helper.retrieval_v2' => true,
             'ai_helper.retrieval_v3' => true,
+            'ai_helper.system_guides_enabled' => true,
+            'ai_helper.system_guide_final_corpus_enforced' => true,
             'ai_helper.embedding_enabled' => true,
             'ai_helper.rerank_enabled' => true,
             'ai_helper.citation_validation_enabled' => true,
@@ -67,14 +69,13 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
         $this->assertStringContainsString('"system_guides_ready":false', $output);
     }
 
-    public function test_readiness_keeps_unaudited_system_guide_drafts_out_of_release(): void
+    public function test_readiness_requires_the_final_source_corpus_to_be_seeded(): void
     {
         config([
             'ai_helper.embedding_enabled' => false,
             'ai_helper.system_guides_enabled' => true,
         ]);
         $this->seed(AiHelperReferenceCorpusSeeder::class);
-        $this->seed(AiHelperSystemGuideSeeder::class);
 
         $this->assertSame(1, Artisan::call('ai-helper:knowledge-readiness', ['--json' => true]));
         $output = Artisan::output();
@@ -82,7 +83,70 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
         $this->assertStringContainsString('"system_guides_ready":false', $output);
         $this->assertStringContainsString('"role_aware_retrieval_ready":false', $output);
         $this->assertStringContainsString('"linked_to_pdf":34', $output);
-        $this->assertStringContainsString('"valid_catalog_metadata":51', $output);
+        $this->assertStringContainsString('"valid_catalog_metadata":0', $output);
+        $this->assertStringContainsString('"source_final":51', $output);
+        $this->assertStringContainsString('"source_active":51', $output);
+        $this->assertStringContainsString('"source_hash_matches":0', $output);
+        $this->assertStringContainsString('"verification_dossiers":51', $output);
+        $this->assertStringContainsString('"deployment_state":"incomplete"', $output);
+    }
+
+    public function test_complete_final_corpora_pass_the_uat_readiness_gate(): void
+    {
+        config([
+            'ai_helper.embedding_enabled' => false,
+            'ai_helper.system_guides_enabled' => true,
+            'ai_helper.system_guide_final_corpus_enforced' => true,
+        ]);
+        $this->seed(AiHelperReferenceCorpusSeeder::class);
+        $this->seed(AiHelperSystemGuideSeeder::class);
+
+        $this->assertSame(0, Artisan::call('ai-helper:knowledge-readiness', ['--json' => true]));
+        $output = Artisan::output();
+        $this->assertStringContainsString('"ready":true', $output);
+        $this->assertStringContainsString('"reference_knowledge_ready":true', $output);
+        $this->assertStringContainsString('"system_guides_ready":true', $output);
+        $this->assertStringContainsString('"role_aware_retrieval_ready":true', $output);
+        $this->assertStringContainsString('"source_hash_matches":51', $output);
+        $this->assertStringContainsString('"deployment_state":"production_ready"', $output);
+    }
+
+    public function test_production_configuration_fails_when_either_system_guide_safety_flag_is_false(): void
+    {
+        $this->createReadyKnowledge(withEmbedding: true);
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'test-key',
+            'ai_helper.retrieval_v2' => true,
+            'ai_helper.retrieval_v3' => true,
+            'ai_helper.embedding_enabled' => true,
+            'ai_helper.rerank_enabled' => true,
+            'ai_helper.citation_validation_enabled' => true,
+            'ai_helper.critical_fact_validation_enabled' => true,
+            'ai_helper.grounding_verification_mode' => 'enforce',
+            'ai_helper.system_guides_enabled' => false,
+            'ai_helper.system_guide_final_corpus_enforced' => true,
+        ]);
+
+        $this->assertSame(1, Artisan::call('ai-helper:knowledge-readiness', [
+            '--production' => true,
+            '--json' => true,
+        ]));
+        $disabledRuntimeOutput = Artisan::output();
+        $this->assertStringContainsString('"production_configuration_valid":false', $disabledRuntimeOutput);
+        $this->assertStringContainsString('"system_guides_runtime_enabled":false', $disabledRuntimeOutput);
+
+        config([
+            'ai_helper.system_guides_enabled' => true,
+            'ai_helper.system_guide_final_corpus_enforced' => false,
+        ]);
+        $this->assertSame(1, Artisan::call('ai-helper:knowledge-readiness', [
+            '--production' => true,
+            '--json' => true,
+        ]));
+        $disabledCorpusOutput = Artisan::output();
+        $this->assertStringContainsString('"production_configuration_valid":false', $disabledCorpusOutput);
+        $this->assertStringContainsString('"final_corpus_enforced":false', $disabledCorpusOutput);
     }
 
     public function test_readiness_requires_active_status_and_an_index_for_each_entry(): void

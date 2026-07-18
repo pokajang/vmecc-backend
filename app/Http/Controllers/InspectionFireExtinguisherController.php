@@ -108,17 +108,24 @@ class InspectionFireExtinguisherController extends Controller
     public function coverage(Request $request): JsonResponse
     {
         $this->ensureInspectionPermission($request);
-        $result = $this->coverageService->build($request->query());
         $page = max(1, (int) $request->query('page', 1));
         $perPageQuery = Str::of((string) $request->query('perPage', $request->query('per_page', 10)))->squish()->lower()->toString();
         $perPage = $perPageQuery === 'all' ? 'all' : min(100, max(1, (int) $perPageQuery ?: 10));
+        $result = $perPage === 'all'
+            ? null
+            : $this->coverageService->buildPage($request->query(), $page, $perPage);
+        if ($result === null) {
+            $result = $this->coverageService->build($request->query());
+        }
         $sortedData = $result['rows'];
         $filteredCount = (int) $result['filtered'];
-        $lastPage = $perPage === 'all' ? 1 : max(1, (int) ceil($filteredCount / $perPage));
-        $page = min($page, $lastPage);
-        $pagedData = $perPage === 'all'
+        $lastPage = (int) ($result['lastPage'] ?? ($perPage === 'all' ? 1 : max(1, (int) ceil($filteredCount / $perPage))));
+        $page = (int) ($result['page'] ?? min($page, $lastPage));
+        $pagedData = isset($result['strategy'])
             ? $sortedData->values()
-            : $sortedData->slice(($page - 1) * $perPage, $perPage)->values();
+            : ($perPage === 'all'
+                ? $sortedData->values()
+                : $sortedData->slice(($page - 1) * $perPage, $perPage)->values());
 
         return response()->json([
             'data' => $pagedData,
@@ -140,6 +147,7 @@ class InspectionFireExtinguisherController extends Controller
                 'page' => $page,
                 'perPage' => $perPage,
                 'lastPage' => $lastPage,
+                'paginationStrategy' => $result['strategy'] ?? 'collection',
                 'total' => $result['total'],
                 'filtered' => $filteredCount,
                 'summary' => $result['summary'],

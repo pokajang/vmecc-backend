@@ -13,78 +13,49 @@ required_permissions:
   - reports.fitness.view
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - reports
-  - workflow
+  - navigation
   - system-guide
-active: false
+active: true
 ---
-
 # Report Navigation
 
 ## Purpose
 
-Explain the supported VMECC report navigation workflow without exposing records, hidden controls or another permission tier.
+Find the Inspection, ERCO, Drill, and Fitness Test workspaces available to your role.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of reports.inspection.view, reports.erco.view, reports.drill.view, reports.fitness.view.
+Know the report type and whether the task is to view records, create a report, or act on a workflow item.
 
-## Required permission/module state
+## Steps
 
-The reports gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Reports**.
+2. Open **Reporting** in the sidebar and select the required report type.
+3. Use the records view for existing reports or **New Report** for a permitted submission.
+4. Open a record to read its detail, timeline, status, and actions allowed at the current stage.
+5. Return to the report-type landing page before switching to another report type.
 
-## Where to find the page
+## What happens next
 
-Open /report.
+Navigation does not change status. Managed reports use Draft, Submitted, Reviewed, Approved, and Rejected workflow states.
 
-## Prerequisites
+The report owner submits, then the assigned reviewer and approver act.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Navigation has no editable fields. Use the search, date period, report type, status, team or location, and sort controls to filter the list.
 
-1. Open the intended record or New page, complete only the sections and findings shown, save supported draft work, attach media within displayed limits, and use only the workflow action offered for the current state.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Navigation uploads nothing. Report forms use the report attachment controls and limits defined by their own guide.
 
-## Fields and validation
+A hidden item or **Access denied** message means that report type is not available to your role or is disabled. Return to a page you can use and ask an administrator to check your assignment when access is required.
 
-Report type, team scope, dates, sections, media, findings, issue state, workflow action and export eligibility are validated by each report API.
+## Related tasks
 
-## Statuses and transitions
-
-Draft, submission, review, verification and resolution states depend on report type and configured workflow; follow only displayed transitions.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the reports route family and reports gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+See the ERCO, Drill, Fitness Test, Inspection, and Report Management guides for task-specific instructions.

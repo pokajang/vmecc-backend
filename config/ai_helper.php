@@ -21,7 +21,7 @@ return [
     'retrieval_v2' => env('AI_HELPER_RETRIEVAL_V2', true),
     'retrieval_v3' => env('AI_HELPER_RETRIEVAL_V3', false),
     'system_guides_enabled' => env('AI_HELPER_SYSTEM_GUIDES_ENABLED', false),
-    'system_guide_approval_enforced' => env('AI_HELPER_SYSTEM_GUIDE_APPROVAL_ENFORCED', true),
+    'system_guide_final_corpus_enforced' => env('AI_HELPER_SYSTEM_GUIDE_FINAL_CORPUS_ENFORCED', true),
     'knowledge_retrieval_limit' => (int) env('AI_HELPER_KNOWLEDGE_RETRIEVAL_LIMIT', 18),
     'knowledge_document_candidate_limit' => (int) env('AI_HELPER_KNOWLEDGE_DOCUMENT_CANDIDATE_LIMIT', 12),
     'retrieval_candidate_chunks' => (int) env('AI_HELPER_RETRIEVAL_CANDIDATE_CHUNKS', 40),

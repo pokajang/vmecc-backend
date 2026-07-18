@@ -56,6 +56,69 @@ class FireExtinguisherCoverageRowBuilder
         })->filter()->all();
     }
 
+    /**
+     * Build list-view coverage without hydrating every historical check row.
+     *
+     * @param  Collection<int, InspectionFireExtinguisher>  $catalogRows
+     * @return array<int, array<string, mixed>>
+     */
+    public function coverageRowsForCatalogPage(
+        Collection $catalogRows,
+        ?Carbon $periodStart = null,
+        ?Carbon $periodEnd = null,
+    ): array {
+        $catalogIds = $catalogRows->pluck('id')->filter()->map(fn ($id): int => (int) $id)->values();
+        if ($catalogIds->isEmpty()) {
+            return [];
+        }
+
+        $latestByCatalog = InspectionCheckRow::query()
+            ->selectRaw('equipment_catalog_id, MAX(submitted_at) AS latest_submitted_at')
+            ->where('inspection_type_key', 'fire-extinguisher-inspection')
+            ->where('source_payload_key', 'fireExtinguisherChecks')
+            ->whereIn('equipment_catalog_id', $catalogIds)
+            ->whereNotNull('submitted_at')
+            ->when($periodStart, fn ($query) => $query->where('submitted_at', '>=', $periodStart))
+            ->when($periodEnd, fn ($query) => $query->where('submitted_at', '<=', $periodEnd))
+            ->groupBy('equipment_catalog_id');
+        $latestRows = InspectionCheckRow::query()
+            ->select('inspection_check_rows.*')
+            ->with(['submittedBy:id,name', 'report:id,report_uid,display_id,payload'])
+            ->joinSub($latestByCatalog, 'latest_checks', function ($join): void {
+                $join->on('latest_checks.equipment_catalog_id', '=', 'inspection_check_rows.equipment_catalog_id')
+                    ->on('latest_checks.latest_submitted_at', '=', 'inspection_check_rows.submitted_at');
+            })
+            ->where('inspection_check_rows.inspection_type_key', 'fire-extinguisher-inspection')
+            ->where('inspection_check_rows.source_payload_key', 'fireExtinguisherChecks')
+            ->whereIn('inspection_check_rows.equipment_catalog_id', $catalogIds)
+            ->orderByDesc('inspection_check_rows.submitted_at')
+            ->orderByDesc('inspection_check_rows.id')
+            ->get()
+            ->groupBy(fn (InspectionCheckRow $row): int => (int) $row->equipment_catalog_id);
+        $reportCounts = InspectionCheckRow::query()
+            ->selectRaw('equipment_catalog_id, COUNT(DISTINCT report_id) AS report_count')
+            ->where('inspection_type_key', 'fire-extinguisher-inspection')
+            ->where('source_payload_key', 'fireExtinguisherChecks')
+            ->whereIn('equipment_catalog_id', $catalogIds)
+            ->whereNotNull('submitted_at')
+            ->when($periodStart, fn ($query) => $query->where('submitted_at', '>=', $periodStart))
+            ->when($periodEnd, fn ($query) => $query->where('submitted_at', '<=', $periodEnd))
+            ->groupBy('equipment_catalog_id')
+            ->pluck('report_count', 'equipment_catalog_id');
+
+        return $catalogRows->mapWithKeys(function (InspectionFireExtinguisher $catalogRow) use ($latestRows, $reportCounts): array {
+            $checkRows = $latestRows->get((int) $catalogRow->id, collect());
+            if ($checkRows->isEmpty()) {
+                return [(int) $catalogRow->id => null];
+            }
+            $coverage = $this->buildCoverageData($catalogRow, $checkRows);
+            $coverage['duplicateCount'] = (int) ($reportCounts->get((int) $catalogRow->id) ?? 0);
+            $coverage['duplicateReports'] = [];
+
+            return [(int) $catalogRow->id => $coverage];
+        })->filter()->all();
+    }
+
     public function formatCoverageRow(
         InspectionFireExtinguisher $row,
         ?array $coverage,

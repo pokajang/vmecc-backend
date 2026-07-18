@@ -1,6 +1,6 @@
 ---
 key: role-assignments
-title: Role Assignments
+title: Managing Scoped Role Assignments
 knowledge_type: system_guide
 scope_type: module
 module_key: users
@@ -10,78 +10,50 @@ required_permissions:
   - roles.assign
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: System Administration
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - users
-  - workflow
+  - roles
+  - assignments
+  - scope
   - system-guide
-active: false
+active: true
 ---
-
-# Role Assignments
+# Managing Role Assignments
 
 ## Purpose
 
-Explain the supported VMECC role assignments workflow without exposing records, hidden controls or another permission tier.
+Assign existing roles to a user with the correct coverage, team, effective dates, and primary-role setting.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of roles.assign.
+Confirm the intended role, whether it covers the whole system or one team, the start and end dates, and whether it should be the user's primary role.
 
-## Required permission/module state
+## Steps
 
-The users gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **User Management** and open the user's **Roles**.
+2. Open the target user and review all active, future, expired, primary, whole-system, and team assignments.
+3. Add or edit the intended role, select its required **Scope** and **Team**, enter valid effective dates, and set primary only where appropriate.
+4. Save, reload, and verify effective roles, access rights, team synchronization, dates, and audit history.
 
-## Where to find the page
+## What happens next
 
-Open /admin/users.
+Assignments take effect on their start date and stop after their end date. Updating or deleting an assignment refreshes the user's active roles and team links.
 
-## Prerequisites
+Module owners verify that roles contain the correct access rights. Workflow owners must repair pending work when an assignment change leaves a stage without an actor.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Choose a role and coverage option displayed on the form. A team-based role requires a valid team; a whole-system role must not keep a team. The end date cannot be before the start date, and the user must keep at least one role assignment.
 
-1. Select the exact user, verify identity and current account or assignment state, apply the one supported action intended for that user, confirm it once, then reload the account.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+No attachment is supported. Do not store approval evidence in role labels or assignment fields.
 
-## Fields and validation
+Choose the coverage and team required by the selected role, and correct invalid dates. Before removing a role that owns pending work, reassign that work through the approved administration process.
 
-Account identity, status, assignment dates, role, scope, team, reset and session targets are validated server-side.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact System Administration when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the users route family and users gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: System Administration. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Role access rights define capabilities; teams define team records; user administration controls account state.

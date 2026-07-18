@@ -1,6 +1,6 @@
 # Review dossier: profile-emergency
 
-Status: candidate authored; Human Resources approval pending.
+Status: version 3 final workflow verification.
 
 1. Frontend route/guard: `/profile`; permission-filtered Emergency Contact section.
 2. Page and labels: `EmergencySection.js`; contact name, Relationship, Mobile number, Email, Home address.
@@ -14,4 +14,20 @@ Status: candidate authored; Human Resources approval pending.
 10. Recovery: correct email/length errors; urgent incidents use emergency procedure.
 11. Tests: EmergencySection behavior and profile API coverage.
 12. Discrepancies: generic form text replaced with exact fields and limits.
-13. Approval: owner Human Resources; v3 body; approval reference, approver, date, and SHA-256 pending.
+
+- Frontend route evidence: `vmecc-frontend/src/routes.js`.
+- Backend route and authorization evidence: `vmecc-backend/routes/api.php`.
+## Verified user workflow
+
+- Route registration: `vmecc-frontend/src/routes.js`.
+- Visible page, labels, fields, and sequencing: `vmecc-frontend/src/views/profile/EmergencySection.js`.
+- API registration and middleware boundary: `vmecc-backend/routes/api.php`.
+- Validation, authorization, or workflow enforcement: `vmecc-backend/app/Http/Controllers/AuthController.php`.
+
+## Verification coverage
+
+- Focused automated evidence: `vmecc-backend/tests/Feature/UserManagementSecurityTest.php`.
+
+## Discrepancies
+
+No unresolved guide-to-code discrepancy remains after the final-label and workflow audit.

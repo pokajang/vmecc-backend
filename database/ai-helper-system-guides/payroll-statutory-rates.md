@@ -1,6 +1,6 @@
 ---
 key: payroll-statutory-rates
-title: Payroll Statutory Rates
+title: Reviewing Statutory Deductions in Salary Assignments
 knowledge_type: system_guide
 scope_type: module
 module_key: payroll
@@ -11,78 +11,50 @@ required_permissions:
   - staff.salary.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Finance
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - payroll
-  - workflow
+  - statutory
+  - rates
+  - settings
   - system-guide
-active: false
+active: true
 ---
-
-# Payroll Statutory Rates
+# Reviewing Statutory Deductions in Salary Assignments
 
 ## Purpose
 
-Explain the supported VMECC payroll statutory rates workflow without exposing records, hidden controls or another permission tier.
+Review the EPF, PERKESO, and SIP deductions calculated for a salary assignment. VMECC does not currently expose a separate Statutory Rates page for editing the underlying rates.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of settings.manage, staff.salary.manage.
+Confirm the employee, effective date, basic salary, and expected statutory treatment before checking the calculated deductions.
 
-## Required permission/module state
+## Steps
 
-The payroll.statutory_rates gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Payroll Configuration** and open **Salary Assignments**.
+2. Open an assignment, or select **Assign Salary** to prepare a new one.
+3. Review **EPF**, **PERKESO**, and **SIP** under the calculated deductions together with the basic salary and allowances.
+4. If the deductions are correct, complete the steps and select **Assign Salary**, then **Confirm set salary**. If they are not correct, stop and report the configuration issue before saving or issuing payroll records.
 
-## Where to find the page
+## What happens next
 
-Open /staff/salary-claims.
+Saving the assignment stores its monetary inputs and calculated contribution amounts. Existing submitted claims keep the values already stored for them unless their own workflow explicitly recalculates them.
 
-## Prerequisites
+The payroll owner checks the calculation. Changing the underlying statutory-rate configuration is an operational deployment task until a dedicated, tested page is added.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+The assignment requires a valid employee and effective date. Monetary inputs must be zero or greater and remain within the limits shown by the form.
 
-1. Open the stated page, select the intended record or section, complete only visible supported fields, review the summary and current state, then use the enabled primary action once.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Salary assignments do not accept statutory source documents. Keep those documents in the approved operational document process.
 
-## Fields and validation
+Do not try to correct a rate by changing an employee's salary or contribution amount without authorization. Record the affected employee and period, leave the assignment unchanged, and ask System Administration to verify the deployed statutory configuration.
 
-Claim type, date, amount, description, salary period, evidence, payment data, effective dates and overlapping assignments are validated by the relevant API.
+## Related tasks
 
-## Statuses and transitions
-
-The claim record shows its workflow state. Approval and payment are separate, and payment reversal is audited.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Finance when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the salary-claims route family and payroll.statutory_rates gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Finance. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Overtime Rates uses a separate visible configuration page; Company Information controls payroll identity fields.

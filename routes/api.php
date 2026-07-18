@@ -269,9 +269,11 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::get('inspection/fire-extinguishers/{extinguisherId}/inspection-history/{reportId}', [InspectionFireExtinguisherController::class, 'inspectionHistoryDetail']);
     Route::delete('inspection/fire-extinguishers/{extinguisherId}', [InspectionFireExtinguisherController::class, 'destroy']);
     Route::get('inspection/fire-extinguisher-issues', [InspectionFireExtinguisherIssueController::class, 'index']);
+    Route::get('inspection/fire-extinguisher-issues/assignees', [InspectionFireExtinguisherIssueController::class, 'assignees']);
     Route::get('inspection/fire-extinguisher-issues/{issue}', [InspectionFireExtinguisherIssueController::class, 'show']);
     Route::patch('inspection/fire-extinguisher-issues/{issue}', [InspectionFireExtinguisherIssueController::class, 'update']);
     Route::post('inspection/fire-extinguisher-issues/{issue}/assign', [InspectionFireExtinguisherIssueController::class, 'assign']);
+    Route::post('inspection/fire-extinguisher-issues/{issue}/unassign', [InspectionFireExtinguisherIssueController::class, 'unassign']);
     Route::post('inspection/fire-extinguisher-issues/{issue}/start', [InspectionFireExtinguisherIssueController::class, 'start']);
     Route::post('inspection/fire-extinguisher-issues/{issue}/resolve', [InspectionFireExtinguisherIssueController::class, 'resolve']);
     Route::post('inspection/fire-extinguisher-issues/{issue}/verify', [InspectionFireExtinguisherIssueController::class, 'verify']);
@@ -366,7 +368,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     });
 
     // Payroll claims (employee - own records)
-    Route::middleware(['module.enabled:payroll.self_service', 'permission.assignment:self.payroll'])->group(function () {
+    Route::middleware(['module.enabled:payroll.claims', 'permission.assignment:self.payroll'])->group(function () {
         Route::get('payroll/claims/drafts', [PayrollClaimDraftController::class, 'index']);
         Route::post('payroll/claims/drafts', [PayrollClaimDraftController::class, 'store']);
         Route::delete('payroll/claims/drafts/{id}', [PayrollClaimDraftController::class, 'destroy']);
@@ -377,7 +379,9 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
         Route::put('payroll/claims/{id}', [PayrollClaimController::class, 'update']);
         Route::delete('payroll/claims/{id}', [PayrollClaimController::class, 'destroy']);
         Route::post('payroll/claims/{id}/cancel', [PayrollClaimController::class, 'cancel']);
+    });
 
+    Route::middleware(['module.enabled:payroll.payslips', 'permission.assignment:self.payroll'])->group(function () {
         Route::get('payroll/payslips', [PayrollPayslipController::class, 'index']);
         Route::get('payroll/payslips/{id}/download', [PayrollPayslipController::class, 'download']);
     });

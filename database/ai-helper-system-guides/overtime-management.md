@@ -14,75 +14,45 @@ version: 3
 owner: Human Resources
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - overtime
   - workflow
   - system-guide
-active: false
+active: true
 ---
-
 # Managing Overtime Records
 
 ## Purpose
 
-Process scoped overtime at its exact current workflow stage.
+Review overtime requests for your assigned team and act only at the current stage.
 
-## Who can access it
+## Before you begin
 
-Access requires the catalog permission and module gate in frontmatter; ordinary management access remains assignment-scoped.
+Confirm the employee, work date and time, evidence, current status, and action assigned to you before changing the request.
 
-## Required permission/module state
+## Steps
 
-Both permission and module activation are checked server-side. Route context cannot grant access.
+1. Go to **Overtime Management**, then open **Overtime Records** on **Staff Overtime Management**.
+2. Open the record and verify employee, time, type, evidence, history, stage, next role, and latest details.
+3. Use **Review**, **Recommend**, or **Approve** only at the matching stage.
+4. Use **Request correction**, **Reject**, or **Cancel** only when displayed; correction requires remarks.
+5. Reload and verify the new status, **Current Action Owner**, and history entry.
 
-## Where to find the page
+## What happens next
 
-Open /staff/overtime-management/records and /staff/overtime-management/record/:overtimeRouteKey.
+The request moves from **Pending Review** to an optional recommendation and then approval. It may finish as **Approved**, **Rejected**, **Needs Correction**, or **Cancelled**.
 
-## Prerequisites
+The role shown under **Current Action Owner** acts next.
 
-Verify the exact person, period, record, current state, and effective assignment scope before changing data.
+## If something goes wrong
 
-## Exact steps
-
-1. Open the record and verify employee, time, type, evidence, history, stage, next role, and version.
-2. Use **Review**, **Recommend**, or **Approve** only at the matching stage.
-3. Use **Request correction**, **Reject**, or **Cancel** only when displayed; correction requires remarks.
-4. Reload and verify status, next role, history, and incremented version.
-
-## Fields and validation
-
-Remarks max 1,000; expected version at least 1; server checks scope, stage role, and distinct actor.
-
-## Statuses and transitions
-
-Pending advances review → optional recommend → approve → Approved; correction, rejection, and cancellation stop the path.
-
-## Who performs the next action
-
-The configured next role in employee scope acts next.
-
-## Attachments and limits
+Remarks can contain up to 1,000 characters. Use only an action shown for the current stage. When separate reviewers are required, a person who completed an earlier stage cannot complete the later stage.
 
 Evidence uses authorized workflow attachment handling.
 
-## Common errors and recovery
+If the request changed while you were viewing it, reload it. A role or stage message identifies why an action is unavailable; ask an administrator to correct the assignment rather than skipping the stage.
 
-Reload conflicts; obey named role/stage errors. Administrator access does not bypass workflow invariants.
+## Related tasks
 
-## What Ask AI cannot do
-
-Ask AI cannot open records, upload evidence, submit, review, approve, reject, cancel, change settings, bypass validation, or confirm success.
-
-## Related pages
-
-Self-service, management, configuration, and record APIs remain separate permission boundaries.
-
-## Source-of-truth code references for maintainers
-
-`vmecc-frontend/src/views/staff/overtime-management/OvertimeManagement.js`; `vmecc-backend/app/Http/Controllers/OvertimeWorkflowController.php`; `vmecc-backend/app/Services/OvertimeWorkflowService.php`.
-
-## Guide maintenance
-
-Owner: Human Resources. Candidate version: 3. Reviewed: 2026-07-17. Review due: 2026-10-17. Activation requires a matching hash-bound approval manifest record.
+Use **Overtime** for your own requests, **Rates** for calculation settings, and **Workflow Rules** for the review sequence.

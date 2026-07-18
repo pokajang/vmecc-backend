@@ -1,6 +1,6 @@
 ---
 key: salary-assignments
-title: Salary Assignments
+title: Managing Salary Assignments
 knowledge_type: system_guide
 scope_type: module
 module_key: payroll
@@ -10,78 +10,50 @@ required_permissions:
   - staff.salary.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Finance
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - payroll
-  - workflow
+  - salary
+  - assignments
   - system-guide
-active: false
+active: true
 ---
-
-# Salary Assignments
+# Managing Salary Assignments
 
 ## Purpose
 
-Explain the supported VMECC salary assignments workflow without exposing records, hidden controls or another permission tier.
+Create and maintain effective-dated employee salary inputs used by salary claims and payroll calculations.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of staff.salary.manage.
+Confirm the employee, effective date, basic salary, allowances, employee contributions, employer contributions, and whether an earlier assignment already covers the period.
 
-## Required permission/module state
+## Steps
 
-The payroll.salary_assignments gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Payroll Configuration** and open **Salary Assignments**.
+2. Choose **Assign Salary**, select the employee, enter the effective date and basic salary, then add supported allowances and contribution amounts.
+3. Add an allowance name whenever its amount is greater than zero; review the calculated assignment summary and optional notes.
+4. The form saves an in-progress draft automatically. When the review step is complete, select **Assign Salary**, then **Confirm set salary**, and verify the assignment in the list and history.
+5. Edit or delete only the intended assignment, confirm the warning, and reload affected salary calculations before relying on them.
 
-## Where to find the page
+## What happens next
 
-Open /staff/salary-claims.
+Drafts can be reopened later. Saving creates or updates the salary assignment and adds a history entry. Deleting removes the selected assignment but does not change salary details already saved in submitted claims.
 
-## Prerequisites
+Finance verifies effective periods before applicants create salary claims. Applicants cannot edit their salary assignments.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Employee and effective date are required. Basic salary and monetary components must be from 0 to 99,999,999.99. Up to 50 allowances and 50 history notes are accepted; allowance names are limited to 120 characters and required for positive amounts; note text is limited to 2,000 characters.
 
-1. Open the stated page, select the intended record or section, complete only visible supported fields, review the summary and current state, then use the enabled primary action once.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Salary assignments do not accept file uploads. Do not place bank credentials, identity documents, or unrelated personal information in notes.
 
-## Fields and validation
+Correct missing employee, date, numeric range, or allowance name errors. Reload after concurrent changes. If salary claim values are unexpected, verify the effective assignment and approved overtime for that exact period.
 
-Claim type, date, amount, description, salary period, evidence, payment data, effective dates and overlapping assignments are validated by the relevant API.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Finance when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the salary-claims route family and payroll.salary_assignments gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Finance. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Statutory rates, overtime rates, company profile, claims, and payslips are independently accessed configuration or workflow areas.

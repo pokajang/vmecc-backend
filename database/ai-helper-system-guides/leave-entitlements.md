@@ -14,75 +14,45 @@ version: 3
 owner: Human Resources
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - leave
   - workflow
   - system-guide
-active: false
+active: true
 ---
-
 # Leave Entitlements
 
 ## Purpose
 
 Maintain annual employee leave-type assignments used by balance validation.
 
-## Who can access it
+## Before you begin
 
-Access requires the catalog permission and module gate in frontmatter; ordinary management access remains assignment-scoped.
+Confirm the employee, year, leave type, current entitlement, used days, and pending days before making a change.
 
-## Required permission/module state
+## Steps
 
-Both permission and module activation are checked server-side. Route context cannot grant access.
+1. Go to **Leave Management** and open **Entitlements**.
+2. Choose the exact employee, year, registered leave type, and entitlement.
+3. Review used, pending, and remaining values; save once. An existing employee/year/type is updated.
+4. Edit entitlement, used, or pending using non-negative values and save.
+5. Delete only after confirming the effect on current leave requests.
 
-## Where to find the page
+## What happens next
 
-Open /staff/leave-management/set-leaves.
-
-## Prerequisites
-
-Verify the exact person, period, record, current state, and effective assignment scope before changing data.
-
-## Exact steps
-
-1. Choose the exact employee, year, registered leave type, and entitlement.
-2. Review used, pending, and remaining values; save once. An existing employee/year/type is updated.
-3. Edit entitlement, used, or pending using non-negative values and save.
-4. Delete only after confirming the effect on current leave requests.
-
-## Fields and validation
-
-Employee must exist; year 2000–2100; type registered; entitlement 0–365; used and pending non-negative.
-
-## Statuses and transitions
-
-Assignments are created, updated, or deleted; balance calculations consume them.
-
-## Who performs the next action
+The saved entitlement is used to calculate the employee's available leave balance.
 
 The employee rechecks Leave balance; Human Resources resolves inconsistent consumption.
 
-## Attachments and limits
+## If something goes wrong
+
+Choose an employee and leave type shown on the page. Enter a year from 2000 to 2100, an entitlement from 0 to 365 days, and values of zero or more for used and pending days.
 
 No attachments.
 
-## Common errors and recovery
+Choose a listed employee and leave type, and correct any value outside the allowed range. Recheck open leave requests before deleting an entitlement.
 
-Correct unknown employee/type or out-of-range values. Recheck open requests before deletion.
+## Related tasks
 
-## What Ask AI cannot do
-
-Ask AI cannot open records, upload evidence, submit, review, approve, reject, cancel, change settings, bypass validation, or confirm success.
-
-## Related pages
-
-Self-service, management, configuration, and record APIs remain separate permission boundaries.
-
-## Source-of-truth code references for maintainers
-
-`vmecc-frontend/src/views/staff/leave-management/LeaveManagement.js`; `vmecc-backend/app/Http/Controllers/LeaveAssignmentController.php`; `vmecc-backend/app/Services/LeavePolicyService.php`.
-
-## Guide maintenance
-
-Owner: Human Resources. Candidate version: 3. Reviewed: 2026-07-17. Review due: 2026-10-17. Activation requires a matching hash-bound approval manifest record.
+Use **Leave Requests** to review applications and **Holidays** to maintain the dates excluded from leave-day calculations.

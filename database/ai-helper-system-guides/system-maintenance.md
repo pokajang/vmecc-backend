@@ -10,78 +10,51 @@ required_permissions:
   - settings.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: System Administration
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - settings
-  - workflow
+  - maintenance
+  - operations
   - system-guide
-active: false
+active: true
 ---
-
 # System Maintenance
 
 ## Purpose
 
-Explain the supported VMECC system maintenance workflow without exposing records, hidden controls or another permission tier.
+Place VMECC into a grace period and then an enforced maintenance lock, or safely return it to normal operation.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of settings.manage.
+Confirm the maintenance window, user communication, running work, backup and recovery plan, maintenance message, grace duration, and responsible operator.
 
-## Required permission/module state
+## Steps
 
-The settings.system_maintenance gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Settings** and open **System Maintenance**.
+2. Open **Settings** and confirm the current state and operational approval.
+3. Turn maintenance **ON** to enter Grace; verify the banner, message, and countdown.
+4. Wait for the grace deadline or select **Enforce now** only under the approved runbook.
+5. Perform the planned maintenance work and complete the required health checks.
+6. Turn maintenance **OFF**, reload VMECC, and verify that signed-in users can access the system normally.
 
-## Where to find the page
+## What happens next
 
-Open /settings or /reporting-settings.
+Off -> Grace -> Enforced. Grace -> Enforced can occur at the deadline or by **Enforce now**. Grace or Enforced -> Off restores normal operation. Each change is audited.
 
-## Prerequisites
+The named maintenance operator enforces and later disables the lock; service owners verify application health before reopening.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Choose **ON** or **OFF** and enter a maintenance message of no more than 500 characters. The page shows whether maintenance is **Off**, in **Grace**, or **Enforced**, together with the relevant times.
 
-1. Review the current effective configuration, change only approved supported values, validate dependencies and stage order where shown, save once, then reload and verify the effective result.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Maintenance settings contain no attachments.
 
-## Fields and validation
+If saving fails, the page restores the previous state. Follow the recovery runbook if maintenance settings are unavailable. Always reload the page to confirm whether the lock is active or cleared.
 
-Only registered settings, modules, roles and permissions are accepted.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact System Administration when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the settings route family and settings.system_maintenance gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: System Administration. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use the deployment runbook and application health checks for work performed during the enforced window.

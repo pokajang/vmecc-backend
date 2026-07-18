@@ -1,87 +1,58 @@
 ---
 key: payroll-self-service
-title: Viewing Personal Payroll
+title: Viewing Payslips
 knowledge_type: system_guide
 scope_type: module
 module_key: payroll
 route_key: payroll
-module_gate: payroll.self_service
+module_gate: payroll.payslips
 required_permissions:
   - self.payroll
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Finance
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - payroll
-  - workflow
+  - payslip
+  - self-service
   - system-guide
-active: false
+active: true
 ---
-
-# Viewing Personal Payroll
+# Viewing Payslips
 
 ## Purpose
 
-Explain the supported VMECC viewing personal payroll workflow without exposing records, hidden controls or another permission tier.
+View issued payslips for the signed-in account and download an authorized payslip file.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of self.payroll.
+A payroll administrator must have issued a payslip for the employee and period. Use the account belonging to the payslip recipient.
 
-## Required permission/module state
+## Steps
 
-The payroll.self_service gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Payroll** and open **Payslips**.
+2. Open **Payroll**, select **Payslips**, and review the available pay periods and payment dates.
+3. Select the intended payslip and verify its period, gross pay, deductions, and net pay summary.
+4. Choose **Download payslip**, wait for the file to finish downloading, and then open or save it.
 
-## Where to find the page
+## What happens next
 
-Open /payroll.
+Payslips do not have a self-service approval workflow. A payslip is visible when a saved record exists for the signed-in user.
 
-## Prerequisites
+Finance or an authorized payroll manager must correct or issue payroll records. The employee can only view and download their own issued payslips.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+The payslip list is read-only. Period, issued date, payment date, earnings, deductions, employer contributions, and net pay come from the saved record; the browser does not recalculate them for download.
 
-1. Open the stated page, select the intended record or section, complete only visible supported fields, review the summary and current state, then use the enabled primary action once.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+The generated payslip is the downloadable file. There is no employee upload action on the Payslips tab.
 
-## Fields and validation
+An empty list means no payslip is available for the account or period. A forbidden download means the file does not belong to the signed-in user. Refresh after Finance confirms a corrected or newly issued payslip.
 
-Claim type, date, amount, description, salary period, evidence, payment data, effective dates and overlapping assignments are validated by the relevant API.
+## Related tasks
 
-## Statuses and transitions
-
-The claim record shows its workflow state. Approval and payment are separate, and payment reversal is audited.
-
-## Who performs the next action
-
-After submission, the next actor is selected by the configured workflow. The applicant monitors the record rather than repeating the action.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Finance when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the payroll route family and payroll.self_service gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Finance. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use **Claims** on **Payroll** for expense or salary claim records; claims have a separate access and workflow.

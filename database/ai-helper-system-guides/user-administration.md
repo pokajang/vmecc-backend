@@ -1,6 +1,6 @@
 ---
 key: user-administration
-title: User Administration and Status Controls
+title: Administering User Accounts
 knowledge_type: system_guide
 scope_type: module
 module_key: users
@@ -10,78 +10,49 @@ required_permissions:
   - users.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: System Administration
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - users
-  - workflow
+  - accounts
+  - administration
   - system-guide
-active: false
+active: true
 ---
-
-# User Administration and Status Controls
+# Administering User Accounts
 
 ## Purpose
 
-Explain the supported VMECC user administration and status controls workflow without exposing records, hidden controls or another permission tier.
+Create accounts and manage account status, lock state, deletion, restoration, and invitation delivery.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of users.manage.
+Confirm the person's name, unique email, intended initial role assignment, account state, and whether the action could terminate active sessions.
 
-## Required permission/module state
+## Steps
 
-The users gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **User Management**.
+2. Choose **Create user**, enter name and unique email, provide at least one valid role or role assignment, and submit the invitation.
+3. For an existing user, open row actions and select **Activate**, **Deactivate**, **Lock**, **Unlock**, **Delete**, or **Restore** only after verifying the target.
+4. Confirm destructive actions, then reload and verify status, lock/deletion details, invitation delivery state, and audit history.
 
-## Where to find the page
+## What happens next
 
-Open /admin/users.
+New accounts start **Active** with a random unusable password and an invitation/reset flow. Inactivation, locking, and deletion revoke active sessions. Deleted users may be restored; permanent deletion requires the explicit force path. An administrator cannot lock or delete their own account.
 
-## Prerequisites
+The invited user completes password setup. A role manager adds the required whole-system or team role assignments. System Administration investigates a failed invitation or an incorrect account state.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Name and email are required and limited to 255 characters; email must be valid and unique. New accounts require a valid role or non-empty role-assignment list. Status accepts only **Active** or **Inactive**.
 
-1. Select the exact user, verify identity and current account or assignment state, apply the one supported action intended for that user, confirm it once, then reload the account.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Account administration has no document upload. Profile images and staff documents use separate authorized workflows.
 
-## Fields and validation
+Use a unique valid email address and an existing role. Do not change a deleted account until it is restored. If the invitation is not delivered, check the delivery result shown for the account and retry through the invitation action.
 
-Account identity, status, assignment dates, role, scope, team, reset and session targets are validated server-side.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact System Administration when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the users route family and users gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: System Administration. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use **Roles** for role assignments, **Sessions** for signed-in devices, **Staff** for employment details, and **Audit Logs** for account activity history.

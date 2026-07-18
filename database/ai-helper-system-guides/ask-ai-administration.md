@@ -7,82 +7,54 @@ module_key: profile
 route_key: ai-helper-admin
 module_gate: profile
 required_permissions:
-  - *
+  - '*'
 permission_match: any
 allowed_roles:
   - System Administrator
-version: 2
+version: 3
 owner: System Administration
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
-  - profile
-  - workflow
+  - ask-ai
+  - knowledge
+  - reports
+  - administration
   - system-guide
-active: false
+active: true
 ---
-
 # Ask AI Knowledge and Reports Administration
 
 ## Purpose
 
-Explain the supported VMECC ask ai knowledge and reports administration workflow without exposing records, hidden controls or another permission tier.
+Review uploaded reference material and investigate responses that users have reported.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of * and includes the active role System Administrator.
+Confirm that the material is safe to store, has a clear purpose, and is suitable for the users who will see it.
 
-## Required permission/module state
+## Steps
 
-The profile gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Ask AI Knowledge**.
+2. Open **Ask AI Knowledge** and filter by lifecycle status or module.
+3. Open an entry and review its file name, visibility, current status, and review history.
+4. Select **Approve**, **Reject**, **Enable**, **Disable**, **Retry**, or **Delete** as appropriate. Enter a note when rejecting an entry.
+5. Open **Ask AI Reports**, review the cited response and user report, then update its status and administrator note.
+6. Confirm that the new status is displayed and that the action appears in **Audit Logs**.
 
-## Where to find the page
+## What happens next
 
-Open /admin/ai-helper-knowledge and /admin/ai-helper-reports.
+Uploaded material moves through processing and review before it can become active. A failed upload can be retried after the cause is corrected. Reported responses remain available until an administrator completes the review.
 
-## Prerequisites
+## If something goes wrong
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+Choose one of the statuses shown on the page. A rejection note is required and can contain up to 2,000 characters. An administrator note on a reported response can also contain up to 2,000 characters.
 
-## Exact steps
+PDF uploads default to 10,240 KB and Markdown to 1,024 KB, subject to configured per-user and global quotas. Upload requires explicit acknowledgement.
 
-1. Open the stated page, select the intended record or section, complete only visible supported fields, review the summary and current state, then use the enabled primary action once.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Do not approve unknown or sensitive material. If processing fails again after **Retry**, check the uploaded file and correct the problem before trying once more. Built-in VMECC guides are released with the application and cannot be edited from this page.
 
-## Fields and validation
+## Related tasks
 
-Field availability is permission-filtered; required, format and confirmation rules shown by the form must pass.
-
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact System Administration when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the ai-helper-admin route family and profile gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: System Administration. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use **Ask AI** for user questions and **Audit Logs** to review administrative actions.

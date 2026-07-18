@@ -15,8 +15,9 @@ class DatabaseSeeder extends Seeder
         $this->call([
             RolesAndPermissionsSeeder::class,
             TeamsTableSeeder::class,
-            // System guides are seeded explicitly after their catalog and role-aware
-            // retrieval checks pass. Never restore the legacy AiHelperKnowledgeSeeder.
+            AiHelperSystemGuideSeeder::class,
+            // Never restore the legacy AiHelperKnowledgeSeeder. Reference PDFs use
+            // their dedicated corpus seeder and remain separate from system guides.
             InspectionLocationCatalogSeeder::class,
             InspectionEquipmentCatalogSeeder::class,
             InspectionFireExtinguisherCatalogSeeder::class,

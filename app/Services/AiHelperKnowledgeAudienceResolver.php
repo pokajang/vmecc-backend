@@ -19,6 +19,10 @@ class AiHelperKnowledgeAudienceResolver
         $moduleStates = collect($modulePayload['effective'] ?? [])
             ->mapWithKeys(fn (array $state, string $key) => [$key => (bool) ($state['enabled'] ?? true)])
             ->all();
+        $evaluationDisabledGate = trim((string) config('ai_helper.evaluation_disabled_module_gate', ''));
+        if (app()->runningInConsole() && ModuleCatalog::has($evaluationDisabledGate)) {
+            $moduleStates[$evaluationDisabledGate] = false;
+        }
         $trustedRoute = $this->catalog->resolveTrustedRoute((string) ($pageContext['path'] ?? '/'));
 
         return new AiHelperKnowledgeAudience(
@@ -43,9 +47,7 @@ class AiHelperKnowledgeAudienceResolver
             || $entry->review_status !== AiHelperKnowledgeEntry::REVIEW_APPROVED
             || $entry->review_due_at === null
             || $entry->review_due_at->isPast()
-            || ! $this->catalog->matchesStoredMetadata($entry)
-            || ((bool) config('ai_helper.system_guide_approval_enforced', true)
-                && ! $this->catalog->approvalMatchesEntry($entry))) {
+            || ! $this->catalog->matchesStoredMetadata($entry)) {
             return false;
         }
         if (! ModuleCatalog::has((string) $entry->module_gate)

@@ -1,6 +1,6 @@
 ---
 key: password-session-controls
-title: Password Reset and Session Revocation
+title: Resetting Passwords and Revoking Sessions
 knowledge_type: system_guide
 scope_type: module
 module_key: users
@@ -10,78 +10,50 @@ required_permissions:
   - users.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: System Administration
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - users
-  - workflow
+  - password
+  - sessions
+  - security
   - system-guide
-active: false
+active: true
 ---
-
-# Password Reset and Session Revocation
+# Resetting Passwords and Revoking Sessions
 
 ## Purpose
 
-Explain the supported VMECC password reset and session revocation workflow without exposing records, hidden controls or another permission tier.
+Send a password-reset link and review or revoke a user's signed-in sessions during account support or a security response.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of users.manage.
+Verify the user's identity and support request. For session revocation, compare device, client mode, IP address, creation, last-seen, expiry, and active state.
 
-## Required permission/module state
+## Steps
 
-The users gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **User Management**.
+2. Choose **Reset password**, then select **Send reset link** to queue the link; verify the delivery result without asking for or setting the user's password.
+3. Open the user's **Active Sessions**, review the target session, and choose **Revoke** for one session or **Revoke all** for an account-wide response.
+4. Enter a support/security reason when applicable, confirm, reload, and verify revoked/logged-out timestamps and inactive state.
 
-## Where to find the page
+## What happens next
 
-Open /admin/users.
+Active sessions have future expiry and no revoked/logged-out timestamp. Revocation records both timestamps and cannot restore the old session. Inactivation, lock, and deletion also revoke active sessions.
 
-## Prerequisites
+The user follows the secure reset link and signs in again. System Administration investigates unexpected devices or a reset email that was not delivered.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Reset uses the stored user email. Session revocation targets a session belonging to the selected user; an optional reason is stored with revocation details. Tokens are cleared automatically and never returned.
 
-1. Select the exact user, verify identity and current account or assignment state, apply the one supported action intended for that user, confirm it once, then reload the account.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+No attachment is supported. Never request a password, reset token, session cookie, or one-time secret in notes.
 
-## Fields and validation
+Confirm the selected user and session. A missing session may already be expired or revoked. If the reset email is not delivered, check the recorded delivery result and repeat **Reset password**; never send credentials manually.
 
-Account identity, status, assignment dates, role, scope, team, reset and session targets are validated server-side.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact System Administration when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the users route family and users gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: System Administration. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+User administration controls lock/status/deletion; audit logs record administrative security actions.

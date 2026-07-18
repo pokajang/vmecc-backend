@@ -10,78 +10,49 @@ required_permissions:
   - reports.inspection.view
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
-  - reports
-  - workflow
+  - inspection
+  - records
   - system-guide
-active: false
+active: true
 ---
-
 # Viewing Inspections
 
 ## Purpose
 
-Explain the supported VMECC viewing inspections workflow without exposing records, hidden controls or another permission tier.
+Find and read the inspection reports, checklist results, evidence, history, and status available to your assigned team or location.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of reports.inspection.view.
+Know the report number, inspection type, date, location, team, or status needed to find the correct record.
 
-## Required permission/module state
+## Steps
 
-The reports.inspection gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Inspection**.
+2. Open **Inspection** and select the records or review view.
+3. Filter the list by search text, status, team or location, type, date period, or sort order.
+4. Open the report and verify its number, inspector, date, location, findings, evidence, status, and timeline.
+5. Use the PDF action only for the intended record and verify the generated filename.
 
-## Where to find the page
+## What happens next
 
-Open /inspection.
+Inspection records display Draft, Submitted, Reviewed, Approved, or Rejected. Viewing does not transition the report.
 
-## Prerequisites
+The report detail shows the current status and the role responsible for the next action.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+List filters do not change records. The system accepts recognized report filters and enforces assigned team or area before returning inspection data.
 
-1. Open the intended record or New page, complete only the sections and findings shown, save supported draft work, attach media within displayed limits, and use only the workflow action offered for the current state.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Open evidence from the report's **Photos** area. Select **Download** when a copy of the inspection is available and required.
 
-## Fields and validation
+A missing record may be outside your assigned team or location. If access is denied, ask an administrator to check your Inspection assignment. Reload a report if it changes while you are viewing it.
 
-Report type, team scope, dates, sections, media, findings, issue state, workflow action and export eligibility are validated by each report API.
+## Related tasks
 
-## Statuses and transitions
-
-Draft, submission, review, verification and resolution states depend on report type and configured workflow; follow only displayed transitions.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the inspection route family and reports.inspection gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use **New Inspection** for authorized conduct work and **Fire Extinguishers** for extinguisher assets.

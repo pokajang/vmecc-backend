@@ -1,6 +1,6 @@
 ---
 key: payroll-company-profile
-title: Payroll Company Profile
+title: Configuring Company Information for Payroll
 knowledge_type: system_guide
 scope_type: module
 module_key: payroll
@@ -11,78 +11,49 @@ required_permissions:
   - staff.salary.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Finance
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - payroll
-  - workflow
+  - company
+  - settings
   - system-guide
-active: false
+active: true
 ---
-
-# Payroll Company Profile
+# Configuring Company Information for Payroll
 
 ## Purpose
 
-Explain the supported VMECC payroll company profile workflow without exposing records, hidden controls or another permission tier.
+Maintain the legal and Finance contact details used by supported payroll outputs.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of settings.manage, staff.salary.manage.
+Verify legal name, company registration number, Malaysian tax number, address, general contact, and Finance contact details against an approved company source.
 
-## Required permission/module state
+## Steps
 
-The payroll.company_profile gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Payroll Configuration** and open **Company Information**.
+2. In **Company Information**, compare every displayed value with the approved legal/company record.
+3. Update the required business values and any supported email, phone, and Finance contact fields.
+4. Select **Save** once, then verify the confirmation message, last-updated details, and new history entry.
 
-## Where to find the page
+## What happens next
 
-Open /staff/salary-claims.
+The latest successful save becomes current configuration. The system retains up to 100 profile history entries and records the updater and timestamp.
 
-## Prerequisites
+Finance verifies generated payroll outputs after a profile change. Correct company data before issuing affected documents.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Legal name and Finance contact name allow 255 characters; registration and tax numbers allow 100; address allows 500; phone fields allow 50; email fields must be valid email addresses and allow 255 characters. Fields can be left blank, but missing company details may affect payroll documents.
 
-1. Open the stated page, select the intended record or section, complete only visible supported fields, review the summary and current state, then use the enabled primary action once.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+No logo or document upload is handled by this profile action. Do not enter credentials, bank secrets, or personal identification documents.
 
-## Fields and validation
+Correct any email address or field length named in the message. If the page cannot save, leave the current values unchanged and report the error to System Administration. Reload before overwriting a change made by another authorized user.
 
-Claim type, date, amount, description, salary period, evidence, payment data, effective dates and overlapping assignments are validated by the relevant API.
+## Related tasks
 
-## Statuses and transitions
-
-The claim record shows its workflow state. Approval and payment are separate, and payment reversal is audited.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Finance when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the salary-claims route family and payroll.company_profile gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Finance. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Statutory rates, salary assignments, claims, payments, and workflow rules are separate controls.

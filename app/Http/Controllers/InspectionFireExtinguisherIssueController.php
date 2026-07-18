@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\InspectionFireExtinguisherIssue;
+use App\Models\User;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\InspectionFireExtinguishers\FireExtinguisherIssueWorkflowService;
@@ -30,6 +31,7 @@ class InspectionFireExtinguisherIssueController extends Controller
             'extinguisherId' => ['nullable', 'integer'],
             'overdue' => ['nullable', 'boolean'],
             'search' => ['nullable', 'string', 'max:190'],
+            'page' => ['nullable', 'integer', 'min:1'],
             'perPage' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
         $query = InspectionFireExtinguisherIssue::query()
@@ -59,12 +61,22 @@ class InspectionFireExtinguisherIssueController extends Controller
                     ->orWhereHas('extinguisher', fn ($asset) => $asset->where('id_loc_no', 'like', $like)->orWhere('barcode_no', 'like', $like));
             });
         }
+        $activeCount = (clone $query)->whereIn('status', InspectionFireExtinguisherIssue::ACTIVE_STATUSES)->count();
+        $completedCount = (clone $query)->whereIn('status', ['closed', 'cancelled'])->count();
+        $perPage = (int) ($data['perPage'] ?? 25);
         $page = $query->orderByRaw("CASE WHEN status IN ('open','in_progress','pending_verification') THEN 0 ELSE 1 END")
-            ->orderBy('due_at')->orderByDesc('last_detected_at')->paginate((int) ($data['perPage'] ?? 25));
+            ->orderBy('due_at')->orderByDesc('last_detected_at')->paginate($perPage);
 
         return response()->json([
             'data' => collect($page->items())->map(fn ($issue) => $this->format($issue))->values(),
-            'meta' => ['page' => $page->currentPage(), 'lastPage' => $page->lastPage(), 'total' => $page->total()],
+            'meta' => [
+                'page' => $page->currentPage(),
+                'lastPage' => $page->lastPage(),
+                'perPage' => $page->perPage(),
+                'total' => $page->total(),
+                'active' => $activeCount,
+                'completed' => $completedCount,
+            ],
         ]);
     }
 
@@ -75,6 +87,25 @@ class InspectionFireExtinguisherIssueController extends Controller
         return response()->json(['data' => $this->format($issue->load([
             'extinguisher', 'assignee', 'occurrences.issue', 'events.actor', 'resolutionMediaLinks.media',
         ]))]);
+    }
+
+    public function assignees(Request $request): JsonResponse
+    {
+        $this->ensureCanManage($request);
+        $users = User::query()
+            ->whereNull('deleted_at')
+            ->whereRaw('LOWER(status) = ?', ['active'])
+            ->orderBy('name')
+            ->get(['id', 'name', 'email', 'status', 'deleted_at'])
+            ->filter(fn (User $user): bool => $this->isEligibleAssignee($user))
+            ->map(fn (User $user): array => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+            ])
+            ->values();
+
+        return response()->json(['data' => $users]);
     }
 
     public function update(Request $request, InspectionFireExtinguisherIssue $issue): JsonResponse
@@ -115,8 +146,28 @@ class InspectionFireExtinguisherIssueController extends Controller
             'lockVersion' => ['required', 'integer'],
         ]);
         $this->assertClientLock($issue, (int) $data['lockVersion']);
+        $assignee = User::query()->findOrFail((int) $data['assignedToUserId']);
+        if (! $this->isEligibleAssignee($assignee)) {
+            abort(422, 'The selected user is not eligible to manage fire extinguisher issues.');
+        }
 
         return $this->actionResponse($request, 'assigned', $this->workflow->assign($issue, (int) $data['assignedToUserId'], (int) $request->user()->id, $data['note'] ?? null));
+    }
+
+    public function unassign(Request $request, InspectionFireExtinguisherIssue $issue): JsonResponse
+    {
+        $this->ensureCanManage($request);
+        $data = $request->validate([
+            'note' => ['nullable', 'string', 'max:5000'],
+            'lockVersion' => ['required', 'integer'],
+        ]);
+        $this->assertClientLock($issue, (int) $data['lockVersion']);
+
+        return $this->actionResponse($request, 'unassigned', $this->workflow->unassign(
+            $issue,
+            (int) $request->user()->id,
+            $data['note'] ?? null,
+        ));
     }
 
     public function start(Request $request, InspectionFireExtinguisherIssue $issue): JsonResponse
@@ -223,7 +274,9 @@ class InspectionFireExtinguisherIssueController extends Controller
                 'url' => '/report-media/'.$link->media->public_id,
                 'thumbnailUrl' => $link->media->thumbnail_path ? '/report-media/'.$link->media->public_id.'?variant=thumbnail' : null,
             ] : null)->filter()->values(),
-            'resolvedAt' => $issue->resolved_at?->toIso8601String(), 'verifiedAt' => $issue->verified_at?->toIso8601String(), 'closedAt' => $issue->closed_at?->toIso8601String(),
+            'resolvedAt' => $issue->resolved_at?->toIso8601String(), 'resolvedByUserId' => $issue->resolved_by_user_id,
+            'verifiedAt' => $issue->verified_at?->toIso8601String(), 'verifiedByUserId' => $issue->verified_by_user_id,
+            'closedAt' => $issue->closed_at?->toIso8601String(),
             'occurrenceCount' => $issue->occurrences_count ?? $issue->occurrences?->count() ?? 0,
             'occurrences' => $issue->relationLoaded('occurrences') ? $issue->occurrences->map(fn ($row) => ['id' => $row->id, 'reportId' => $row->report_id, 'checkValue' => $row->check_value, 'remarks' => $row->remarks, 'evidenceCount' => $row->evidence_count, 'detectedAt' => $row->detected_at?->toIso8601String()])->values() : null,
             'events' => $issue->relationLoaded('events') ? $issue->events->sortByDesc('id')->map(fn ($event) => ['id' => $event->id, 'type' => $event->event_type, 'actor' => $event->actor?->name, 'fromStatus' => $event->from_status, 'toStatus' => $event->to_status, 'note' => $event->note, 'metadata' => $event->metadata, 'createdAt' => $event->created_at?->toIso8601String()])->values() : null,
@@ -251,5 +304,15 @@ class InspectionFireExtinguisherIssueController extends Controller
         if (! $request->user() || ! $this->authorization->hasPermission($request->user(), $permissions)) {
             abort(403, 'Missing fire extinguisher issue permission.');
         }
+    }
+
+    private function isEligibleAssignee(User $user): bool
+    {
+        return strtolower(trim((string) $user->status)) === 'active'
+            && ! $user->trashed()
+            && $this->authorization->hasPermission(
+                $user,
+                'reports.manage|reports.inspection.issues.manage',
+            );
     }
 }

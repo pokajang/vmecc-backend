@@ -5,12 +5,15 @@ namespace App\Console\Commands;
 use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Services\AiHelperKnowledgeProcessingService;
+use App\Services\AiHelperMarkdownKnowledgeParser;
 use App\Services\AiHelperSystemGuideCatalog;
 use App\Services\ModuleCatalog;
 use App\Services\RoleCatalog;
 use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+use Throwable;
 
 class CheckAiHelperKnowledgeReadiness extends Command
 {
@@ -22,8 +25,10 @@ class CheckAiHelperKnowledgeReadiness extends Command
 
     protected $description = 'Check reference knowledge and role-aware VMECC system-guide readiness.';
 
-    public function handle(AiHelperSystemGuideCatalog $catalog): int
-    {
+    public function handle(
+        AiHelperSystemGuideCatalog $catalog,
+        AiHelperMarkdownKnowledgeParser $parser,
+    ): int {
         $productionGate = (bool) $this->option('production');
         $schemaReady = collect([
             'knowledge_type', 'required_permissions', 'permission_match', 'allowed_roles',
@@ -79,7 +84,17 @@ class CheckAiHelperKnowledgeReadiness extends Command
         $guideChunks = $this->chunks(AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE, true);
         $guideEmbeddedChunks = $guideChunks->whereNotNull('embedding')->count();
         $guideIndexed = $guides->filter(fn (AiHelperKnowledgeEntry $entry) => $entry->active_chunks_count > 0)->count();
-        $approvalHashMatches = $guides->filter(fn (AiHelperKnowledgeEntry $entry) => $catalog->approvalMatchesEntry($entry))->count();
+        $sourceHashMatches = $guides->filter(function (AiHelperKnowledgeEntry $entry) use ($parser): bool {
+            $key = Str::after((string) $entry->source_path, 'seed:system-guide:');
+            $path = database_path("ai-helper-system-guides/{$key}.md");
+            if (! is_file($path) || ! is_string($entry->content_hash)) {
+                return false;
+            }
+
+            $parsed = $parser->parseFile($path, true);
+
+            return hash_equals($entry->content_hash, hash('sha256', $parsed['content']));
+        })->count();
         $expectedVersions = $guides->where('version', AiHelperSystemGuideCatalog::FINAL_VERSION)->count();
         $maintainerChunkViolations = $guideChunks->filter(fn (AiHelperKnowledgeChunk $chunk) => collect($chunk->heading_path ?? [])
             ->intersect(AiHelperKnowledgeProcessingService::SYSTEM_GUIDE_MAINTAINER_HEADINGS)
@@ -102,6 +117,22 @@ class CheckAiHelperKnowledgeReadiness extends Command
                 ->orWhere('status', '!=', AiHelperKnowledgeEntry::STATUS_DISABLED))
             ->count();
         $catalogErrors = $catalog->validateRegistry();
+        $sourceFinal = 0;
+        $sourceActive = 0;
+        $verificationDossiers = 0;
+        foreach ($catalog->keys() as $key) {
+            try {
+                $path = database_path("ai-helper-system-guides/{$key}.md");
+                $parsed = $parser->parseFile($path, true);
+                $metadata = $catalog->validate($parsed['frontmatter'], $parsed['content'], $path);
+                $sourceFinal += $metadata['release_status'] === AiHelperSystemGuideCatalog::RELEASE_FINAL ? 1 : 0;
+                $sourceActive += $metadata['active'] ? 1 : 0;
+                $verificationDossiers += is_file(base_path("docs/ai-helper-system-guide-reviews/{$key}.md")) ? 1 : 0;
+            } catch (Throwable $exception) {
+                $catalogErrors[] = $key.': '.$exception->getMessage();
+            }
+        }
+        $catalogErrors = array_values(array_unique($catalogErrors));
         $systemPayload = [
             'expected' => $catalog->expectedCount(),
             'total' => $guides->count(),
@@ -115,7 +146,10 @@ class CheckAiHelperKnowledgeReadiness extends Command
             'valid_module_gates' => $validModules,
             'within_review_period' => $withinReview,
             'valid_catalog_metadata' => $validCatalogMetadata,
-            'approval_hash_matches' => $approvalHashMatches,
+            'source_final' => $sourceFinal,
+            'source_active' => $sourceActive,
+            'source_hash_matches' => $sourceHashMatches,
+            'verification_dossiers' => $verificationDossiers,
             'expected_versions' => $expectedVersions,
             'maintainer_chunks_excluded' => $maintainerChunkViolations === 0,
             'maintainer_chunk_violations' => $maintainerChunkViolations,
@@ -137,7 +171,10 @@ class CheckAiHelperKnowledgeReadiness extends Command
             && $validModules === $guides->count()
             && $withinReview === $guides->count()
             && $validCatalogMetadata === $guides->count()
-            && $approvalHashMatches === $guides->count()
+            && $sourceFinal === $catalog->expectedCount()
+            && $sourceActive === $catalog->expectedCount()
+            && $sourceHashMatches === $guides->count()
+            && $verificationDossiers === $catalog->expectedCount()
             && $expectedVersions === $guides->count()
             && $maintainerChunkViolations === 0
             && $systemPayload['processing'] === 0
@@ -154,9 +191,13 @@ class CheckAiHelperKnowledgeReadiness extends Command
         $retrievalConfigurationValid = $this->retrievalConfigurationValid();
         $providerConfigured = (bool) config('ai_helper.enabled', false)
             && trim((string) config('ai_helper.api_key')) !== '';
+        $systemGuidesEnabled = (bool) config('ai_helper.system_guides_enabled', false);
+        $finalCorpusEnforced = (bool) config('ai_helper.system_guide_final_corpus_enforced', true);
         $productionConfigurationValid = $providerConfigured
             && (bool) config('ai_helper.retrieval_v2', true)
             && (bool) config('ai_helper.retrieval_v3', false)
+            && $systemGuidesEnabled
+            && $finalCorpusEnforced
             && (bool) config('ai_helper.embedding_enabled', true)
             && (bool) config('ai_helper.rerank_enabled', false)
             && (bool) config('ai_helper.citation_validation_enabled', true)
@@ -164,13 +205,19 @@ class CheckAiHelperKnowledgeReadiness extends Command
             && $groundingMode === 'enforce'
             && $verificationValid
             && $retrievalConfigurationValid;
-        $roleAwareReady = $catalogErrors === [] && $legacyActive === 0
-            && (! (bool) config('ai_helper.system_guides_enabled', false) || $systemReady);
+        $roleAwareReady = $catalogErrors === []
+            && $legacyActive === 0
+            && $systemReady;
         $ready = $referenceReady
             && $verificationValid
             && $retrievalConfigurationValid
             && $roleAwareReady
             && (! $productionGate || ($systemReady && $productionConfigurationValid));
+        $deploymentState = match (true) {
+            $ready && $systemGuidesEnabled && $finalCorpusEnforced => 'production_ready',
+            $systemReady && ! $systemGuidesEnabled => 'staged_disabled',
+            default => 'incomplete',
+        };
 
         return $this->render([
             'ready' => $ready,
@@ -178,6 +225,9 @@ class CheckAiHelperKnowledgeReadiness extends Command
             'reference_knowledge_ready' => $referenceReady,
             'system_guides_ready' => $systemReady,
             'role_aware_retrieval_ready' => $roleAwareReady,
+            'system_guides_runtime_enabled' => $systemGuidesEnabled,
+            'final_corpus_enforced' => $finalCorpusEnforced,
+            'deployment_state' => $deploymentState,
             'reference_knowledge' => $referencePayload,
             'system_guides' => $systemPayload,
             'retrieval' => [

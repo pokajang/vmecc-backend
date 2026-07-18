@@ -1,6 +1,6 @@
 ---
 key: roster-manage
-title: Creating, Editing, and Publishing Rosters
+title: Creating and Publishing Rosters
 knowledge_type: system_guide
 scope_type: module
 module_key: roster
@@ -10,78 +10,51 @@ required_permissions:
   - rosters.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - roster
-  - workflow
+  - shifts
+  - publish
+  - management
   - system-guide
-active: false
+active: true
 ---
-
-# Creating, Editing, and Publishing Rosters
+# Creating and Publishing Rosters
 
 ## Purpose
 
-Explain the supported VMECC creating, editing, and publishing rosters workflow without exposing records, hidden controls or another permission tier.
+Assign teams to configured shifts, save draft schedules, validate conflicts, and publish authoritative roster entries.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of rosters.manage.
+Confirm the schedule name, shift definitions, active teams, date range, leave or availability conflicts, and existing draft or published assignments.
 
-## Required permission/module state
+## Steps
 
-The roster gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Roster**.
+2. Open the intended date range, choose **Change**, and assign an eligible team or clear the shift for each edited date.
+3. Resolve every same-day conflict; one team cannot be assigned to more than one shift on the same date.
+4. Choose **Save draft** to store 1 to 500 entries, then reload and review all draft labels and team/shift combinations.
+5. Choose **Publish**, enter the required schedule label of up to 100 characters, confirm, and verify the published state, publisher, time, and affected-team notifications.
 
-## Where to find the page
+## What happens next
 
-Open /roster.
+Saving creates **Draft** entries. Publishing changes them to **Published** and records who published them and when. Clearing a shift removes that date and shift entry. Verify the complete schedule before operational use.
 
-## Prerequisites
+Affected team members receive publication notifications. Team managers correct membership; leave managers resolve leave records rather than editing roster history to hide conflicts.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Each entry requires a valid date and at least one shift. Choose a shift and team displayed on the page. You can save from 1 to 500 entries at once, and publishing requires a schedule label.
 
-1. Choose the team and period, create or edit draft shifts, resolve conflicts, save the draft, then publish only after final review.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Rosters have no attachment upload. **Print** or **Export** produces a copy of the current schedule; it does not publish or approve it.
 
-## Fields and validation
+Resolve same-team same-date conflicts, invalid shifts, missing teams, and batches over 500 entries. If another manager changes the roster, reload it and review the complete schedule before publishing.
 
-Team, period, date, shift, member, overlap and publication rules are validated before save or publish.
+## Related tasks
 
-## Statuses and transitions
-
-Roster data is draft or published. Viewers should rely only on the published period.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the roster route family and roster gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Team management, shift settings, roster viewing, and leave roster-impact checks are separately authorized.

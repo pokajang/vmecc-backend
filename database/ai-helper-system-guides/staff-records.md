@@ -10,78 +10,49 @@ required_permissions:
   - staff.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Human Resources
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - staff
-  - workflow
+  - records
+  - management
   - system-guide
-active: false
+active: true
 ---
-
 # Managing Staff Records
 
 ## Purpose
 
-Explain the supported VMECC managing staff records workflow without exposing records, hidden controls or another permission tier.
+Maintain supported employment and staff-profile information without crossing into user-account, role, or separately protected self-profile data.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of staff.manage.
+Verify the person, employment context, team, and effective information against an approved Human Resources source before editing.
 
-## Required permission/module state
+## Steps
 
-The staff gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Staff**.
+2. Open the required staff member and review the current identity, employment, team, and history information.
+3. Select **Edit**, update only the fields shown in the staff form, and review the information before saving.
+4. Select **Save**, reload the profile, and confirm the updated details and history.
 
-## Where to find the page
+## What happens next
 
-Open /staff/details.
+Saving updates the staff record; it does not change login status, lock state, deletion state, role assignment, salary assignment, leave entitlement, or team membership unless a dedicated control performs that action.
 
-## Prerequisites
+Human Resources verifies employment changes. User administrators, role managers, team managers, and Finance perform their separately authorized actions.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+The active form and system define required identity/employment fields, formats, Malaysian state values, dates, and length limits. Banking, medical, and emergency fields remain governed by their dedicated profile access rights.
 
-1. Open the stated page, select the intended record or section, complete only visible supported fields, review the summary and current state, then use the enabled primary action once.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Upload only through a visible authorized image/document control. Do not place credentials, bank secrets, or unrelated health information in general notes.
 
-## Fields and validation
+Correct named field and date errors. Reload after concurrent changes. Use the dedicated user, role, team, payroll, or profile workflow when a control is not present.
 
-Identity and employment fields are validated by the staff API; sensitive self-profile fields have separate permissions.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Human Resources when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the staff route family and staff gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Human Resources. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+The staff directory, user administration, role assignments, teams, salary assignments, and leave entitlements are separate workflows.

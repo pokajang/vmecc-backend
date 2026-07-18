@@ -14,75 +14,45 @@ version: 3
 owner: Human Resources
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - leave
   - workflow
   - system-guide
-active: false
+active: true
 ---
-
 # Holiday Administration
 
 ## Purpose
 
 Maintain national and additional holidays used by leave-day calculation.
 
-## Who can access it
+## Before you begin
 
-Access requires the catalog permission and module gate in frontmatter; ordinary management access remains assignment-scoped.
+Confirm the year, holiday name, date, and whether the holiday applies nationally or only to a selected location or state.
 
-## Required permission/module state
+## Steps
 
-Both permission and module activation are checked server-side. Route context cannot grant access.
+1. Go to **Leave Management** and open **Holidays**.
+2. Choose the year and review national and additional holidays separately.
+3. For national rows retain the fixed key, edit name/date/applicable, and save the batch.
+4. For an additional holiday, enter its name and date, choose where it applies, add the state when required, and save.
+5. Edit or delete only after checking affected leave calculations.
 
-## Where to find the page
+## What happens next
 
-Open /staff/leave-management/set-holidays.
-
-## Prerequisites
-
-Verify the exact person, period, record, current state, and effective assignment scope before changing data.
-
-## Exact steps
-
-1. Choose the year and review national and additional holidays separately.
-2. For national rows retain the fixed key, edit name/date/applicable, and save the batch.
-3. For an additional holiday enter name/date, choose scope and state when required, and save.
-4. Edit or delete only after checking affected leave calculations.
-
-## Fields and validation
-
-National key max 100; names max 255; date YYYY-MM-DD; applicable boolean; additional scope registered; state nullable/max 100.
-
-## Statuses and transitions
-
-National rows upsert by fixed key/year; additional rows create/edit/delete and changes are audited.
-
-## Who performs the next action
+Saving updates the national holidays for that year or adds the new local holiday. Each change is recorded in the activity history.
 
 Human Resources verifies affected leave calculations.
 
-## Attachments and limits
+## If something goes wrong
+
+Enter a name of no more than 255 characters and a valid date. For national holidays, choose **Yes** or **No** under **Applicable**. For additional holidays, choose one of the locations shown on the form; a state name can contain up to 100 characters.
 
 No attachments.
 
-## Common errors and recovery
+Correct any date, location, state, or text named in the message. Reload the selected year after saving several holidays.
 
-Correct invalid dates, scope, or text. Reload the year after a batch save.
+## Related tasks
 
-## What Ask AI cannot do
-
-Ask AI cannot open records, upload evidence, submit, review, approve, reject, cancel, change settings, bypass validation, or confirm success.
-
-## Related pages
-
-Self-service, management, configuration, and record APIs remain separate permission boundaries.
-
-## Source-of-truth code references for maintainers
-
-`vmecc-frontend/src/views/staff/leave-management/LeaveManagement.js`; `vmecc-backend/app/Http/Controllers/HolidayController.php`; `vmecc-backend/app/Http/Controllers/LeaveController.php`.
-
-## Guide maintenance
-
-Owner: Human Resources. Candidate version: 3. Reviewed: 2026-07-17. Review due: 2026-10-17. Activation requires a matching hash-bound approval manifest record.
+Use **Leave** to check how the saved holidays affect a personal leave request. Use **Entitlements** for annual leave balances.

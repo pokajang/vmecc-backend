@@ -15,11 +15,9 @@ class AiHelperSystemGuideCatalog
 
     public const RELEASE_DRAFT = 'draft';
 
-    public const RELEASE_APPROVED = 'approved';
+    public const RELEASE_FINAL = 'final';
 
-    public const RELEASE_STATUSES = [self::RELEASE_DRAFT, self::RELEASE_APPROVED];
-
-    public function __construct(private readonly AiHelperSystemGuideApprovalManifest $approvals) {}
+    public const RELEASE_STATUSES = [self::RELEASE_DRAFT, self::RELEASE_FINAL];
 
     /** @var array<string, array{module_key: string, route_key: string, module_gate: string, permissions: array<int, string>, permission_match?: string, roles?: array<int, string>, owner: string}> */
     private const GUIDES = [
@@ -37,9 +35,9 @@ class AiHelperSystemGuideCatalog
         'leave-workflow-rules' => ['module_key' => 'leave', 'route_key' => 'leave-management', 'module_gate' => 'leave.workflow_rules', 'permissions' => ['settings.manage'], 'owner' => 'Human Resources'],
         'overtime-self-service' => ['module_key' => 'overtime', 'route_key' => 'overtime', 'module_gate' => 'overtime.self_service', 'permissions' => ['self.overtime'], 'owner' => 'Human Resources'],
         'overtime-management' => ['module_key' => 'overtime', 'route_key' => 'overtime-management', 'module_gate' => 'overtime.management', 'permissions' => ['staff.overtime.manage'], 'owner' => 'Human Resources'],
-        'overtime-rates' => ['module_key' => 'overtime', 'route_key' => 'overtime-management', 'module_gate' => 'overtime.rate_settings', 'permissions' => ['settings.manage'], 'owner' => 'Human Resources'],
+        'overtime-rates' => ['module_key' => 'overtime', 'route_key' => 'salary-claims', 'module_gate' => 'overtime.rate_settings', 'permissions' => ['settings.manage'], 'owner' => 'Human Resources'],
         'overtime-workflow-rules' => ['module_key' => 'overtime', 'route_key' => 'overtime-management', 'module_gate' => 'overtime.workflow_rules', 'permissions' => ['settings.manage'], 'owner' => 'Human Resources'],
-        'payroll-self-service' => ['module_key' => 'payroll', 'route_key' => 'payroll', 'module_gate' => 'payroll.self_service', 'permissions' => ['self.payroll'], 'owner' => 'Finance'],
+        'payroll-self-service' => ['module_key' => 'payroll', 'route_key' => 'payroll', 'module_gate' => 'payroll.payslips', 'permissions' => ['self.payroll'], 'owner' => 'Finance'],
         'payroll-claims' => ['module_key' => 'payroll', 'route_key' => 'payroll', 'module_gate' => 'payroll.claims', 'permissions' => ['self.payroll'], 'owner' => 'Finance'],
         'salary-claims-management' => ['module_key' => 'payroll', 'route_key' => 'salary-claims', 'module_gate' => 'payroll.salary_claims_management', 'permissions' => ['staff.salary.manage'], 'owner' => 'Finance'],
         'payment-actions' => ['module_key' => 'payroll', 'route_key' => 'salary-claims', 'module_gate' => 'payroll.payment_actions', 'permissions' => ['staff.salary.pay'], 'owner' => 'Finance'],
@@ -62,7 +60,7 @@ class AiHelperSystemGuideCatalog
         'fitness-reports' => ['module_key' => 'reports', 'route_key' => 'fitness', 'module_gate' => 'reports.fitness_test', 'permissions' => ['reports.fitness.view'], 'owner' => 'Operations'],
         'report-management' => ['module_key' => 'reports', 'route_key' => 'reports', 'module_gate' => 'reports', 'permissions' => ['reports.manage'], 'owner' => 'Operations'],
         'inspection-view' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.view'], 'owner' => 'Operations'],
-        'inspection-manage' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.manage'], 'owner' => 'Operations'],
+        'inspection-manage' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.manage', 'reports.inspection.conduct'], 'owner' => 'Operations'],
         'extinguisher-management' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.extinguishers.manage'], 'owner' => 'Operations'],
         'inspection-issue-management' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.issues.manage'], 'owner' => 'Operations'],
         'inspection-issue-verification' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.issues.verify'], 'owner' => 'Operations'],
@@ -71,7 +69,7 @@ class AiHelperSystemGuideCatalog
         'role-permissions' => ['module_key' => 'settings.role_permissions', 'route_key' => 'settings', 'module_gate' => 'settings.role_permissions', 'permissions' => ['settings.manage'], 'owner' => 'System Administration'],
         'dashboard-visibility' => ['module_key' => 'settings.dashboard_visibility', 'route_key' => 'settings', 'module_gate' => 'settings.dashboard_visibility', 'permissions' => ['settings.manage'], 'owner' => 'System Administration'],
         'system-maintenance' => ['module_key' => 'settings.system_maintenance', 'route_key' => 'settings', 'module_gate' => 'settings.system_maintenance', 'permissions' => ['settings.manage'], 'owner' => 'System Administration'],
-        'workflow-notifications-settings' => ['module_key' => 'workflow_notifications', 'route_key' => 'settings', 'module_gate' => 'workflow_notifications', 'permissions' => ['settings.manage'], 'owner' => 'System Administration'],
+        'workflow-notifications-settings' => ['module_key' => 'workflow_notifications', 'route_key' => 'settings', 'module_gate' => 'workflow_notifications', 'permissions' => [], 'owner' => 'System Administration'],
         'audit-logs' => ['module_key' => 'audit', 'route_key' => 'audit', 'module_gate' => 'audit', 'permissions' => ['audit.view'], 'owner' => 'System Administration'],
         'ask-ai-administration' => ['module_key' => 'profile', 'route_key' => 'ai-helper-admin', 'module_gate' => 'profile', 'permissions' => ['*'], 'roles' => ['System Administrator'], 'owner' => 'System Administration'],
     ];
@@ -103,11 +101,11 @@ class AiHelperSystemGuideCatalog
     ];
 
     private const REQUIRED_SECTIONS = [
-        'Purpose', 'Who can access it', 'Required permission/module state', 'Where to find the page',
-        'Prerequisites', 'Exact steps', 'Fields and validation', 'Statuses and transitions',
-        'Who performs the next action', 'Attachments and limits', 'Common errors and recovery',
-        'What Ask AI cannot do', 'Related pages', 'Source-of-truth code references for maintainers',
-        'Guide maintenance',
+        'Purpose', 'Before you begin', 'Steps', 'What happens next', 'If something goes wrong',
+    ];
+
+    private const REQUIRED_DOSSIER_SECTIONS = [
+        'Verified user workflow', 'Verification coverage', 'Discrepancies',
     ];
 
     public function keys(): array
@@ -138,10 +136,7 @@ class AiHelperSystemGuideCatalog
     /** @return array<int, string> */
     public function validateRegistry(): array
     {
-        $errors = [
-            ...ModuleCatalog::validateRegistry(),
-            ...$this->approvals->registryErrors($this->keys()),
-        ];
+        $errors = ModuleCatalog::validateRegistry();
         foreach (self::GUIDES as $key => $guide) {
             if (! ModuleCatalog::has($guide['module_key']) || ! ModuleCatalog::has($guide['module_gate'])) {
                 $errors[] = "{$key} has unknown module metadata";
@@ -299,20 +294,18 @@ class AiHelperSystemGuideCatalog
         }
         $active = $this->strictBoolean($frontmatter, 'active', $source);
         $version = max(1, (int) ($frontmatter['version'] ?? 1));
-        if ($active && $releaseStatus !== self::RELEASE_APPROVED) {
+        if ($active && $releaseStatus !== self::RELEASE_FINAL) {
             throw new RuntimeException("Draft system guide cannot be active in {$source}.");
         }
-        if ($releaseStatus === self::RELEASE_APPROVED && ! $active) {
-            throw new RuntimeException("Approved system guide must be active in {$source}.");
+        if ($releaseStatus === self::RELEASE_FINAL && ! $active) {
+            throw new RuntimeException("Final system guide must be active in {$source}.");
         }
-        if ($releaseStatus === self::RELEASE_DRAFT && isset($this->approvals->all()[$key])) {
-            throw new RuntimeException("Draft system guide must not have an approval manifest record in {$source}.");
-        }
-        if ($releaseStatus === self::RELEASE_APPROVED) {
+        if ($releaseStatus === self::RELEASE_FINAL) {
             if ($version !== self::FINAL_VERSION) {
-                throw new RuntimeException('Approved system guide must use version '.self::FINAL_VERSION." in {$source}.");
+                throw new RuntimeException('Final system guide must use version '.self::FINAL_VERSION." in {$source}.");
             }
-            $this->validateReleaseContent($content, $source);
+            $this->validateFinalContent($content, $source);
+            $this->validateVerificationDossier($key, $source);
         }
 
         $metadata = [
@@ -334,16 +327,7 @@ class AiHelperSystemGuideCatalog
             'active' => $active,
         ];
 
-        if ($releaseStatus === self::RELEASE_APPROVED) {
-            $metadata['approval'] = $this->approvals->validateApprovedGuide($metadata, $content, $source);
-        }
-
         return $metadata;
-    }
-
-    public function approvalMatchesEntry(AiHelperKnowledgeEntry $entry): bool
-    {
-        return $this->approvals->matchesEntry($entry);
     }
 
     private function requiredString(array $values, string $key, string $source): string
@@ -388,7 +372,7 @@ class AiHelperSystemGuideCatalog
         return $values[$key];
     }
 
-    private function validateReleaseContent(string $content, string $source): void
+    public function validateFinalContent(string $content, string $source): void
     {
         $genericPhrases = [
             'open the stated page',
@@ -400,29 +384,71 @@ class AiHelperSystemGuideCatalog
             'usually',
             'if available',
             'depending on configuration',
+            'separate separate',
+            'on the page on the page',
+            'assigned area',
+            'latest record',
         ];
         if (Str::contains(Str::lower($content), $genericPhrases)) {
-            throw new RuntimeException("Approved system guide still contains generic draft wording in {$source}.");
+            throw new RuntimeException("Final system guide still contains generic draft wording in {$source}.");
         }
 
-        $steps = $this->section($content, 'Exact steps');
+        $steps = $this->section($content, 'Steps');
         if (preg_match_all('/^\d+\.\s+\S+/m', $steps) < 3) {
-            throw new RuntimeException("Approved system guide needs at least three concrete steps in {$source}.");
+            throw new RuntimeException("Final system guide needs at least three concrete steps in {$source}.");
         }
 
-        $navigation = $this->section($content, 'Where to find the page');
-        preg_match_all('#(?<![\w`])/[a-z][a-z0-9_/:.-]*#i', $navigation, $routeMatches);
-        foreach (array_unique($routeMatches[0] ?? []) as $path) {
-            $path = rtrim($path, '.,;:)');
-            if ($this->resolveTrustedRoute($path)['route_key'] === null) {
-                throw new RuntimeException("Approved system guide references an unknown frontend route {$path} in {$source}.");
+        if (preg_match_all('/\*\*[^*\r\n]+\*\*/', $content) < 2) {
+            throw new RuntimeException("Final system guide must use visible interface labels in {$source}.");
+        }
+
+        $forbiddenPatterns = [
+            '/^##\s+(?:Source-of-truth code references for maintainers|Guide maintenance|Who can access it|Required permission\/module state)\s*$/mi',
+            '/\b(?:APIs?|HTTP|controller|service class|database|payload|migrations?|settings table|mail runtime|content hash|approval manifest|approval packet)\b/i',
+            '/\b(?:record version|workflow version|validator|optimistic|server|endpoint|metadata|boolean|integer|JSON|nullable|MIME|RoleCatalog)\b/i',
+            '/\b(?:409|422)\b/',
+            '/`[^`]*(?:\.php|\.js|\.jsx|vmecc-(?:backend|frontend)\/|app\/|src\/|routes\/|tests\/)[^`]*`/i',
+            '/`(?:[a-z][a-z0-9_-]*\.)+[a-z][a-z0-9_.-]*`/i',
+            '/\b(?:[a-z][a-z0-9_-]*\.)+[a-z][a-z0-9_.-]*\b/i',
+            '/\b[a-z]+(?:_[a-z0-9]+)+\b/',
+            '#(?<![\w`])/(?:admin|dashboard|inspection|leave|messages|notifications|overtime|payroll|profile|report|reporting-settings|roster|settings|staff|team)(?:[/:][a-z0-9_:-]+)*#i',
+            '/\b(?:candidate version|owner approval|hash-bound|server-authorized|server-calculated|server-side)\b/i',
+        ];
+        foreach ($forbiddenPatterns as $pattern) {
+            if (preg_match($pattern, $content) === 1) {
+                throw new RuntimeException("Final system guide contains maintainer-oriented wording in {$source}.");
+            }
+        }
+    }
+
+    private function validateVerificationDossier(string $key, string $source): void
+    {
+        $path = base_path("docs/ai-helper-system-guide-reviews/{$key}.md");
+        $content = is_file($path) ? file_get_contents($path) : false;
+        if ($content === false) {
+            throw new RuntimeException("Final system guide has no technical verification dossier in {$source}.");
+        }
+        foreach (self::REQUIRED_DOSSIER_SECTIONS as $heading) {
+            if ($this->section($content, $heading) === '') {
+                throw new RuntimeException("Technical verification dossier is missing {$heading} for {$key}.");
             }
         }
 
-        $references = $this->section($content, 'Source-of-truth code references for maintainers');
-        if (preg_match('/`[^`]*(?:vmecc-frontend\/|src\/)[^`]+`/i', $references) !== 1
-            || preg_match('/`[^`]*(?:vmecc-backend\/|app\/|routes\/|tests\/)[^`]+`/i', $references) !== 1) {
-            throw new RuntimeException("Approved system guide needs concrete frontend and backend code references in {$source}.");
+        $hasFrontendRoute = preg_match('/`vmecc-frontend\/src\/routes\.js`/', $content) === 1;
+        $hasFrontendImplementation = preg_match(
+            '/`vmecc-frontend\/(?!src\/routes\.js`)[^`]+\.(?:js|jsx)`/',
+            $content,
+        ) === 1;
+        $hasBackendRoute = preg_match('/`vmecc-backend\/routes\/api\.php`/', $content) === 1;
+        $hasBackendImplementation = preg_match(
+            '/`vmecc-backend\/(?!routes\/api\.php`)(?:app|config|database)\/[^`]+\.php`/',
+            $content,
+        ) === 1;
+        $hasFocusedTest = preg_match('/`vmecc-(?:backend|frontend)\/(?:tests|src\/[^`]*__tests__)\/[^`]+`/', $content) === 1;
+
+        if (! $hasFrontendRoute || ! $hasFrontendImplementation || ! $hasBackendRoute
+            || ! $hasBackendImplementation || ! $hasFocusedTest) {
+            throw new RuntimeException("Technical verification dossier needs route, implementation, and test evidence for {$key}.");
         }
     }
 

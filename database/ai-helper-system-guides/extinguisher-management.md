@@ -10,78 +10,51 @@ required_permissions:
   - reports.inspection.extinguishers.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
-  - reports
-  - workflow
+  - inspection
+  - fire-extinguishers
+  - assets
   - system-guide
-active: false
+active: true
 ---
-
 # Fire Extinguisher Management
 
 ## Purpose
 
-Explain the supported VMECC fire extinguisher management workflow without exposing records, hidden controls or another permission tier.
+Maintain the fire-extinguisher catalog, location identity, lifecycle, coverage, and inspection history.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of reports.inspection.extinguishers.manage.
+Confirm the zone, main location, sub-location, **ID Loc. No.** or barcode/serial number, extinguisher type, certification date, and current details.
 
-## Required permission/module state
+## Steps
 
-The reports.inspection gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Inspection** and open **Fire Extinguishers**.
+2. Open the extinguisher catalog and search for the asset to prevent duplicates.
+3. Add or edit the zone, location path, locator, type, and certification validity.
+4. Confirm a duplicate only after comparing both catalog identities.
+5. For lifecycle changes, choose Out of service, Return to service, Retire, or Restore and enter the required reason.
+6. Reload and verify lifecycle, audit fields, latest saved details, coverage, and inspection history.
 
-## Where to find the page
+## What happens next
 
-Open /inspection.
+Active -> Out of service -> Active. Active or Out of service -> Retired; only Retired -> Active can restore. Lifecycle writes use checks that prevent overlapping updates.
 
-## Prerequisites
+An authorized asset manager verifies each catalog or lifecycle change; issue owners handle defects linked to the asset.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Zone is at most 80 characters; location fields and locators are at most 190; type is at most 120; certification validity is a date. Creation requires the complete location and an ID Loc. No. or barcode/S/N. Batch creation accepts 1 to 25 items.
 
-1. Open the intended record or New page, complete only the sections and findings shown, save supported draft work, attach media within displayed limits, and use only the workflow action offered for the current state.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Catalog changes do not upload attachments. Inspection evidence and issue-resolution photos use report media in their own workflows.
 
-## Fields and validation
+If a possible duplicate is shown, compare it with the existing extinguisher before confirming. If another user changed the asset, reload it. Restore the asset before reopening an issue linked to a retired extinguisher.
 
-Report type, team scope, dates, sections, media, findings, issue state, workflow action and export eligibility are validated by each report API.
+## Related tasks
 
-## Statuses and transitions
-
-Draft, submission, review, verification and resolution states depend on report type and configured workflow; follow only displayed transitions.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the inspection route family and reports.inspection gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use **Inspection** for reports and the issue work queue for defects created from extinguisher checks.

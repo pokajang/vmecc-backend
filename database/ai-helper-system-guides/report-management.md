@@ -10,78 +10,51 @@ required_permissions:
   - reports.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - reports
   - workflow
+  - management
   - system-guide
-active: false
+active: true
 ---
-
 # Report Management Actions
 
 ## Purpose
 
-Explain the supported VMECC report management actions workflow without exposing records, hidden controls or another permission tier.
+Manage report drafts and complete the review actions available for each report type.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of reports.manage.
+Confirm the report type, owner, assigned team or location, current status, and action shown on the page.
 
-## Required permission/module state
+## Steps
 
-The reports gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Reports**.
+2. Open the selected report list and filter by status, assigned team, or location.
+3. Open the record and verify its content, timeline, current status, and latest details.
+4. Select **Review**, **Approve**, or **Reject** only when shown; enter rejection remarks.
+5. Confirm the action and reload the record.
+6. Verify the new status, updated history, actor, timestamp, and timeline entry.
 
-## Where to find the page
+## What happens next
 
-Open /report.
+**Submitted** moves to **Reviewed** and then **Approved**. A report may be **Rejected** while submitted or reviewed.
 
-## Prerequisites
+The assigned review and approval roles determine who acts next. Each report type follows its saved rules for self-review and self-approval.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Remarks are limited to 2,000 characters and are required when rejecting a report.
 
-1. Open the intended record or New page, complete only the sections and findings shown, save supported draft work, attach media within displayed limits, and use only the workflow action offered for the current state.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Review actions do not add attachments. Add evidence through the report form before submission.
 
-## Fields and validation
+If another user changed the report, reload it before acting again. Correct any field named in a validation message. If the record is missing or access is denied, ask an administrator to check your assignment and report access.
 
-Report type, team scope, dates, sections, media, findings, issue state, workflow action and export eligibility are validated by each report API.
+## Related tasks
 
-## Statuses and transitions
-
-Draft, submission, review, verification and resolution states depend on report type and configured workflow; follow only displayed transitions.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-Use only the upload control shown. File type, size, count, ownership and retrieval authorization are enforced by the attachment API.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the reports route family and reports gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+See the guide for the selected report type. Use **Reporting Settings** to manage its review sequence.

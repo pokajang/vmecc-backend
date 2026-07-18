@@ -1,6 +1,6 @@
 ---
 key: roster-view
-title: Viewing Roster Information
+title: Viewing Team Rosters
 knowledge_type: system_guide
 scope_type: module
 module_key: roster
@@ -10,78 +10,50 @@ required_permissions:
   - teams.view
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - roster
-  - workflow
+  - shifts
+  - teams
+  - view
   - system-guide
-active: false
+active: true
 ---
-
-# Viewing Roster Information
+# Viewing Team Rosters
 
 ## Purpose
 
-Explain the supported VMECC viewing roster information workflow without exposing records, hidden controls or another permission tier.
+View roster schedules and shift assignments available under team-view access without receiving roster editing authority.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of teams.view.
+Confirm the intended month/week, team, and shift definitions. Published state is authoritative for operational use.
 
-## Required permission/module state
+## Steps
 
-The roster gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Roster**.
+2. Open **Roster** and move to the intended month or week.
+3. Apply team/date filters and review each day, shift label, team assignment, and **Draft** or **Published** state shown to you.
+4. Use **Print** or **Export** only when displayed, and verify the schedule label and dates before relying on the copy.
 
-## Where to find the page
+## What happens next
 
-Open /roster.
+Draft entries are not visible as published schedules. When a roster manager publishes the schedule, the system records who published it and when.
 
-## Prerequisites
+A roster manager corrects conflicts or publishes schedules. Team managers correct membership; viewers do not edit either.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Roster viewing is read-only. Dates, configured shift names/windows, team names, and publication state come from saved information and current shift settings.
 
-1. Open the stated page, select the intended record or section, complete only visible supported fields, review the summary and current state, then use the enabled primary action once.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+There are no roster attachments. Print/export output must be handled according to its operational sensitivity.
 
-## Fields and validation
+Clear filters and verify the date range. Refresh after publication. If a shift or team is wrong, report the exact date and shift to a roster manager.
 
-Team, period, date, shift, member, overlap and publication rules are validated before save or publish.
+## Related tasks
 
-## Statuses and transitions
-
-Roster data is draft or published. Viewers should rely only on the published period.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the roster route family and roster gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Roster management, teams, shift settings, and leave roster-impact information have separate controls.

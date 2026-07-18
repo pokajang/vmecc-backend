@@ -14,75 +14,45 @@ version: 3
 owner: Human Resources
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - leave
   - workflow
   - system-guide
-active: false
+active: true
 ---
-
 # Managing Leave Records
 
 ## Purpose
 
-Review scoped leave records and perform only the transition owned by the current stage.
+Review leave requests for your assigned team and use only the action shown for the current stage.
 
-## Who can access it
+## Before you begin
 
-Access requires the catalog permission and module gate in frontmatter; ordinary management access remains assignment-scoped.
+Confirm the applicant, leave dates, balance, current status, and action assigned to you before changing the request.
 
-## Required permission/module state
+## Steps
 
-Both permission and module activation are checked server-side. Route context cannot grant access.
+1. Go to **Leave Management** and open **Leave Requests**.
+2. Open the exact record and verify applicant, dates, balance, evidence, history, stage, next role, and latest details.
+3. Use **Review**, **Recommend**, or **Approve** only at the matching stage; enter required remarks and tick the required declaration.
+4. Use **Request correction**, **Reject**, or **Cancel** only when displayed, with required remarks and latest details shown on the page.
+5. Reload and verify the new status, next action, responsible role, and history entry.
 
-## Where to find the page
+## What happens next
 
-Open /staff/leave-management/leaves and /staff/leave-management/record/:leaveId.
+The request moves from **Pending Review** to an optional recommendation and then approval. It may finish as **Approved**, **Rejected**, **Needs Correction**, or **Cancelled**.
 
-## Prerequisites
+The role shown under **Current Action Owner** acts next. When separate reviewers are required, a person who completed an earlier stage cannot complete the later stage.
 
-Verify the exact person, period, record, current state, and effective assignment scope before changing data.
+## If something goes wrong
 
-## Exact steps
+Remarks can contain up to 1,000 characters. **Reject**, **Request correction**, and **Cancel** require remarks. Forward actions require the declaration shown on the form.
 
-1. Open the exact record and verify applicant, dates, balance, evidence, history, stage, next role, and version.
-2. Use **Review**, **Recommend**, or **Approve** only at the matching stage; enter required remarks and tick the required declaration.
-3. Use **Request correction**, **Reject**, or **Cancel** only when displayed, with required remarks and expected version.
-4. Reload and verify status, stage, next actor, history, and incremented version.
+Evidence is read only through the authorized leave attachment action.
 
-## Fields and validation
+If the request changed while you were viewing it, reload it. A role or stage message identifies why the action is unavailable. Ask an administrator to repair the assignment; do not skip the required stage or declaration.
 
-Remarks max 1,000; reject/correction/cancel require remarks; forward actions require declaration; expected version at least 1.
+## Related tasks
 
-## Statuses and transitions
-
-Pending advances review → optional recommend → approve → Approved; rejection, correction, or cancellation ends the current path.
-
-## Who performs the next action
-
-The server-stored next role in the employee's scope acts next. Distinct-actor policy may reject a previous actor.
-
-## Attachments and limits
-
-Evidence is read only through the authorized leave attachment endpoint.
-
-## Common errors and recovery
-
-Reload stale records. Role/stage errors name the owner or stage. Administrator override never bypasses status, stage, declaration, distinct actor, or version.
-
-## What Ask AI cannot do
-
-Ask AI cannot open records, upload evidence, submit, review, approve, reject, cancel, change settings, bypass validation, or confirm success.
-
-## Related pages
-
-Self-service, management, configuration, and record APIs remain separate permission boundaries.
-
-## Source-of-truth code references for maintainers
-
-`vmecc-frontend/src/views/staff/leave-management/workflowRecordHelpers.js`; `vmecc-backend/app/Http/Controllers/LeaveWorkflowController.php`; `vmecc-backend/app/Services/LeaveWorkflowService.php`.
-
-## Guide maintenance
-
-Owner: Human Resources. Candidate version: 3. Reviewed: 2026-07-17. Review due: 2026-10-17. Activation requires a matching hash-bound approval manifest record.
+Use **Leave** for your own applications, **Entitlements** for annual balances, and **Workflow Rules** for the review sequence.

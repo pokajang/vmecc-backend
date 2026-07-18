@@ -14,75 +14,45 @@ version: 3
 owner: Human Resources
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - leave
   - workflow
   - system-guide
-active: false
+active: true
 ---
-
 # Leave Workflow-Rule Configuration
 
 ## Purpose
 
 Configure reachable review, optional recommendation, approval, and distinct-actor rules for new leave submissions.
 
-## Who can access it
+## Before you begin
 
-Access requires the catalog permission and module gate in frontmatter; ordinary management access remains assignment-scoped.
+Confirm which roles will review, recommend, and approve new leave requests, and make sure active users hold those roles.
 
-## Required permission/module state
+## Steps
 
-Both permission and module activation are checked server-side. Route context cannot grant access.
+1. Go to **Leave Management** and open **Workflow Rules**.
+2. Review applicant rules, fallback roles, recommendation, and distinct-approver options.
+3. Choose existing applicant/review/approve roles and a recommend role when recommendation is enabled; keep non-empty safe fallbacks.
+4. Save once; resolve every unknown or unreachable stage role reported by validation.
+5. Submit a controlled new leave request and confirm that it shows the intended review roles; existing pending requests stay unchanged.
 
-## Where to find the page
+## What happens next
 
-Open /staff/leave-management/rules.
+The saved roles apply to new leave requests. Existing pending requests keep the roles already shown in their history.
 
-## Prerequisites
+The review role acts first, followed by the recommendation role when enabled, and then the approval role.
 
-Verify the exact person, period, record, current state, and effective assignment scope before changing data.
+## If something goes wrong
 
-## Exact steps
-
-1. Review applicant rules, fallback roles, recommendation, and distinct-approver options.
-2. Choose existing applicant/review/approve roles and a recommend role when recommendation is enabled; keep non-empty safe fallbacks.
-3. Save once; resolve every unknown or unreachable stage role reported by validation.
-4. Submit a controlled new leave and confirm its stored snapshot; existing in-flight snapshots stay unchanged.
-
-## Fields and validation
-
-Role names exist/max 255. Applicant/review/approve required per rule; recommend optional. Safe fallback defaults use Human Resource.
-
-## Statuses and transitions
-
-Settings apply to new snapshots; existing Pending records keep their stored roles.
-
-## Who performs the next action
-
-The snapshot review role acts first, then recommendation when enabled, then approval.
-
-## Attachments and limits
+Choose existing roles from the page. Applicant, review, and approval roles are required; the recommendation role is required only when recommendation is enabled.
 
 No attachments.
 
-## Common errors and recovery
+Give an active user the missing role or choose another role that has an active user. Never enable a stage that nobody can complete.
 
-Add missing permission/active assignment or choose a reachable role. Never enable a stage without an actor.
+## Related tasks
 
-## What Ask AI cannot do
-
-Ask AI cannot open records, upload evidence, submit, review, approve, reject, cancel, change settings, bypass validation, or confirm success.
-
-## Related pages
-
-Self-service, management, configuration, and record APIs remain separate permission boundaries.
-
-## Source-of-truth code references for maintainers
-
-`vmecc-frontend/src/views/staff/leave-management/LeaveManagement.js`; `vmecc-backend/app/Http/Controllers/SettingsController.php`; `vmecc-backend/app/Services/LeaveWorkflowService.php`; `vmecc-backend/app/Services/WorkflowRbacAuditService.php`.
-
-## Guide maintenance
-
-Owner: Human Resources. Candidate version: 3. Reviewed: 2026-07-17. Review due: 2026-10-17. Activation requires a matching hash-bound approval manifest record.
+Use **Leave Requests** to confirm the sequence on a controlled new request. Existing pending requests are not rewritten by this setting.

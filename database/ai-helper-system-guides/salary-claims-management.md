@@ -1,6 +1,6 @@
 ---
 key: salary-claims-management
-title: Managing Salary Claims
+title: Reviewing Salary and Expense Claims
 knowledge_type: system_guide
 scope_type: module
 module_key: payroll
@@ -10,78 +10,51 @@ required_permissions:
   - staff.salary.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Finance
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - payroll
+  - claims
+  - management
   - workflow
   - system-guide
-active: false
+active: true
 ---
-
-# Managing Salary Claims
+# Reviewing Salary and Expense Claims
 
 ## Purpose
 
-Explain the supported VMECC managing salary claims workflow without exposing records, hidden controls or another permission tier.
+Review employee claims for your assigned team and perform only the check, review, approval, rejection, or cancellation action shown for the current stage.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of staff.salary.manage.
+Verify the claimant, claim type, amount, date or period, evidence, saved salary and overtime details, **Current Status**, **Current Action Owner**, **Next Action**, and history.
 
-## Required permission/module state
+## Steps
 
-The payroll.salary_claims_management gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Payroll Records** and open **Claim Records**.
+2. Open the claim detail and compare the submitted fields and evidence with the calculated totals and workflow history.
+3. Use **Check**, **Review**, or **Approve** only when it matches the current stage and the record names an active role you hold.
+4. Use **Reject** or **Cancel** only when displayed, enter the required remarks, and submit the latest details shown on the page.
+5. Reload the record and verify its new status, stage, next actor, history entry, and updated history.
 
-## Where to find the page
+## What happens next
 
-Open /staff/salary-claims.
+**Pending** begins at check, advances to review, then approve, and finishes **Approved**. **Rejected** and **Cancelled** finish the path. A claim cannot be paid before approval.
 
-## Prerequisites
+The active assignment for the claim's **Current Action Owner** performs the **Next Action**. System Administrator access does not bypass status, stage, distinct-actor, or latest-details checks.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Workflow remarks can contain up to 1,000 characters; **Reject** and **Cancel** require remarks. If the claim changed while you were viewing it, reload before trying again. An action is unavailable when the claimant, assigned team, stage, role, or current status does not match the required workflow step.
 
-1. Open the stated page, select the intended record or section, complete only visible supported fields, review the summary and current state, then use the enabled primary action once.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Evidence is read through authorized claim attachment links. Management access to a claim does not make the underlying file public.
 
-## Fields and validation
+If another user changed the claim, reload it. A stage or role message identifies why the action is unavailable. If no active user holds the next role, correct role assignments or workflow settings before retrying; do not skip the stage.
 
-Claim type, date, amount, description, salary period, evidence, payment data, effective dates and overlapping assignments are validated by the relevant API.
+## Related tasks
 
-## Statuses and transitions
-
-The claim record shows its workflow state. Approval and payment are separate, and payment reversal is audited.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Finance when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the salary-claims route family and payroll.salary_claims_management gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Finance. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Personal claim submission, payment actions, salary assignments, and workflow settings use separate areas of the system.

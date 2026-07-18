@@ -10,78 +10,51 @@ required_permissions:
   - reports.inspection.issues.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
-  - reports
-  - workflow
+  - inspection
+  - issues
+  - corrective-action
   - system-guide
-active: false
+active: true
 ---
-
 # Inspection Issue Management
 
 ## Purpose
 
-Explain the supported VMECC inspection issue management workflow without exposing records, hidden controls or another permission tier.
+Triage, assign, start, resolve, reopen, or cancel fire-extinguisher defects with auditable protection against overlapping changes.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of reports.inspection.issues.manage.
+Verify the asset, check criterion, severity, occurrence history, current assignee, due date, status, evidence, and latest saved details.
 
-## Required permission/module state
+## Steps
 
-The reports.inspection gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Inspection** and open **Issues**.
+2. Open the issue and confirm its asset identity, title, description, severity, status, and history.
+3. Assign an active user and add an assignment note, then start an Open issue.
+4. Enter corrective action and resolution notes; attach resolution evidence and resolve the issue.
+5. After verification, reopen only with a reason and only while its asset is active; cancel an active issue only with a reason.
+6. Reload after every action and verify status, event history, assignee, evidence, and updated history.
 
-## Where to find the page
+## What happens next
 
-Open /inspection.
+Open -> In progress -> Pending verification. Verification closes the issue. Closed or Cancelled -> Open can reopen; Open, In progress, or Pending verification -> Cancelled can cancel.
 
-## Prerequisites
+The assigned manager performs corrective work; a user with the separate verification access closes a pending-verification issue.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Title is at most 255 characters; description and assignment note are at most 5,000; severity is low, medium, high, or critical. Corrective action and resolution notes are required and at most 10,000. Resolution accepts at most 10 media items. Every write requires the latest saved details.
 
-1. Open the intended record or New page, complete only the sections and findings shown, save supported draft work, attach media within displayed limits, and use only the workflow action offered for the current state.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Resolution evidence accepts up to 10 report attachment references. Upload and link the evidence before resolving.
 
-## Fields and validation
+If another user changed the issue, reload it. An issue for a retired extinguisher cannot be reopened. If an action is unavailable for the current status, return to the issue and use only the action shown.
 
-Report type, team scope, dates, sections, media, findings, issue state, workflow action and export eligibility are validated by each report API.
+## Related tasks
 
-## Statuses and transitions
-
-Draft, submission, review, verification and resolution states depend on report type and configured workflow; follow only displayed transitions.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-Use only the upload control shown. File type, size, count, ownership and retrieval authorization are enforced by the attachment API.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the inspection route family and reports.inspection gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use the extinguisher catalog for asset lifecycle and the verification guide for independent closure.

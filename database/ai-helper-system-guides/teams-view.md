@@ -10,78 +10,49 @@ required_permissions:
   - teams.view
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Operations
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - teams
-  - workflow
+  - directory
+  - members
   - system-guide
-active: false
+active: true
 ---
-
 # Viewing Teams
 
 ## Purpose
 
-Explain the supported VMECC viewing teams workflow without exposing records, hidden controls or another permission tier.
+View team identity, status, image, and active membership information allowed by the user's assigned team or area.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of teams.view.
+Use the intended team and confirm whether your active assignment covers all teams or only that team.
 
-## Required permission/module state
+## Steps
 
-The teams.directory gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Teams**.
+2. Open **Teams** and review available team cards, names, groups, status, and current schedule indicator.
+3. Select the intended team and review its active members, roles, primary indicators, and start information.
+4. Return to the directory before selecting another team; use management controls only when separately authorized.
 
-## Where to find the page
+## What happens next
 
-Open /team/details.
+Team viewing is read-only. Membership rows with an end date are not active members; team status and roster schedule are maintained elsewhere.
 
-## Prerequisites
+A team manager corrects team details or membership. Roster managers assign shifts.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+The system determines visible team and member fields. Member-option administration and edits are excluded from view-only access.
 
-1. Select or create the intended team, review its lead, members and assignment scope, change only supported values, validate active assignment dates, then save.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+The team image may be displayed from a preset or authorized uploaded image. Viewers cannot replace it.
 
-## Fields and validation
+An **Access denied** message means your active assignment may not cover that team. Refresh after role or team assignment changes and contact the team administrator about incorrect membership.
 
-Team name, lead, members, assignment dates and team scope must reference valid records.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Operations when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the teams route family and teams.directory gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Operations. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Team management, role assignments, staff directory, and rosters are independently authorized.

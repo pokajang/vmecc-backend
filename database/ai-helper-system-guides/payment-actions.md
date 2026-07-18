@@ -1,6 +1,6 @@
 ---
 key: payment-actions
-title: Payroll Payment Actions
+title: Recording Claim Payments
 knowledge_type: system_guide
 scope_type: module
 module_key: payroll
@@ -10,78 +10,50 @@ required_permissions:
   - staff.salary.pay
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: Finance
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - payroll
-  - workflow
+  - payment
+  - finance
   - system-guide
-active: false
+active: true
 ---
-
-# Payroll Payment Actions
+# Recording Claim Payments
 
 ## Purpose
 
-Explain the supported VMECC payroll payment actions workflow without exposing records, hidden controls or another permission tier.
+Record or reverse payment state for approved claims without changing the underlying approval workflow.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of staff.salary.pay.
+The claim must be **Approved**. Verify claimant, amount, approval history, current paid state, latest details, payment date, and external payment reference before recording payment.
 
-## Required permission/module state
+## Steps
 
-The payroll.payment_actions gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Payroll Records** and open **Salary Records** or **Claim Records**.
+2. Open one approved claim or select up to 200 eligible approved claims and choose **Mark paid**.
+3. Enter the required payment date and optional payment reference up to 255 characters and payment note up to 2,000 characters, then confirm.
+4. Reload and verify **Paid**, the payment date, reference, person who recorded it, and history entry.
+5. To reverse payment, choose **Unmark paid**, enter a required reason of up to 1,000 characters, confirm, and verify that the claim is shown as unpaid.
 
-## Where to find the page
+## What happens next
 
-Open /staff/salary-claims.
+Payment does not replace claim status: only an **Approved** claim can change from unpaid to paid. Reversal changes paid to unpaid and preserves an audit record. Repeating the same transition is rejected.
 
-## Prerequisites
+Finance verifies reconciliation after payment. If a claim itself is wrong, return to the claim workflow; payment access cannot rewrite an approved claim.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+A payment date is required. A reference can contain up to 255 characters and a note up to 2,000. You can mark up to 200 eligible claims paid at once. A reversal requires a reason. Claims that changed, are repeated, or are not eligible are skipped and listed in the result.
 
-1. Open an approved claim, verify claimant, amount, approval history and payment reference, then mark it paid. Unmark payment only when authorized and provide the required reason.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Payment actions do not upload evidence. Existing claim evidence remains visible only to users who can open the claim.
 
-## Fields and validation
+Remove ineligible bulk rows, reload out-of-date information, and retry only failed rows. Do not mark a pending, rejected, cancelled, or already-paid claim. Investigate reported skipped entries individually.
 
-Claim type, date, amount, description, salary period, evidence, payment data, effective dates and overlapping assignments are validated by the relevant API.
+## Related tasks
 
-## Statuses and transitions
-
-The claim record shows its workflow state. Approval and payment are separate, and payment reversal is audited.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact Finance when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the salary-claims route family and payroll.payment_actions gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: Finance. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Claim review, payment recording, salary assignments, and payroll settings are separate tasks and may be available to different users.

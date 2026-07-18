@@ -10,78 +10,51 @@ required_permissions:
   - settings.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: System Administration
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - settings
-  - workflow
+  - dashboard
+  - visibility
   - system-guide
-active: false
+active: true
 ---
-
 # Dashboard Visibility
 
 ## Purpose
 
-Explain the supported VMECC dashboard visibility workflow without exposing records, hidden controls or another permission tier.
+Control which Dashboard sections each role can see.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of settings.manage.
+Identify the role, dashboard section, approved visibility change, underlying data access implications, and rollback state.
 
-## Required permission/module state
+## Steps
 
-The settings.dashboard_visibility gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Settings** and open **Dashboard Visibility**.
+2. Choose **Role editor** or **Matrix**.
+3. Select the exact role and review its current Dashboard access.
+4. Select **Edit**, toggle only approved dashboard sections, and review the changed items.
+5. Save, confirm the changed roles, and allow the page to refresh the current session.
+6. Sign in with a representative affected account and verify both Dashboard visibility and access to the linked records.
 
-## Where to find the page
+## What happens next
 
-Open /settings or /reporting-settings.
+The selected Dashboard sections become visible or hidden after the affected user refreshes their session. This change does not give access to records that the role cannot already open.
 
-## Prerequisites
+System Administration validates the affected dashboard and corresponding system access after save.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Select only the roles and Dashboard sections displayed on the page. The **System Administrator** role remains protected and cannot be changed here.
 
-1. Review the current effective configuration, change only approved supported values, validate dependencies and stage order where shown, save once, then reload and verify the effective result.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Dashboard visibility has no attachments.
 
-## Fields and validation
+If no rows appear, confirm the dashboard access rights exist in the catalog. If a section remains unavailable, verify its module and data access rights. Restore the prior matrix to roll back.
 
-Only registered settings, modules, roles and permissions are accepted.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact System Administration when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the settings route family and settings.dashboard_visibility gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: System Administration. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use **Role Permissions** for the full access matrix and **Module Activation** to enable or disable features.

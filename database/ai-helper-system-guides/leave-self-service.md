@@ -14,75 +14,45 @@ version: 3
 owner: Human Resources
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - leave
   - workflow
   - system-guide
-active: false
+active: true
 ---
-
 # Applying for and Viewing Personal Leave
 
 ## Purpose
 
 Apply for personal leave, save a draft, check entitlement and roster impact, and use only applicant actions still allowed by the request.
 
-## Who can access it
+## Before you begin
 
-Access requires the catalog permission and module gate in frontmatter; ordinary management access remains assignment-scoped.
+Prepare the leave type, dates, reason, covering person, and any supporting document. Check your balance and roster before submitting.
 
-## Required permission/module state
+## Steps
 
-Both permission and module activation are checked server-side. Route context cannot grant access.
+1. Go to **Leave**.
+2. Choose the leave type, start/end dates and time slots; enter the reason and cover-by detail; review calculated days, balance, and roster impact.
+3. Upload evidence when needed, select **Save Draft** to continue later or **Submit** when the request is complete, then reopen it and confirm the status and **Current Action Owner**.
+4. Use **Edit** only for a draft or a pending request that has not been reviewed. Use **Delete** only for a draft, and **Cancel** only when that action is shown.
+5. When **Needs Correction** is returned, amend the named fields and resubmit.
 
-## Where to find the page
+## What happens next
 
-Open **Leave** at /leave, **Apply Leave** at /leave/new, or a request at /leave/:leaveId.
+The request moves from **Draft** to **Pending Review**, may require a recommendation, and then moves to approval. It may finish as **Approved**, **Rejected**, **Cancelled**, or **Needs Correction**.
 
-## Prerequisites
+The role shown under **Current Action Owner** owns the current stage. Wait for that role to act, cancel the pending request when allowed, or correct a request marked **Needs Correction**.
 
-Verify the exact person, period, record, current state, and effective assignment scope before changing data.
+## If something goes wrong
 
-## Exact steps
-
-1. Choose the leave type, start/end dates and time slots; enter the reason and cover-by detail; review calculated days, balance, and roster impact.
-2. Upload evidence when needed, save a draft or submit once, then reopen the detail and confirm its status, stage, next role, and version.
-3. Edit only Draft or pre-review Pending; delete only Draft; cancel only Pending using the displayed action and current expected version.
-4. When **Needs Correction** is returned, amend the named fields and resubmit.
-
-## Fields and validation
-
-Type required/max 100; end date on/after start; shift/slots max 50; reason required/max 2,000; cover-by max 255; days non-negative; expected version at least 1.
-
-## Statuses and transitions
-
-Draft → Pending review → optional recommend → approve. Outcomes: Approved, Rejected, Cancelled, Needs Correction.
-
-## Who performs the next action
-
-The stored next-action role owns the current stage; the applicant waits, cancels Pending, or corrects Needs Correction.
-
-## Attachments and limits
+Choose a leave type, enter an end date on or after the start date, and provide a reason of no more than 2,000 characters. The covering-person detail can contain up to 255 characters. Correct any shift, time slot, or leave-day value named in the message.
 
 Staged JPG, PNG, WebP, or PDF up to 15 MB; an Approved leave attachment cannot be deleted.
 
-## Common errors and recovery
+If the request changed while you were viewing it, reload before trying again. A message will identify a missing entitlement or insufficient balance. Editing is locked after the first manager action.
 
-Reload on version conflict. Missing entitlement and insufficient balance return named validation errors. Editing locks after the first manager action.
+## Related tasks
 
-## What Ask AI cannot do
-
-Ask AI cannot open records, upload evidence, submit, review, approve, reject, cancel, change settings, bypass validation, or confirm success.
-
-## Related pages
-
-Self-service, management, configuration, and record APIs remain separate permission boundaries.
-
-## Source-of-truth code references for maintainers
-
-`vmecc-frontend/src/views/leave/hooks/useLeaveForm.js`; `vmecc-backend/app/Http/Controllers/LeaveController.php`; `vmecc-backend/app/Http/Controllers/LeaveAttachmentController.php`; `vmecc-backend/app/Services/LeaveWorkflowService.php`.
-
-## Guide maintenance
-
-Owner: Human Resources. Candidate version: 3. Reviewed: 2026-07-17. Review due: 2026-10-17. Activation requires a matching hash-bound approval manifest record.
+Use **Leave Management** only if your role includes reviewing other employees' leave. Your own requests remain under **Leave**.

@@ -10,78 +10,51 @@ required_permissions:
   - settings.manage
 permission_match: any
 allowed_roles: []
-version: 2
+version: 3
 owner: System Administration
 reviewed_on: 2026-07-17
 review_due_on: 2026-10-17
-release_status: draft
+release_status: final
 tags:
   - settings
-  - workflow
+  - roles
+  - permissions
   - system-guide
-active: false
+active: true
 ---
-
 # Role Permissions
 
 ## Purpose
 
-Explain the supported VMECC role permissions workflow without exposing records, hidden controls or another permission tier.
+Control which parts of VMECC each standard role can use without changing the protected **System Administrator** role.
 
-## Who can access it
+## Before you begin
 
-Signed-in users whose effective access satisfies any of settings.manage.
+Prepare the intended access change, affected roles, reason for the change, representative users to test, and a copy of the current selections for rollback.
 
-## Required permission/module state
+## Steps
 
-The settings.role_permissions gate must be enabled. The server confirms the listed access rule. Browser page context never grants access.
+1. Go to **Settings** and open **Role Permissions**.
+2. Select **Permission Matrix** or open the required role.
+3. Search or filter to the exact role and access; capture the current assignment.
+4. Select **Edit**, change only approved access rights, and review the changes-only view.
+5. Select **Save** and confirm the updated roles shown in the success message.
+6. Reload access rights and test a representative session; restore the captured matrix if the result is wrong.
 
-## Where to find the page
+## What happens next
 
-Open /settings or /reporting-settings.
+The selected access is added to or removed from each role. The change takes effect after saving, although affected users may need to sign in again.
 
-## Prerequisites
+System Administration verifies the audit record and affected user behavior after the approved change.
 
-Use an active account and the correct organisation or team context. Confirm the intended record, person, date or period before changing anything.
+## If something goes wrong
 
-## Exact steps
+Select only roles and access rights displayed in the matrix. The **System Administrator** role is protected and cannot be changed from this page.
 
-1. Review the current effective configuration, change only approved supported values, validate dependencies and stage order where shown, save once, then reload and verify the effective result.
-2. Wait for a success response and reload or reopen the record before relying on the saved state.
-3. Stop when the action is hidden, the gate is disabled or validation identifies a different required step.
+Role access rights have no attachments.
 
-## Fields and validation
+If access does not change immediately, sign out and sign in again. Restore the previous selection if access was granted incorrectly. Role access rights do not skip the review stages of a workflow.
 
-Only registered settings, modules, roles and permissions are accepted.
+## Related tasks
 
-## Statuses and transitions
-
-A change is complete only after the API succeeds and the refreshed page shows the new saved or effective state.
-
-## Who performs the next action
-
-The next actor is determined by current state, configured workflow, active assignment scope and effective permissions.
-
-## Attachments and limits
-
-No attachment is required unless the page presents an upload control. Never put credentials or unrelated personal data in notes or files.
-
-## Common errors and recovery
-
-If unavailable, confirm module state and active assignment access. Correct the named validation field and retry once. On a conflict or stale state, reload before acting again. Contact System Administration when access or workflow configuration is wrong.
-
-## What Ask AI cannot do
-
-Ask AI cannot reveal inaccessible instructions or data, open records, click, upload, submit, approve, reject, pay, delete, publish, change settings, bypass validation or confirm success.
-
-## Related pages
-
-Related navigation stays within the settings route family and settings.role_permissions gate; every related page evaluates access independently.
-
-## Source-of-truth code references for maintainers
-
-Audit vmecc-frontend/src/routes.js and the current page component, vmecc-backend/routes/api.php, request validation, permission and module middleware, workflow services and focused tests.
-
-## Guide maintenance
-
-Owner: System Administration. Version: 2. Reviewed: 2026-07-17. Review due: 2026-10-17. Re-audit after route, permission, field, validation, status, attachment or workflow changes.
+Use User Administration for role assignments and Dashboard Visibility for the dashboard-only filtered view.
