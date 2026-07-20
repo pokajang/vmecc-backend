@@ -32,7 +32,7 @@ final class E2eRunLock
         $this->assertDirectory($this->lockRoot, 'lock root');
         $this->assertDirectory($this->runRoot, 'run root');
 
-        if (is_file($this->lockPath())) {
+        if ($this->pathExists($this->lockPath())) {
             throw new RuntimeException(
                 'The E2E database is already locked or has unreconciled stale lock metadata.',
             );
@@ -71,10 +71,10 @@ final class E2eRunLock
         }
 
         fclose($handle);
-        if (! @unlink($this->lockPath()) && is_file($this->lockPath())) {
+        if (! @unlink($this->lockPath()) && $this->pathExists($this->lockPath())) {
             throw new RuntimeException('Unable to remove the released E2E lock file.');
         }
-        if (is_file($this->stopPath())) {
+        if ($this->pathExists($this->stopPath())) {
             @unlink($this->stopPath());
         }
     }
@@ -113,7 +113,7 @@ final class E2eRunLock
 
     public function stopRequested(): bool
     {
-        if (! is_file($this->stopPath())) {
+        if (! $this->pathExists($this->stopPath())) {
             return false;
         }
 
@@ -122,7 +122,7 @@ final class E2eRunLock
 
     public function isReleased(): bool
     {
-        return ! is_file($this->lockPath());
+        return ! $this->pathExists($this->lockPath());
     }
 
     private function assertConfiguration(): void
@@ -155,7 +155,7 @@ final class E2eRunLock
     /** @return array<string, mixed> */
     private function metadata(): array
     {
-        if (! is_file($this->lockPath())) {
+        if (! $this->pathExists($this->lockPath())) {
             throw new RuntimeException('No active E2E lock was found.');
         }
 
@@ -218,5 +218,12 @@ final class E2eRunLock
         }
 
         return str_replace('\\', '/', $resolved);
+    }
+
+    private function pathExists(string $path): bool
+    {
+        clearstatcache(true, $path);
+
+        return is_file($path);
     }
 }

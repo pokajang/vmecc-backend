@@ -106,6 +106,7 @@ class ServeE2eApache extends Command
             TypesConfig conf/mime.types
             DirectoryIndex index.php index.html
             ErrorLog "{$logRoot}/apache-error.log"
+            LogFormat "%h %l %u %t \"%r\" %>s %b" common
             CustomLog "{$logRoot}/apache-access.log" common
             LogLevel warn
 
