@@ -11,31 +11,43 @@ use Illuminate\Support\Str;
 class SendMessageDigest extends Command
 {
     protected $signature = 'messages:digest';
+
     protected $description = 'Send unread message digest emails';
 
     public function handle(): int
     {
+        if (! config('mail.message_digest.enabled', false)) {
+            $this->info('Message digest email is disabled.');
+
+            return self::SUCCESS;
+        }
+
         $recipientIds = Message::whereNull('read_at')
             ->distinct()
             ->pluck('recipient_user_id');
 
         if ($recipientIds->isEmpty()) {
             $this->info('No unread messages.');
+
             return self::SUCCESS;
         }
 
+        $failures = 0;
+
         User::whereIn('id', $recipientIds)
             ->whereNull('deleted_at')
-            ->where('status', 'Active')
-            ->chunkById(100, function ($users) {
+            ->whereRaw("LOWER(TRIM(COALESCE(status, ''))) = 'active'")
+            ->whereNotNull('email')
+            ->whereRaw("TRIM(email) <> ''")
+            ->chunkById(100, function ($users) use (&$failures) {
                 foreach ($users as $user) {
-                    if (! $user->email) {
-                        continue;
-                    }
-
                     $messages = Message::with('sender')
                         ->where('recipient_user_id', $user->id)
                         ->whereNull('read_at')
+                        ->when(
+                            $user->last_message_digest_at,
+                            fn ($query, $lastDigestAt) => $query->where('created_at', '>', $lastDigestAt),
+                        )
                         ->orderBy('created_at')
                         ->get();
 
@@ -59,6 +71,7 @@ class SendMessageDigest extends Command
                         ->take(3)
                         ->map(function ($count, $senderId) use ($messages) {
                             $sender = $messages->firstWhere('sender_user_id', $senderId)?->sender;
+
                             return [
                                 'name' => $sender?->name ?? $sender?->email ?? 'Someone',
                                 'count' => $count,
@@ -68,14 +81,15 @@ class SendMessageDigest extends Command
                         ->all();
 
                     try {
-                    $user->notify(new MessageDigestNotification($count, $topSenders, $digestItems));
+                        $user->notify(new MessageDigestNotification($count, $topSenders, $digestItems));
                         $user->forceFill(['last_message_digest_at' => now()])->save();
                     } catch (\Throwable $e) {
+                        $failures++;
                         $this->error("Failed to send digest to {$user->email}: {$e->getMessage()}");
                     }
                 }
             });
 
-        return self::SUCCESS;
+        return $failures === 0 ? self::SUCCESS : self::FAILURE;
     }
 }

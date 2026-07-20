@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Models\WorkflowNotification;
 use App\Models\WorkflowNotificationRecipientState;
+use App\Services\WorkflowNotifications\WorkflowEmailModuleGate;
 use App\Services\WorkflowNotifications\WorkflowNotificationChannelPolicy;
 use App\Services\WorkflowNotifications\WorkflowNotificationPolicyResolver;
 use Illuminate\Database\Eloquent\Builder;
@@ -18,8 +19,7 @@ class WorkflowNotificationService
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly WorkflowNotificationPolicyResolver $policyResolver,
-    ) {
-    }
+    ) {}
 
     private const EVENT_TITLES = [
         'submitted' => 'Request submitted',
@@ -361,6 +361,7 @@ class WorkflowNotificationService
                 ->whereHas('role', function ($builder) use ($normalizedRoles) {
                     if (empty($normalizedRoles)) {
                         $builder->whereRaw('1 = 0');
+
                         return;
                     }
 
@@ -368,10 +369,7 @@ class WorkflowNotificationService
                 })
                 ->whereHas('user', function ($builder) {
                     $builder->whereNull('deleted_at')
-                        ->where(function ($query) {
-                            $query->whereNull('status')
-                                ->orWhereRaw("LOWER(TRIM(status)) = 'active'");
-                        });
+                        ->whereRaw("LOWER(TRIM(COALESCE(status, ''))) = 'active'");
                 })
                 ->pluck('user_id')
                 ->map('intval')
@@ -392,10 +390,7 @@ class WorkflowNotificationService
         return User::query()
             ->whereIn('id', $resolved)
             ->whereNull('deleted_at')
-            ->where(function ($query) {
-                $query->whereNull('status')
-                    ->orWhereRaw("LOWER(TRIM(status)) = 'active'");
-            })
+            ->whereRaw("LOWER(TRIM(COALESCE(status, ''))) = 'active'")
             ->pluck('id')
             ->map('intval')
             ->values()
@@ -566,6 +561,7 @@ class WorkflowNotificationService
             if ($ownerUserId > 0 && $recordId) {
                 return "{$ownerUserId}::{$recordId}";
             }
+
             return null;
         }
 
@@ -576,6 +572,7 @@ class WorkflowNotificationService
             if ($displayId !== '') {
                 return $displayId;
             }
+
             return $recordId ? (string) $recordId : null;
         }
 
@@ -613,6 +610,7 @@ class WorkflowNotificationService
             ->where(function ($builder) use ($recordId, $recordDisplayId) {
                 if ($recordId !== null) {
                     $builder->where('record_id', $recordId);
+
                     return;
                 }
 
@@ -699,6 +697,7 @@ class WorkflowNotificationService
             ->where(function ($builder) use ($recordId, $recordDisplayId) {
                 if ($recordId !== null) {
                     $builder->where('record_id', $recordId);
+
                     return;
                 }
 
@@ -742,22 +741,6 @@ class WorkflowNotificationService
             return false;
         }
 
-        $moduleGates = config('mail.workflow_notifications.modules', []);
-        if (! is_array($moduleGates) || empty($moduleGates)) {
-            return true;
-        }
-
-        $normalizedModule = strtolower(trim($module));
-        $normalizedRecordType = strtolower(trim($recordType));
-
-        if ($normalizedRecordType !== '' && array_key_exists($normalizedRecordType, $moduleGates)) {
-            return (bool) $moduleGates[$normalizedRecordType];
-        }
-
-        if ($normalizedModule !== '' && array_key_exists($normalizedModule, $moduleGates)) {
-            return (bool) $moduleGates[$normalizedModule];
-        }
-
-        return false;
+        return WorkflowEmailModuleGate::enabledFor($module, $recordType);
     }
 }

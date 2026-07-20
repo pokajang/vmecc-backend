@@ -5,9 +5,13 @@ namespace App\Services\WorkflowNotifications;
 class WorkflowNotificationPolicyResolver
 {
     public const CATEGORY_FYI_UPDATE = 'fyi_update';
+
     public const CATEGORY_ACTION_REQUIRED_REVIEW = 'action_required_review';
+
     public const CATEGORY_ACTION_REQUIRED_APPROVE = 'action_required_approve';
+
     public const CATEGORY_FINAL_OUTCOME = 'final_outcome';
+
     public const CATEGORY_ADMINISTRATIVE_INFO = 'administrative_info';
 
     private const FINAL_OUTCOME_EVENTS = [
@@ -145,7 +149,7 @@ class WorkflowNotificationPolicyResolver
     private function resolveChannelPolicy(string $category): string
     {
         $configuredPolicy = trim((string) config("mail.workflow_notifications.channel_policies.{$category}", ''));
-        if ($configuredPolicy !== '') {
+        if (WorkflowNotificationChannelPolicy::isValid($configuredPolicy)) {
             return $configuredPolicy;
         }
 

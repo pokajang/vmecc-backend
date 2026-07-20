@@ -94,7 +94,7 @@ class FeedbackReportApiTest extends TestCase
         );
     }
 
-    public function test_inactive_sysadmins_do_not_receive_feedback_report_email(): void
+    public function test_user_status_does_not_exclude_sysadmin_from_feedback_report_email(): void
     {
         Notification::fake();
 
@@ -118,7 +118,7 @@ class FeedbackReportApiTest extends TestCase
             ],
         ])->assertCreated();
 
-        Notification::assertNotSentTo(
+        Notification::assertSentTo(
             [$inactiveAdmin],
             FeedbackReportSubmittedNotification::class,
         );

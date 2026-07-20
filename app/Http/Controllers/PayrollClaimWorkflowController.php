@@ -511,7 +511,7 @@ class PayrollClaimWorkflowController extends Controller
             ownerUserId: (int) $claim->user_id,
             actor: ['userId' => $actor->id, 'name' => $actor->name, 'email' => $actor->email],
             targetRoles: $nextRole !== '' ? [$nextRole] : [],
-            targetUserIds: [(int) $ownerId],
+            targetUserIds: $nextRole !== '' ? [] : [(int) $ownerId],
             actionRequired: $nextRole !== '',
             remarks: $payload['remarks'] ?? null,
             metadata: [
@@ -521,6 +521,7 @@ class PayrollClaimWorkflowController extends Controller
                 'nextActionRole' => $claim->next_action_role,
                 'claimType' => $claim->claim_type,
             ],
+            excludeOwner: $nextRole !== '',
         );
 
         AuditLogger::log($request, "payroll_claim_{$action}", $actor, [

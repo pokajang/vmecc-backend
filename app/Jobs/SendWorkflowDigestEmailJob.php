@@ -6,6 +6,7 @@ use App\Mail\WorkflowDigestNotificationMail;
 use App\Models\User;
 use App\Models\WorkflowEmailDelivery;
 use App\Models\WorkflowNotificationRecipientState;
+use App\Services\WorkflowNotifications\WorkflowEmailModuleGate;
 use App\Services\WorkflowNotifications\WorkflowNotificationChannelPolicy;
 use App\Services\WorkflowNotifications\WorkflowNotificationLinkResolver;
 use Carbon\CarbonImmutable;
@@ -28,14 +29,14 @@ class SendWorkflowDigestEmailJob implements ShouldQueue
     use SerializesModels;
 
     public int $tries = 3;
+
     public array $backoff = [60, 180, 600];
 
     public function __construct(
         private readonly int $userId,
         private readonly string $windowStartIso,
         private readonly string $windowEndIso,
-    ) {
-    }
+    ) {}
 
     public function handle(WorkflowNotificationLinkResolver $linkResolver): void
     {
@@ -43,7 +44,12 @@ class SendWorkflowDigestEmailJob implements ShouldQueue
             return;
         }
 
-        $recipient = User::query()->whereKey($this->userId)->whereNotNull('email')->first();
+        $recipient = User::query()
+            ->whereKey($this->userId)
+            ->whereRaw("LOWER(TRIM(COALESCE(status, ''))) = 'active'")
+            ->whereNotNull('email')
+            ->whereRaw("TRIM(email) <> ''")
+            ->first();
         if (! $recipient) {
             return;
         }
@@ -215,6 +221,7 @@ class SendWorkflowDigestEmailJob implements ShouldQueue
     {
         return WorkflowNotificationRecipientState::query()
             ->with('notification')
+            ->whereHas('notification', fn (Builder $query) => WorkflowEmailModuleGate::constrainNotificationQuery($query))
             ->where('user_id', $this->userId)
             ->whereNull('dismissed_at')
             ->whereNull('read_at')
@@ -245,6 +252,7 @@ class SendWorkflowDigestEmailJob implements ShouldQueue
     {
         return WorkflowNotificationRecipientState::query()
             ->with('notification')
+            ->whereHas('notification', fn (Builder $query) => WorkflowEmailModuleGate::constrainNotificationQuery($query))
             ->where('user_id', $this->userId)
             ->whereNull('dismissed_at')
             ->where('channel_policy', WorkflowNotificationChannelPolicy::IN_APP_PLUS_IMMEDIATE_PLUS_DIGEST_REMINDER)
@@ -275,6 +283,7 @@ class SendWorkflowDigestEmailJob implements ShouldQueue
             ->sortByDesc(fn (WorkflowNotificationRecipientState $state) => optional($state->notification->updated_at ?? $state->notification->created_at)?->getTimestamp() ?? 0)
             ->groupBy(function (WorkflowNotificationRecipientState $state) {
                 $notification = $state->notification;
+
                 return implode('|', [
                     strtolower(trim((string) $notification->module)),
                     strtolower(trim((string) $notification->record_type)),

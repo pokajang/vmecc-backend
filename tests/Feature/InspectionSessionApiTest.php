@@ -980,13 +980,13 @@ class InspectionSessionApiTest extends TestCase
                 ->equalTo($clientSubmittedAt)
         );
         $this->assertDatabaseHas('workflow_notifications', [
-            'module' => 'report',
+            'module' => 'inspection',
             'event_type' => 'submitted',
             'record_id' => $report->id,
         ]);
 
         $notification = WorkflowNotification::query()
-            ->where('module', 'report')
+            ->where('module', 'inspection')
             ->where('event_type', 'submitted')
             ->where('record_id', $report->id)
             ->first();

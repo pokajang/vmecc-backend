@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\SendUserInvitationEmailJob;
 use App\Models\LoginAttempt;
 use App\Models\Team;
 use App\Models\TeamMember;
@@ -9,7 +10,6 @@ use App\Models\User;
 use App\Models\UserInvitationDelivery;
 use App\Models\UserRoleAssignment;
 use App\Models\UserSession;
-use App\Jobs\SendUserInvitationEmailJob;
 use App\Notifications\AdminResetPasswordNotification;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
@@ -33,8 +33,7 @@ class UserManagementController extends Controller
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly TeamMemberSyncService $teamMemberSync,
-    ) {
-    }
+    ) {}
 
     public function sessions(Request $request, int $id): JsonResponse
     {
@@ -147,7 +146,7 @@ class UserManagementController extends Controller
             ->whereRaw('TRIM(state) <> ?', [''])
             ->get()
             ->filter(function (User $user) use ($allowedLower) {
-                return !in_array(mb_strtolower(trim((string) $user->state)), $allowedLower, true);
+                return ! in_array(mb_strtolower(trim((string) $user->state)), $allowedLower, true);
             })
             ->values()
             ->map(function (User $user) {
@@ -198,7 +197,7 @@ class UserManagementController extends Controller
         }
 
         $user = null;
-        DB::transaction(function () use (&$user, $data, $request) {
+        DB::transaction(function () use (&$user, $data) {
             $user = User::create([
                 'name' => $data['name'],
                 'email' => $data['email'],
@@ -230,9 +229,7 @@ class UserManagementController extends Controller
                 'status' => 'queued',
                 'attempts' => 0,
             ]);
-            SendUserInvitationEmailJob::dispatch($invitationDelivery->id)
-                ->onConnection('database')
-                ->onQueue('emails');
+            SendUserInvitationEmailJob::dispatch($invitationDelivery->id);
         } catch (\Throwable $exception) {
             $invitationSent = false;
             if ($invitationDelivery) {
@@ -721,6 +718,7 @@ class UserManagementController extends Controller
         }
 
         $teamId = Team::query()->whereRaw('LOWER(name) = ?', [mb_strtolower($teamName)])->value('id');
+
         return $teamId ? (int) $teamId : null;
     }
 
@@ -729,6 +727,7 @@ class UserManagementController extends Controller
         $roleIds = collect($assignments)->pluck('role_id')->filter()->unique()->values()->all();
         if (empty($roleIds)) {
             $user->syncRoles([]);
+
             return;
         }
 
@@ -835,6 +834,7 @@ class UserManagementController extends Controller
         if (str_starts_with($raw, 'http://') || str_starts_with($raw, 'https://')) {
             return $raw;
         }
+
         return Storage::disk(config('filesystems.public_uploads_disk', 'public'))->url($raw);
     }
 

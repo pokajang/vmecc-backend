@@ -21,8 +21,7 @@ class FeedbackReportController extends Controller
 {
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
-    ) {
-    }
+    ) {}
 
     public function store(StoreFeedbackReportRequest $request): JsonResponse
     {
@@ -202,9 +201,8 @@ class FeedbackReportController extends Controller
     {
         try {
             $recipients = User::query()
-                ->where('status', 'active')
                 ->whereNotNull('email')
-                ->where('email', '!=', '')
+                ->whereRaw("TRIM(email) <> ''")
                 ->with(['roleAssignments.role'])
                 ->get()
                 ->filter(function (User $user) {
@@ -220,13 +218,30 @@ class FeedbackReportController extends Controller
                 ->values();
 
             if ($recipients->isEmpty()) {
+                Log::warning('Feedback report has no eligible system administrator email recipients.', [
+                    'feedback_report_id' => $report->id,
+                ]);
+
                 return;
             }
 
             $frontendBase = rtrim((string) config('app.frontend_url', config('app.url', '')), '/');
             $adminUrl = $frontendBase !== '' ? "{$frontendBase}/admin/feedback-reports" : '/admin/feedback-reports';
 
-            Notification::send($recipients, new FeedbackReportSubmittedNotification($report, $adminUrl));
+            foreach ($recipients as $recipient) {
+                try {
+                    Notification::send(
+                        $recipient,
+                        new FeedbackReportSubmittedNotification($report, $adminUrl),
+                    );
+                } catch (Throwable $e) {
+                    Log::warning('Feedback report sysadmin email delivery failed.', [
+                        'feedback_report_id' => $report->id,
+                        'recipient_user_id' => $recipient->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
         } catch (Throwable $e) {
             Log::warning('Feedback report sysadmin notification failed.', [
                 'feedback_report_id' => $report->id,

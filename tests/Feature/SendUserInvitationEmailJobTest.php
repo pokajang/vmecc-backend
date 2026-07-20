@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Jobs\SendUserInvitationEmailJob;
 use App\Models\User;
 use App\Models\UserInvitationDelivery;
+use App\Notifications\UserInvitationNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Notification;
 use RuntimeException;
@@ -37,10 +38,10 @@ class SendUserInvitationEmailJobTest extends TestCase
         $this->assertSame(1, $delivery->attempts);
         $this->assertNull($delivery->last_error);
         $this->assertNotNull($delivery->sent_at);
-        Notification::assertSentTo($user, \App\Notifications\UserInvitationNotification::class);
+        Notification::assertSentTo($user, UserInvitationNotification::class);
     }
 
-    public function test_job_marks_delivery_failed_when_user_or_email_is_invalid(): void
+    public function test_job_marks_delivery_failed_when_user_is_missing_or_inactive(): void
     {
         $user = User::factory()->create(['status' => 'Active']);
         $deliveryForMissingUser = UserInvitationDelivery::create([
@@ -56,17 +57,36 @@ class SendUserInvitationEmailJobTest extends TestCase
         $this->assertSame('failed', $deliveryForMissingUser->status);
         $this->assertSame(1, $deliveryForMissingUser->attempts);
 
-        $activeUser = User::factory()->create(['status' => 'Active']);
-        $deliveryForMissingEmail = UserInvitationDelivery::create([
-            'user_id' => $activeUser->id,
-            'recipient_email' => '   ',
+        $inactiveUser = User::factory()->create(['status' => 'Inactive']);
+        $deliveryForInactiveUser = UserInvitationDelivery::create([
+            'user_id' => $inactiveUser->id,
+            'recipient_email' => $inactiveUser->email,
             'status' => 'queued',
         ]);
 
-        (new SendUserInvitationEmailJob($deliveryForMissingEmail->id))->handle();
-        $deliveryForMissingEmail->refresh();
-        $this->assertSame('failed', $deliveryForMissingEmail->status);
-        $this->assertSame(1, $deliveryForMissingEmail->attempts);
+        (new SendUserInvitationEmailJob($deliveryForInactiveUser->id))->handle();
+        $deliveryForInactiveUser->refresh();
+        $this->assertSame('failed', $deliveryForInactiveUser->status);
+        $this->assertSame(1, $deliveryForInactiveUser->attempts);
+    }
+
+    public function test_job_tracks_the_current_email_used_for_delivery(): void
+    {
+        $user = User::factory()->create([
+            'status' => 'Active',
+            'email' => 'current@example.test',
+        ]);
+        $delivery = UserInvitationDelivery::create([
+            'user_id' => $user->id,
+            'recipient_email' => 'stale@example.test',
+            'status' => 'queued',
+        ]);
+        Notification::fake();
+
+        (new SendUserInvitationEmailJob($delivery->id))->handle();
+
+        $this->assertSame('current@example.test', $delivery->fresh()->recipient_email);
+        Notification::assertSentTo($user, UserInvitationNotification::class);
     }
 
     public function test_job_marks_delivery_failed_when_send_fails_and_rethrows_exception(): void
@@ -88,7 +108,7 @@ class SendUserInvitationEmailJobTest extends TestCase
         $thrown = null;
         try {
             (new SendUserInvitationEmailJob($delivery->id))->handle();
-        } catch (RuntimeException | \Throwable $exception) {
+        } catch (RuntimeException|\Throwable $exception) {
             $thrown = $exception;
         }
 

@@ -1280,7 +1280,7 @@ class ReportController extends Controller
         bool $actionRequired = false,
         ?string $remarks = null,
     ): void {
-        $module = 'report';
+        $module = $this->isInspectionReport($report) ? 'inspection' : 'report';
         $targetUserIds = [(int) $report->owner_user_id];
         $targetRoles = [];
         $excludeOwner = false;

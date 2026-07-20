@@ -116,9 +116,10 @@ class LeaveWorkflowController extends Controller
                 $leave,
                 ['userId' => $actor->id, 'name' => $actor->name, 'email' => $actor->email],
                 $leave->next_action_role ? [$leave->next_action_role] : [],
-                [$userId],
+                $leave->next_action_role ? [] : [$userId],
                 $leave->next_action_role !== null,
                 $payload['remarks'] ?? null,
+                excludeOwner: $leave->next_action_role !== null,
             );
         } catch (\Throwable $exception) {
             report($exception);
@@ -202,9 +203,10 @@ class LeaveWorkflowController extends Controller
             $freshLeave,
             ['userId' => $actor->id, 'name' => $actor->name, 'email' => $actor->email],
             $nextRole ? [$nextRole] : [],
-            [$userId], // notify leave owner
+            $nextRole ? [] : [$userId],
             $nextRole !== null,
             $data['remarks'] ?? null,
+            excludeOwner: $nextRole !== null,
         );
 
         AuditLogger::log($request, "leave_{$action}d", null, [

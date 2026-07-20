@@ -116,7 +116,7 @@ class OvertimeWorkflowController extends Controller
             ownerUserId: (int) $row->user_id,
             actor: ['userId' => $actor->id, 'name' => $actor->name, 'email' => $actor->email],
             targetRoles: $nextRole ? [$nextRole] : [],
-            targetUserIds: [(int) $ownerId],
+            targetUserIds: $nextRole ? [] : [(int) $ownerId],
             actionRequired: (bool) $nextRole,
             remarks: $payload['remarks'] ?? null,
             metadata: [
@@ -125,6 +125,7 @@ class OvertimeWorkflowController extends Controller
                 'workflowStage' => $row->workflow_stage,
                 'nextActionRole' => $row->next_action_role,
             ],
+            excludeOwner: (bool) $nextRole,
         );
 
         AuditLogger::log($request, "overtime_{$action}", $actor, [

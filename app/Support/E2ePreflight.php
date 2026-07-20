@@ -47,8 +47,8 @@ final class E2ePreflight
         if ((bool) config('ai_helper.enabled') || trim((string) config('ai_helper.api_key')) !== '') {
             throw new RuntimeException('E2E AI access must be disabled and have no provider key.');
         }
-        if ((bool) config('mail.leave_notifications.enabled')
-            || (bool) config('mail.workflow_notifications.enabled')) {
+        if ((bool) config('mail.workflow_notifications.enabled')
+            || (bool) config('mail.message_digest.enabled')) {
             throw new RuntimeException('E2E email feature delivery switches must be disabled.');
         }
         if (trim((string) config('filesystems.disks.s3.key')) !== ''

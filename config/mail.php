@@ -112,19 +112,6 @@ return [
         'name' => env('MAIL_FROM_NAME', 'Example'),
     ],
 
-    /*
-    |--------------------------------------------------------------------------
-    | Leave Workflow Email Notifications
-    |--------------------------------------------------------------------------
-    |
-    | Feature flag for leave workflow email dispatch. When disabled, leave
-    | events are still stored as in-app notifications only.
-    |
-    */
-    'leave_notifications' => [
-        'enabled' => env('LEAVE_EMAIL_ENABLED', false),
-    ],
-
     'workflow_notifications' => [
         'enabled' => env('WORKFLOW_EMAIL_ENABLED', false),
         'digest_times' => array_values(array_filter(array_map(
@@ -155,9 +142,13 @@ return [
             'expense' => env('WORKFLOW_EMAIL_MODULE_EXPENSE', false),
             'exceptional' => env('WORKFLOW_EMAIL_MODULE_EXCEPTIONAL', false),
             'salary_assignment' => env('WORKFLOW_EMAIL_MODULE_SALARY_ASSIGNMENT', false),
-            'team'   => env('WORKFLOW_EMAIL_MODULE_TEAM', false),
+            'team' => env('WORKFLOW_EMAIL_MODULE_TEAM', false),
             'roster' => env('WORKFLOW_EMAIL_MODULE_ROSTER', false),
         ],
+    ],
+
+    'message_digest' => [
+        'enabled' => env('MESSAGE_DIGEST_EMAIL_ENABLED', false),
     ],
 
     /*

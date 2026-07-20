@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Jobs\SendWorkflowDigestEmailJob;
 use App\Models\WorkflowNotificationRecipientState;
+use App\Services\WorkflowNotifications\WorkflowEmailModuleGate;
 use App\Services\WorkflowNotifications\WorkflowNotificationChannelPolicy;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
@@ -17,6 +18,12 @@ class SendWorkflowDigests extends Command
 
     public function handle(): int
     {
+        if (! config('mail.workflow_notifications.enabled', false)) {
+            $this->info('Workflow email is disabled; no digests were queued.');
+
+            return self::SUCCESS;
+        }
+
         $windowEnd = $this->option('window-end')
             ? CarbonImmutable::parse((string) $this->option('window-end'))
             : CarbonImmutable::now();
@@ -24,6 +31,7 @@ class SendWorkflowDigests extends Command
         $windowStart = $windowEnd->subHours($windowHours);
 
         $userIds = WorkflowNotificationRecipientState::query()
+            ->whereHas('notification', fn (Builder $query) => WorkflowEmailModuleGate::constrainNotificationQuery($query))
             ->whereNull('dismissed_at')
             ->where(function (Builder $query) use ($windowStart) {
                 $query

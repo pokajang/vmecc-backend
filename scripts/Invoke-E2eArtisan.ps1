@@ -119,7 +119,6 @@ $env:FILESYSTEM_PUBLIC_ROOT = (Join-Path $runRoot 'storage\public').Replace('\',
 
 $env:MAIL_MAILER = 'array'
 $env:MAIL_FROM_ADDRESS = 'qa@vmecc.example.test'
-$env:LEAVE_EMAIL_ENABLED = 'false'
 $env:WORKFLOW_EMAIL_ENABLED = 'false'
 $env:AI_HELPER_ENABLED = 'false'
 

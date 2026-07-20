@@ -2,13 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\SendUserInvitationEmailJob;
 use App\Models\LoginAttempt;
 use App\Models\Team;
 use App\Models\TeamMember;
-use App\Models\UserInvitationDelivery;
 use App\Models\User;
+use App\Models\UserInvitationDelivery;
 use App\Models\UserRoleAssignment;
-use App\Jobs\SendUserInvitationEmailJob;
 use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
@@ -208,7 +208,8 @@ class UserManagementSecurityTest extends TestCase
         $this->actingAs($actor);
 
         config([
-            'queue.connections.database.driver' => 'invalid',
+            'queue.default' => 'broken',
+            'queue.connections.broken.driver' => 'invalid',
         ]);
 
         $response = $this->postJson('/api/users', [

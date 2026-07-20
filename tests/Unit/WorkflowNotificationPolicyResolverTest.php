@@ -86,4 +86,21 @@ class WorkflowNotificationPolicyResolverTest extends TestCase
         $this->assertSame('fyi_update', $resolved['category']);
         $this->assertSame('in_app_only', $resolved['channelPolicy']);
     }
+
+    public function test_invalid_channel_policy_falls_back_to_safe_known_policy(): void
+    {
+        config(['mail.workflow_notifications.channel_policies.fyi_update' => 'EMAIL-EVERYONE']);
+
+        $resolved = app(WorkflowNotificationPolicyResolver::class)->resolve(
+            module: 'report',
+            eventType: 'edited',
+            recordType: 'report',
+            actionRequired: false,
+            recordId: 46,
+            recordDisplayId: 'RPT-46',
+            metadata: [],
+        );
+
+        $this->assertSame('in_app_plus_digest', $resolved['channelPolicy']);
+    }
 }

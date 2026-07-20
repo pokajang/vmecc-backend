@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Models\WorkflowNotificationRecipientState;
 use App\Services\RoleCatalog;
+use App\Services\WorkflowNotifications\WorkflowNotificationChannelPolicy;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Role;
@@ -103,8 +104,16 @@ class WorkflowNotificationServiceTest extends TestCase
         );
 
         $this->assertContains((int) $activeReviewer->id, $notification->recipient_user_ids);
+        $this->assertNotContains((int) $owner->id, $notification->recipient_user_ids);
         $this->assertNotContains((int) $expiredReviewer->id, $notification->recipient_user_ids);
         $this->assertNotContains((int) $inactiveReviewer->id, $notification->recipient_user_ids);
+        $this->assertSame(
+            WorkflowNotificationChannelPolicy::IN_APP_ONLY,
+            WorkflowNotificationRecipientState::query()
+                ->where('notification_id', $notification->id)
+                ->where('user_id', $owner->id)
+                ->value('channel_policy'),
+        );
     }
 
     public function test_system_administrator_mark_all_read_matches_visible_notifications(): void

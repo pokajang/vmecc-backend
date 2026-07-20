@@ -871,7 +871,7 @@ class InspectionSessionController extends Controller
         if (! $idempotentReplay) {
             try {
                 $this->workflowNotificationService->emit(
-                    module: 'report',
+                    module: 'inspection',
                     eventType: 'submitted',
                     recordType: 'report',
                     recordId: (int) $report->id,
@@ -886,7 +886,7 @@ class InspectionSessionController extends Controller
                     actionRequired: true,
                     remarks: $this->text($request->input('remarks', '')),
                     metadata: [
-                        'module' => 'report',
+                        'module' => 'inspection',
                         'status' => $report->status,
                         'workflowStage' => $report->workflow_stage,
                         'nextActionRole' => $report->next_action_role,

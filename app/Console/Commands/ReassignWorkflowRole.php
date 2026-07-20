@@ -112,7 +112,7 @@ class ReassignWorkflowRole extends Command
                     ownerUserId: (int) $ownerId,
                     actor: ['userId' => null, 'name' => $actorName, 'email' => null],
                     targetRoles: [$toRole],
-                    targetUserIds: $ownerId ? [$ownerId] : [],
+                    targetUserIds: [],
                     actionRequired: true,
                     remarks: $reason,
                     metadata: [
@@ -120,6 +120,7 @@ class ReassignWorkflowRole extends Command
                         'nextActionRole' => $toRole,
                         'previousRole' => $fromRole,
                     ],
+                    excludeOwner: true,
                 );
             }
         });

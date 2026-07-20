@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\User;
 use App\Models\WorkflowNotification;
 use App\Models\WorkflowNotificationRecipientState;
+use App\Services\WorkflowNotifications\WorkflowEmailModuleGate;
 use App\Services\WorkflowNotifications\WorkflowNotificationChannelPolicy;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -19,9 +20,7 @@ class DispatchWorkflowChannelsJob implements ShouldQueue
     use Queueable;
     use SerializesModels;
 
-    public function __construct(private readonly int $notificationId)
-    {
-    }
+    public function __construct(private readonly int $notificationId) {}
 
     public function handle(): void
     {
@@ -47,7 +46,12 @@ class DispatchWorkflowChannelsJob implements ShouldQueue
             ->pluck('user_id')
             ->unique()
             ->each(function (int $userId) use ($notification) {
-                $recipient = User::query()->whereKey($userId)->whereNotNull('email')->first();
+                $recipient = User::query()
+                    ->whereKey($userId)
+                    ->whereRaw("LOWER(TRIM(COALESCE(status, ''))) = 'active'")
+                    ->whereNotNull('email')
+                    ->whereRaw("TRIM(email) <> ''")
+                    ->first();
                 if (! $recipient) {
                     return;
                 }
@@ -58,22 +62,9 @@ class DispatchWorkflowChannelsJob implements ShouldQueue
 
     private function isEmailEnabledFor(WorkflowNotification $notification): bool
     {
-        $moduleGates = config('mail.workflow_notifications.modules', []);
-        if (! is_array($moduleGates) || empty($moduleGates)) {
-            return true;
-        }
-
-        $module = strtolower(trim((string) ($notification->module ?? '')));
-        $recordType = strtolower(trim((string) ($notification->record_type ?? '')));
-
-        if ($recordType !== '' && array_key_exists($recordType, $moduleGates)) {
-            return (bool) $moduleGates[$recordType];
-        }
-
-        if ($module !== '' && array_key_exists($module, $moduleGates)) {
-            return (bool) $moduleGates[$module];
-        }
-
-        return false;
+        return WorkflowEmailModuleGate::enabledFor(
+            $notification->module,
+            $notification->record_type,
+        );
     }
 }

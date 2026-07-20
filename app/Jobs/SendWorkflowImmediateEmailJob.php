@@ -25,13 +25,13 @@ class SendWorkflowImmediateEmailJob implements ShouldQueue
     use SerializesModels;
 
     public int $tries = 3;
+
     public array $backoff = [30, 120, 300];
 
     public function __construct(
         private readonly int $notificationId,
         private readonly int $userId,
-    ) {
-    }
+    ) {}
 
     public function handle(WorkflowNotificationLinkResolver $linkResolver): void
     {
@@ -40,7 +40,12 @@ class SendWorkflowImmediateEmailJob implements ShouldQueue
         }
 
         $notification = WorkflowNotification::find($this->notificationId);
-        $recipient = User::query()->whereKey($this->userId)->whereNotNull('email')->first();
+        $recipient = User::query()
+            ->whereKey($this->userId)
+            ->whereRaw("LOWER(TRIM(COALESCE(status, ''))) = 'active'")
+            ->whereNotNull('email')
+            ->whereRaw("TRIM(email) <> ''")
+            ->first();
         $state = WorkflowNotificationRecipientState::query()
             ->where('notification_id', $this->notificationId)
             ->where('user_id', $this->userId)

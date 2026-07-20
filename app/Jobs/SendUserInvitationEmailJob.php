@@ -20,11 +20,10 @@ class SendUserInvitationEmailJob implements ShouldQueue
     use SerializesModels;
 
     public int $tries = 3;
+
     public array $backoff = [30, 120, 300];
 
-    public function __construct(private readonly int $deliveryId)
-    {
-    }
+    public function __construct(private readonly int $deliveryId) {}
 
     public function handle(): void
     {
@@ -39,16 +38,25 @@ class SendUserInvitationEmailJob implements ShouldQueue
 
         $delivery->increment('attempts');
 
-        $recipientEmail = trim((string) $delivery->recipient_email);
-        if ($recipientEmail === '') {
-            $this->markFailed($delivery, 'Recipient email is missing');
+        $user = User::query()
+            ->whereKey($delivery->user_id)
+            ->whereRaw("LOWER(TRIM(COALESCE(status, ''))) = 'active'")
+            ->first();
+        if (! $user) {
+            $this->markFailed($delivery, 'Active user record is missing for invitation delivery');
+
             return;
         }
 
-        $user = User::find($delivery->user_id);
-        if (! $user) {
-            $this->markFailed($delivery, 'User record is missing for invitation delivery');
+        $recipientEmail = trim((string) $user->email);
+        if ($recipientEmail === '') {
+            $this->markFailed($delivery, 'Recipient email is missing');
+
             return;
+        }
+
+        if ($recipientEmail !== trim((string) $delivery->recipient_email)) {
+            $delivery->update(['recipient_email' => $recipientEmail]);
         }
 
         try {

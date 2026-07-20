@@ -3,16 +3,19 @@
 namespace App\Notifications;
 
 use App\Models\FeedbackReport;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class FeedbackReportSubmittedNotification extends Notification
+class FeedbackReportSubmittedNotification extends Notification implements ShouldQueue
 {
+    use Queueable;
+
     public function __construct(
         private readonly FeedbackReport $report,
         private readonly string $adminUrl,
-    ) {
-    }
+    ) {}
 
     public function via(object $notifiable): array
     {
