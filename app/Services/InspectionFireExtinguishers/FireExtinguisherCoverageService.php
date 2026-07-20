@@ -55,6 +55,7 @@ class FireExtinguisherCoverageService
             'total' => $total,
             'filtered' => $sorted->count(),
             'summary' => $this->policy->summary($filtered),
+            'lifecycleSummary' => $this->lifecycleSummary($normalized),
             'options' => $this->coverageFilterOptions($data),
             'filters' => $normalized,
             'periodStart' => $periodStart,
@@ -113,6 +114,7 @@ class FireExtinguisherCoverageService
             'total' => $total,
             'filtered' => $total,
             'summary' => $this->databaseSummary($normalized, $periodStart, $periodEnd, $total),
+            'lifecycleSummary' => $this->lifecycleSummary($normalized),
             'options' => $this->databaseFilterOptions($normalized, $periodStart, $periodEnd),
             'filters' => $normalized,
             'periodStart' => $periodStart,
@@ -258,6 +260,26 @@ class FireExtinguisherCoverageService
     }
 
     /**
+     * Lifecycle counts act as facets: they preserve catalogue search/location filters while
+     * intentionally ignoring the currently selected lifecycle state.
+     *
+     * @param  array<string, string>  $normalized
+     * @return array{all: int, active: int, outOfService: int, retired: int}
+     */
+    private function lifecycleSummary(array $normalized): array
+    {
+        $facetFilters = [...$normalized, 'lifecycleStatus' => 'all'];
+        $query = $this->catalogQuery($facetFilters, false);
+
+        return [
+            'all' => (clone $query)->count(),
+            'active' => (clone $query)->where('lifecycle_status', 'active')->count(),
+            'outOfService' => (clone $query)->where('lifecycle_status', 'out_of_service')->count(),
+            'retired' => (clone $query)->where('lifecycle_status', 'retired')->count(),
+        ];
+    }
+
+    /**
      * @param  array<string, string>  $normalized
      * @return array<string, array<int, string>>
      */
@@ -395,6 +417,23 @@ class FireExtinguisherCoverageService
 
             return [(int) $row->id => max(1, count($matchingIds))];
         })->all();
+    }
+
+    /**
+     * Resolve the same period boundaries used by coverage rows for related history endpoints.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return array{0: Carbon|null, 1: Carbon|null}
+     */
+    public function periodRangeForFilters(array $filters): array
+    {
+        $normalized = $this->policy->normalizeFilters($filters);
+
+        return $this->periodRange(
+            $normalized['period'],
+            $normalized['periodFrom'],
+            $normalized['periodTo'],
+        );
     }
 
     /** @return array{0: Carbon|null, 1: Carbon|null} */

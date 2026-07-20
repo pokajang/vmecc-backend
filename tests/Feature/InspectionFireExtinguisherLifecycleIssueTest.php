@@ -87,6 +87,44 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
         ])->assertStatus(409);
     }
 
+    public function test_coverage_returns_lifecycle_facets_and_filters_retired_assets(): void
+    {
+        $user = $this->userWithPermissions(['reports.inspection.view']);
+        $active = $this->asset([
+            'id_loc_no' => 'FACET-ACTIVE',
+            'barcode_no' => 'FACET-BAR-ACTIVE',
+        ]);
+        $this->asset([
+            'id_loc_no' => 'FACET-OOS',
+            'barcode_no' => 'FACET-BAR-OOS',
+            'lifecycle_status' => 'out_of_service',
+            'is_active' => false,
+        ]);
+        $retired = $this->asset([
+            'id_loc_no' => 'FACET-RETIRED',
+            'barcode_no' => 'FACET-BAR-RETIRED',
+            'lifecycle_status' => 'retired',
+            'is_active' => false,
+        ]);
+
+        $activeResponse = $this->actingAs($user)
+            ->getJson('/api/inspection/fire-extinguishers/coverage?search=FACET-&perPage=10')
+            ->assertOk()
+            ->assertJsonPath('meta.lifecycleSummary.all', 3)
+            ->assertJsonPath('meta.lifecycleSummary.active', 1)
+            ->assertJsonPath('meta.lifecycleSummary.outOfService', 1)
+            ->assertJsonPath('meta.lifecycleSummary.retired', 1);
+        $this->assertSame([$active->id], collect($activeResponse->json('data'))->pluck('catalogId')->all());
+
+        $retiredResponse = $this->getJson(
+            '/api/inspection/fire-extinguishers/coverage?search=FACET-&lifecycleStatus=retired&perPage=10',
+        )->assertOk();
+        $this->assertSame(
+            [$retired->id],
+            collect($retiredResponse->json('data'))->pluck('catalogId')->all(),
+        );
+    }
+
     public function test_restoring_an_out_of_service_retirement_clears_all_service_state(): void
     {
         $user = $this->userWithPermissions(['reports.inspection.view', 'reports.inspection.extinguishers.manage']);
@@ -384,14 +422,36 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
             ->assertJsonPath('data.0.checks.4.issue.status', 'open');
     }
 
-    private function asset(): InspectionFireExtinguisher
+    public function test_history_endpoint_honors_the_coverage_period_filter(): void
     {
-        return InspectionFireExtinguisher::query()->create([
+        $user = $this->userWithPermissions(['reports.inspection.view']);
+        $asset = $this->asset();
+        $outsidePeriod = $this->report($user, $asset, 'Good', 'Older inspection');
+        $outsidePeriod->update(['submitted_at' => now()->subYear()]);
+        app(InspectionCheckRowSyncService::class)->syncForReport($outsidePeriod, $user->id);
+
+        $inPeriod = $this->report($user, $asset, 'Good', 'Current inspection');
+        app(InspectionCheckRowSyncService::class)->syncForReport($inPeriod, $user->id);
+        $today = now()->toDateString();
+
+        $this->actingAs($user)
+            ->getJson(
+                "/api/inspection/fire-extinguishers/{$asset->id}/inspection-history"
+                ."?period=custom&periodFrom={$today}&periodTo={$today}",
+            )
+            ->assertOk()
+            ->assertJsonPath('meta.total', 1)
+            ->assertJsonPath('data.0.displayId', $inPeriod->display_id);
+    }
+
+    private function asset(array $overrides = []): InspectionFireExtinguisher
+    {
+        return InspectionFireExtinguisher::query()->create(array_merge([
             'zone' => 'Lifecycle Test Zone', 'main_location_name' => 'Lifecycle Yard', 'sub_location_name' => 'Bay 1',
             'id_loc_no' => 'LIFE-001', 'barcode_no' => 'LIFE-BAR-001', 'fe_type' => 'DP 6KG',
             'certification_validity' => '2027-01-01', 'source' => 'custom', 'is_active' => true,
             'lifecycle_status' => 'active', 'sort_order' => 1,
-        ]);
+        ], $overrides));
     }
 
     private function report(User $user, InspectionFireExtinguisher $asset, string $operational, string $remarks): Report

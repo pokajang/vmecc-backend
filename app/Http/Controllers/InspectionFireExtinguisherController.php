@@ -151,6 +151,7 @@ class InspectionFireExtinguisherController extends Controller
                 'total' => $result['total'],
                 'filtered' => $filteredCount,
                 'summary' => $result['summary'],
+                'lifecycleSummary' => $result['lifecycleSummary'],
                 'options' => $result['options'],
             ],
         ]);
@@ -531,10 +532,13 @@ class InspectionFireExtinguisherController extends Controller
         $this->ensureInspectionPermission($request);
         InspectionFireExtinguisher::query()->findOrFail($extinguisherId);
         $perPage = min(100, max(1, (int) $request->query('perPage', 25)));
+        [$periodStart, $periodEnd] = $this->coverageService->periodRangeForFilters($request->query());
         $reports = InspectionCheckRow::query()
             ->where('inspection_type_key', 'fire-extinguisher-inspection')
             ->where('equipment_catalog_id', $extinguisherId)
             ->whereNotNull('submitted_at')
+            ->when($periodStart, fn ($query) => $query->where('submitted_at', '>=', $periodStart))
+            ->when($periodEnd, fn ($query) => $query->where('submitted_at', '<=', $periodEnd))
             ->selectRaw('report_id, MAX(submitted_at) as submitted_at')
             ->groupBy('report_id')
             ->orderByDesc('submitted_at')
