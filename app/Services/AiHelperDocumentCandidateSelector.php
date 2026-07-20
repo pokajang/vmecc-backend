@@ -25,7 +25,16 @@ class AiHelperDocumentCandidateSelector
 
         $exact = $ranked->where('exact_match', true)->values();
         $topic = $ranked->filter(fn (array $item) => (int) ($item['topic_score'] ?? 0) > 0)
-            ->sortByDesc('topic_score')
+            ->sort(function (array $left, array $right): int {
+                foreach (['topic_coverage', 'topic_score', 'operation_score', 'score'] as $field) {
+                    $comparison = ($right[$field] ?? 0) <=> ($left[$field] ?? 0);
+                    if ($comparison !== 0) {
+                        return $comparison;
+                    }
+                }
+
+                return 0;
+            })
             ->take($topicLimit)
             ->values();
         $global = $ranked->take($globalLimit)->values();
@@ -46,6 +55,7 @@ class AiHelperDocumentCandidateSelector
             'lanes' => [
                 'exact' => $exact->count(),
                 'topic' => $topic->count(),
+                'topic_intersection' => $topic->where('topic_coverage', '>=', 1.0)->count(),
                 'global' => $global->count(),
                 'page' => $page->count(),
             ],

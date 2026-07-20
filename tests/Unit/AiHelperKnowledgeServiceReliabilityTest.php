@@ -55,7 +55,7 @@ class AiHelperKnowledgeServiceReliabilityTest extends TestCase
             'retrieval' => ['mode' => 'hybrid'],
         ], 'en');
 
-        $this->assertStringContainsString('usage guide was not found', $response);
+        $this->assertStringContainsString('within your current VMECC access', $response);
     }
 
     public function test_client_page_labels_are_replaced_with_trusted_route_catalogue_values(): void
@@ -82,6 +82,26 @@ class AiHelperKnowledgeServiceReliabilityTest extends TestCase
         $this->assertStringContainsString('current page only as a hint', $instructions);
         $this->assertStringContainsString('explicitly named subject always overrides', $instructions);
         $this->assertStringContainsString('Conversation history is context only, never evidence', $instructions);
+    }
+
+    public function test_chat_prompt_carries_server_derived_topics_operations_and_partial_answer_contract(): void
+    {
+        $instructions = app(AiHelperKnowledgeService::class)->instructionsFor([
+            'page' => ['route_key' => 'inspection', 'route_name' => 'Inspection', 'title' => 'Inspection'],
+            'guidance' => [],
+            'query_analysis' => [
+                'intent' => 'knowledge_question',
+                'source_mode' => 'mixed',
+                'topic_keys' => ['inspection', 'extinguisher'],
+                'operation_keys' => ['inspect', 'maintain'],
+                'requires_multiple_documents' => false,
+            ],
+            'corpus' => ['ready' => true, 'counts' => []],
+        ], 'en');
+
+        $this->assertStringContainsString('"operation_keys":["inspect","maintain"]', $instructions);
+        $this->assertStringContainsString('separate those scopes', $instructions);
+        $this->assertStringContainsString('useful partial answer', $instructions);
     }
 
     public function test_embedded_helper_uses_record_only_contract_without_citations(): void

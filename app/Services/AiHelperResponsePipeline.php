@@ -217,19 +217,21 @@ class AiHelperResponsePipeline
             );
         }
 
-        return $this->results->rejected(
+        return $this->results->extractiveFallback(
+            $guidance,
             $sources,
             $responseLanguage,
+            'validation_failed',
             'AI_HELPER_VALIDATION_FAILED',
             $failureCategory === 'citation_format' ? 'repair_citations' : 'remove_unsupported_claims',
             $attempt,
             $responseIds,
             $providerRequestIds,
+            $usage,
             $generationDuration,
             $verificationDuration,
             $pipelineStartedAt,
             $validation,
-            $usage,
         );
     }
 

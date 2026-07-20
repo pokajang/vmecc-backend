@@ -80,6 +80,67 @@ class AiHelperRetrievalV4Test extends TestCase
         $this->assertGreaterThanOrEqual(1, $result['trace']['candidate_lanes']['page']);
     }
 
+    public function test_colloquial_bm_extinguisher_inspection_retrieves_authorized_intersection_guides(): void
+    {
+        $user = $this->userWithPermissions([
+            'reports.inspection.conduct',
+            'reports.inspection.extinguishers.manage',
+        ]);
+        $inspectionGuide = $this->systemGuide('inspection-manage');
+        $extinguisherGuide = $this->systemGuide('extinguisher-management');
+
+        $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
+            ['path' => '/leave'],
+            $user,
+            'ada tak panduan nk buat pemeriksaan fire extinguisher?',
+        );
+
+        $this->assertSame('explicit_topic', $result['analysis']['context_dependency']);
+        $this->assertContains($inspectionGuide->id, $result['trace']['document_ids']);
+        $this->assertContains($extinguisherGuide->id, $result['trace']['document_ids']);
+        $this->assertGreaterThanOrEqual(1, $result['trace']['candidate_lanes']['topic_intersection']);
+    }
+
+    public function test_compound_extinguisher_maintenance_question_searches_system_and_reference_lanes(): void
+    {
+        $user = $this->userWithPermissions([
+            'reports.inspection.conduct',
+            'reports.inspection.extinguishers.manage',
+        ]);
+        $inspectionGuide = $this->systemGuide('inspection-manage');
+        $extinguisherGuide = $this->systemGuide('extinguisher-management');
+
+        $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
+            ['path' => '/inspection'],
+            $user,
+            'What are the steps for fire extinguisher inspection or maintenance?',
+            [],
+            true,
+        );
+
+        $this->assertSame('mixed', $result['analysis']['source_mode']);
+        $this->assertContains($inspectionGuide->id, $result['trace']['document_ids']);
+        $this->assertContains($extinguisherGuide->id, $result['trace']['document_ids']);
+        $this->assertContains('maintain', $result['trace']['query_plan']['operation_keys']);
+        $this->assertTrue($result['trace']['recovery_attempted']);
+        $this->assertContains('pemadam', $result['trace']['recovery_expansion_terms']);
+    }
+
+    public function test_view_only_user_does_not_receive_extinguisher_management_steps(): void
+    {
+        $user = $this->userWithPermissions(['reports.inspection.view']);
+        $extinguisherGuide = $this->systemGuide('extinguisher-management');
+
+        $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
+            ['path' => '/inspection'],
+            $user,
+            'What are the steps for fire extinguisher inspection?',
+        );
+
+        $this->assertNotContains($extinguisherGuide->id, $result['trace']['document_ids']);
+        $this->assertStringNotContainsString($extinguisherGuide->title, json_encode($result));
+    }
+
     private function userWithPermissions(array $permissionNames): User
     {
         $user = User::factory()->create(['status' => 'active']);

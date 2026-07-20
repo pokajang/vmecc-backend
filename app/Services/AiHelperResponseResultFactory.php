@@ -208,9 +208,14 @@ final class AiHelperResponseResultFactory
         array $usage = [],
     ): array {
         $rejection = $this->citationValidator->enforce('', $sources, $responseLanguage);
+        $content = $outcomeCode === 'AI_HELPER_NO_AUTHORIZED_EVIDENCE'
+            ? ($responseLanguage === 'bm'
+                ? 'Tiada arahan diluluskan yang berkaitan tersedia untuk permintaan ini dalam akses VMECC semasa anda. Jika tugas ini sebahagian daripada tanggungjawab anda, minta penyelia atau pentadbir menyemak akses anda.'
+                : 'No applicable approved instructions are available for this request within your current VMECC access. If this task is part of your responsibility, ask your supervisor or administrator to check your access.')
+            : $rejection['content'];
 
         return [
-            'content' => $rejection['content'],
+            'content' => $content,
             'sources' => [],
             'response_id' => $responseIds === [] ? null : end($responseIds),
             'provider_response_ids' => array_values(array_unique($responseIds)),

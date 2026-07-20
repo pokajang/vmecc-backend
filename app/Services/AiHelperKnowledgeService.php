@@ -279,6 +279,13 @@ SOURCE;
         $catalogueText = $catalogue === null
             ? 'No complete document catalogue was requested for this question.'
             : json_encode($catalogue, JSON_UNESCAPED_SLASHES);
+        $queryPlanSummary = json_encode([
+            'intent' => data_get($contextEnvelope, 'query_analysis.intent'),
+            'source_mode' => data_get($contextEnvelope, 'query_analysis.source_mode'),
+            'topic_keys' => array_values((array) data_get($contextEnvelope, 'query_analysis.topic_keys', [])),
+            'operation_keys' => array_values((array) data_get($contextEnvelope, 'query_analysis.operation_keys', [])),
+            'requires_multiple_documents' => (bool) data_get($contextEnvelope, 'query_analysis.requires_multiple_documents', false),
+        ], JSON_UNESCAPED_SLASHES);
 
         return <<<TEXT
 You are the VMECC in-app AI helper. Help signed-in users understand how to use the VMECC operations management system.
@@ -301,6 +308,9 @@ Rules:
 - Use field names, buttons, statuses, prerequisites, and limits exactly as documented; never infer a VMECC workflow from general software knowledge.
 - Cite the supporting source ID, for example [S1], after every material operational statement or group of related statements.
 - Directly answer every supported part of a multi-part question. Explicitly identify any requested part that the supplied sources do not answer.
+- Treat requested subjects and requested actions separately. A phrase such as "fire-extinguisher inspection" normally describes one combined task, not two unrelated questions.
+- When a question could mean both a VMECC screen workflow and a physical or operational procedure, separate those scopes. Answer the supported VMECC workflow, then state plainly when the supplied approved sources do not contain the physical or operational procedure.
+- A properly scoped statement that one requested part is not present in the supplied sources is a useful partial answer, not a reason to discard other supported instructions.
 - Preserve qualifying words such as "if", "only when", "maximum", "minimum", and "unless". Do not turn a conditional instruction into an unconditional instruction.
 - Keep procedural steps in their source order unless the user explicitly requests a non-procedural summary.
 - Preserve document codes, telephone numbers, timings, roles, step numbers, and emergency terms exactly as supplied.
@@ -319,6 +329,9 @@ Rules:
 
 Trusted current-page hint:
 {$pageSummary}
+
+Server-derived query plan:
+{$queryPlanSummary}
 
 Available VMECC guidance:
 {$guidanceText}
@@ -585,8 +598,8 @@ TEXT;
             $sourceMode = (string) ($contextEnvelope['query_analysis']['source_mode'] ?? 'any');
             if ($sourceMode === 'system') {
                 return $useBahasaMelayu
-                    ? 'Panduan penggunaan yang berkaitan tidak ditemui dalam pengetahuan VMECC yang tersedia. Cuba nyatakan nama halaman, borang atau tindakan yang anda mahu lakukan.'
-                    : 'A related usage guide was not found in the available VMECC knowledge. Try naming the page, form, or action you want to perform.';
+                    ? 'Tiada panduan penggunaan berkaitan tersedia untuk permintaan ini dalam akses VMECC semasa anda. Cuba nyatakan nama halaman, borang atau tindakan. Jika tugas ini sebahagian daripada tanggungjawab anda, minta penyelia atau pentadbir menyemak akses anda.'
+                    : 'No related usage guide is available for this request within your current VMECC access. Try naming the page, form, or action. If this task is part of your responsibility, ask your supervisor or administrator to check your access.';
             }
 
             return $useBahasaMelayu

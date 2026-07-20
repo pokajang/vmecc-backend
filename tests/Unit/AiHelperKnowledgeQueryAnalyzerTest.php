@@ -134,4 +134,48 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
         $this->assertContains('inspection_issue', $analyzer->analyze('How do I manage an inspection defect?')['topic_keys']);
         $this->assertContains('module_activation', $analyzer->analyze('Macam mana aktifkan modul?')['topic_keys']);
     }
+
+    public function test_it_understands_colloquial_bm_fire_extinguisher_workflow_questions(): void
+    {
+        $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze(
+            'ada tak panduan nk buat pemeriksaan fire extinguisher?'
+        );
+
+        $this->assertSame('mixed', $analysis['source_mode']);
+        $this->assertSame('explicit_topic', $analysis['context_dependency']);
+        $this->assertContains('inspection', $analysis['topic_keys']);
+        $this->assertContains('extinguisher', $analysis['topic_keys']);
+        $this->assertContains('inspect', $analysis['operation_keys']);
+        $this->assertFalse($analysis['requires_multiple_documents']);
+    }
+
+    public function test_it_separates_system_and_physical_facets_of_maintenance_questions(): void
+    {
+        $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze(
+            'As per your knowledge, what are the steps for fire extinguisher inspection or maintenance?'
+        );
+
+        $this->assertSame('mixed', $analysis['source_mode']);
+        $this->assertSame('en', $analysis['language']);
+        $this->assertContains('inspection', $analysis['topic_keys']);
+        $this->assertContains('extinguisher', $analysis['topic_keys']);
+        $this->assertContains('inspect', $analysis['operation_keys']);
+        $this->assertContains('maintain', $analysis['operation_keys']);
+        $this->assertFalse($analysis['requires_multiple_documents']);
+    }
+
+    public function test_it_recovers_bounded_domain_spelling_variants_and_height_rescue_aliases(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $this->assertContains('extinguisher', $analyzer->analyze('How do I inspect a fire extiguisher?')['topic_keys']);
+        $this->assertContains('height_rescue', $analyzer->analyze('Panduan untuk mangsa tersangkut di tempat tinggi?')['topic_keys']);
+    }
+
+    public function test_it_recognizes_uploaded_guide_catalogue_phrasing(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $this->assertSame('catalogue', $analyzer->analyze('Ada berapa panduan yang dimuatnaik dalam sistem?')['intent']);
+    }
 }

@@ -66,7 +66,7 @@ class AiHelperResponsePipelineTest extends TestCase
         $this->assertSame(['response-1', 'response-2'], $result['provider_response_ids']);
     }
 
-    public function test_it_returns_a_safe_refusal_after_the_repair_also_fails(): void
+    public function test_it_returns_a_safe_approved_extract_after_the_repair_also_fails(): void
     {
         $this->mock(AiHelperOpenAiService::class, function ($mock) {
             $mock->shouldReceive('streamResponse')->twice()->andReturnUsing(function ($instructions, $input, $onDelta) {
@@ -88,9 +88,10 @@ class AiHelperResponsePipelineTest extends TestCase
             fn () => null,
         );
 
-        $this->assertSame('rejected', $result['verification']['status']);
-        $this->assertSame([], $result['sources']);
-        $this->assertStringContainsString('sufficiently sourced', $result['content']);
+        $this->assertSame('fallback_extractive', $result['verification']['status']);
+        $this->assertSame(['S1'], collect($result['sources'])->pluck('source_id')->all());
+        $this->assertStringContainsString('supporting guidance directly', $result['content']);
+        $this->assertStringContainsString('official Malaysian Emergency Service Centre', $result['content']);
         $this->assertStringNotContainsString('Call 999 immediately', $result['content']);
     }
 
@@ -244,6 +245,7 @@ class AiHelperResponsePipelineTest extends TestCase
         $this->assertSame('AI_HELPER_NO_AUTHORIZED_EVIDENCE', $result['outcome_code']);
         $this->assertSame('retrieve_more_evidence', $result['recovery_action']);
         $this->assertSame('rejected', $result['verification']['status']);
+        $this->assertStringContainsString('within your current VMECC access', $result['content']);
     }
 
     public function test_it_returns_a_direct_approved_extract_when_generation_is_temporarily_unavailable(): void

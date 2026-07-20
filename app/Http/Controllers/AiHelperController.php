@@ -1606,10 +1606,20 @@ class AiHelperController extends Controller
                 'index_version' => Str::limit((string) ($trace['index_fingerprint'] ?? ''), 64, '') ?: null,
                 'intent' => Str::limit((string) ($analysis['intent'] ?? ''), 32, '') ?: null,
                 'language' => Str::limit((string) ($analysis['language'] ?? ''), 16, '') ?: null,
+                'source_mode' => Str::limit((string) ($analysis['source_mode'] ?? ''), 16, '') ?: null,
                 'topic_keys' => array_values((array) ($analysis['topic_keys'] ?? [])),
+                'operation_keys' => array_values((array) ($analysis['operation_keys'] ?? [])),
                 'candidate_documents' => min(65535, max(0, (int) ($trace['documents_selected'] ?? 0))),
                 'candidate_chunks' => min(65535, max(0, (int) ($trace['candidate_chunks'] ?? 0))),
                 'evidence_sources' => min(65535, collect($context['guidance'] ?? [])->pluck('source_id')->filter()->unique()->count()),
+                'coverage_supported_count' => min(65535, max(0, (int) ($trace['subqueries_covered'] ?? 0))),
+                'coverage_missing_count' => min(65535, max(
+                    0,
+                    (int) ($trace['subqueries_requested'] ?? 0) - (int) ($trace['subqueries_covered'] ?? 0),
+                )),
+                'retrieval_failure_reason' => ($trace['relevance_gate'] ?? null) === 'no_relevant_evidence'
+                    ? 'no_relevant_evidence'
+                    : null,
                 'retrieval_recovered' => (bool) ($trace['recovery_succeeded'] ?? false),
                 'semantic_fallback' => (bool) $run->semantic_fallback
                     || (bool) ($trace['semantic_fallback'] ?? false),
@@ -1633,11 +1643,19 @@ class AiHelperController extends Controller
 
         $usage = (array) ($result['usage'] ?? []);
         $providerRequestIds = array_values(array_unique(array_filter((array) ($result['provider_request_ids'] ?? []))));
+        $verificationStatus = Str::limit((string) data_get($result, 'verification.status', ''), 24, '') ?: null;
+        $validationFailureReason = data_get($result, 'verification.citation_validation.reason')
+            ?? data_get($result, 'verification.critical_fact_validation.failures.0.type')
+            ?? data_get($result, 'verification.grounding_verification.failures.0.reason')
+            ?? data_get($result, 'verification.failure.citation_validation.reason')
+            ?? data_get($result, 'verification.failure.grounding_verification.failures.0.reason');
         try {
             $run->forceFill([
                 'status' => AiHelperRun::STATUS_COMPLETED,
                 'result_code' => Str::limit((string) ($result['outcome_code'] ?? 'AI_HELPER_ANSWERED'), 64, ''),
-                'verification_status' => Str::limit((string) data_get($result, 'verification.status', ''), 24, '') ?: null,
+                'verification_status' => $verificationStatus,
+                'validation_failure_reason' => Str::limit((string) $validationFailureReason, 64, '') ?: null,
+                'fallback_type' => $verificationStatus === 'fallback_extractive' ? 'extractive' : null,
                 'verification_attempts' => min(255, max(0, (int) data_get($result, 'verification.attempts', 0))),
                 'provider_calls' => min(65535, max(count($providerRequestIds), $deadline?->providerCalls() ?? 0)),
                 'input_tokens' => max(0, (int) ($usage['input_tokens'] ?? 0)),

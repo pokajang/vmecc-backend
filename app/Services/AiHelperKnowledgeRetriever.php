@@ -97,6 +97,13 @@ class AiHelperKnowledgeRetriever
         $retrievalV4 = (bool) config('ai_helper.retrieval_v4', false);
         $rankedDocuments = $entries->map(function (AiHelperKnowledgeEntry $entry) use ($analysis, $rankingContext, $queryEmbedding, $retrievalV4, $semanticCompatibleIds) {
             $topicScore = $retrievalV4 ? $this->documentTopicScore($entry, $analysis) : 0;
+            $matchedTopicKeys = $retrievalV4
+                ? $this->topicAliases->matchedTopicKeys(
+                    $this->documentIdentity($entry),
+                    is_array($analysis['topic_keys'] ?? null) ? $analysis['topic_keys'] : [],
+                )
+                : [];
+            $operationScore = $retrievalV4 ? $this->documentOperationScore($entry, $analysis) : 0;
             $exactMatch = $this->isExactDocumentMatch($entry, $analysis);
             $pageMatch = $this->isPageMatch($entry, $rankingContext);
             $semanticCompatible = $semanticCompatibleIds->has((int) $entry->id);
@@ -108,6 +115,9 @@ class AiHelperKnowledgeRetriever
                 'global_score' => $this->documentScore($entry, $analysis, [], $documentQueryEmbedding),
                 'exact_match' => $exactMatch,
                 'topic_score' => $topicScore,
+                'matched_topic_keys' => $matchedTopicKeys,
+                'topic_coverage' => $this->topicCoverage($matchedTopicKeys, $analysis),
+                'operation_score' => $operationScore,
                 'page_match' => $pageMatch,
                 'semantic_compatible' => $semanticCompatible,
                 'protected_match' => $exactMatch || ($topicScore > 0
@@ -140,6 +150,11 @@ class AiHelperKnowledgeRetriever
         $recoverySucceeded = false;
         if ($retrievalV4 && ($forceRecovery || $rankedChunks->isEmpty()) && $rankedDocuments->isNotEmpty()) {
             $recoveryAttempted = true;
+            $recoveryAnalysis = $analysis;
+            $recoveryAnalysis['terms'] = collect([
+                ...(array) ($analysis['terms'] ?? []),
+                ...(array) ($analysis['expanded_terms'] ?? []),
+            ])->filter()->unique()->take(40)->values()->all();
             $recoveryLimit = max(
                 (int) config('ai_helper.retrieval_v4_document_candidate_limit', 18),
                 (int) config('ai_helper.retrieval_v4_recovery_document_limit', 32),
@@ -149,7 +164,7 @@ class AiHelperKnowledgeRetriever
                 ->take($recoveryLimit)
                 ->values();
             $recoveryDocuments = $this->hydrateSelectedDocuments($recoveryDocuments);
-            $recoveryChunks = $this->chunkCandidates($recoveryDocuments, $analysis, $queryEmbedding)
+            $recoveryChunks = $this->chunkCandidates($recoveryDocuments, $recoveryAnalysis, $queryEmbedding)
                 ->filter(fn (array $candidate) => ($candidate['protected_match'] ?? false)
                     || $this->isRelevantCandidate($candidate))
                 ->values();
@@ -288,12 +303,17 @@ class AiHelperKnowledgeRetriever
                 'context_dependency' => $analysis['context_dependency'] ?? null,
                 'language' => $analysis['language'] ?? null,
                 'topic_keys' => $analysis['topic_keys'] ?? [],
+                'operation_keys' => $analysis['operation_keys'] ?? [],
+                'requires_multiple_documents' => (bool) ($analysis['requires_multiple_documents'] ?? false),
                 'follow_up' => (bool) ($analysis['follow_up'] ?? false),
             ],
             'candidate_lanes' => $candidateLanes,
             'recovery_attempted' => $recoveryAttempted,
             'recovery_succeeded' => $recoverySucceeded,
             'recovery_forced' => $forceRecovery,
+            'recovery_expansion_terms' => $recoveryAttempted
+                ? array_values((array) ($analysis['expanded_terms'] ?? []))
+                : [],
             'index_fingerprint' => $this->embeddings->indexFingerprint(),
             'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
         ]];
@@ -378,6 +398,18 @@ class AiHelperKnowledgeRetriever
         $topicScore = $retrievalV4 ? $this->documentTopicScore($entry, $analysis) : 0;
         if ($topicScore > 0) {
             $score += $topicScore * 240;
+            $matchedTopics = $this->topicAliases->matchedTopicKeys(
+                $this->documentIdentity($entry),
+                is_array($analysis['topic_keys'] ?? null) ? $analysis['topic_keys'] : [],
+            );
+            $coverage = $this->topicCoverage($matchedTopics, $analysis);
+            $score += $coverage * 500;
+            if ($coverage >= 1.0 && count($matchedTopics) > 1) {
+                $score += 500;
+            }
+        }
+        if ($retrievalV4) {
+            $score += $this->documentOperationScore($entry, $analysis) * 180;
         }
         foreach ($analysis['annex_numbers'] ?? [] as $number) {
             if (preg_match('/\bannex(?:e)?\s*0*'.preg_quote((string) $number, '/').'\b/i', $title)) {
@@ -447,6 +479,39 @@ class AiHelperKnowledgeRetriever
             $this->documentIdentity($entry),
             is_array($analysis['topic_keys'] ?? null) ? $analysis['topic_keys'] : [],
         );
+    }
+
+    /** @param array<int, string> $matchedTopicKeys */
+    private function topicCoverage(array $matchedTopicKeys, array $analysis): float
+    {
+        $requested = collect($analysis['topic_keys'] ?? [])->filter()->unique()->count();
+
+        return $requested === 0 ? 0.0 : count(array_unique($matchedTopicKeys)) / $requested;
+    }
+
+    private function documentOperationScore(AiHelperKnowledgeEntry $entry, array $analysis): int
+    {
+        $identity = Str::lower(str_replace(['_', '-'], ' ', $this->documentIdentity($entry)));
+        $aliases = [
+            'view' => ['view', 'viewing', 'find', 'read', 'records'],
+            'create' => ['create', 'creating', 'add', 'new', 'register', 'record'],
+            'inspect' => ['inspect', 'inspection', 'inspections', 'conduct', 'checklist'],
+            'maintain' => ['maintain', 'maintenance', 'management', 'managing', 'lifecycle', 'assets'],
+            'submit' => ['submit', 'submission', 'workflow'],
+            'approve' => ['approve', 'approval', 'review', 'verification', 'workflow'],
+            'configure' => ['configure', 'configuration', 'settings', 'activation'],
+            'troubleshoot' => ['troubleshoot', 'error', 'recovery', 'restore'],
+            'list' => ['list', 'catalogue', 'navigation', 'reports'],
+        ];
+
+        return collect($analysis['operation_keys'] ?? [])
+            ->sum(fn (string $operation) => collect($aliases[$operation] ?? [])
+                ->filter(fn (string $alias) => preg_match(
+                    '/(?<![\pL\pN])'.preg_quote($alias, '/').'(?![\pL\pN])/u',
+                    $identity,
+                ) === 1)
+                ->take(2)
+                ->count());
     }
 
     private function isPageMatch(AiHelperKnowledgeEntry $entry, array $context): bool

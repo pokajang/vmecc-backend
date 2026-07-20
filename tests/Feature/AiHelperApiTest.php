@@ -97,7 +97,7 @@ class AiHelperApiTest extends TestCase
         $this->assertStringContainsString('event: done', $content);
     }
 
-    public function test_stream_rejects_an_uncited_operational_answer_before_emitting_it(): void
+    public function test_stream_replaces_an_uncited_operational_answer_with_an_approved_extract(): void
     {
         config([
             'ai_helper.enabled' => true,
@@ -126,11 +126,13 @@ class AiHelperApiTest extends TestCase
             'new_thread' => true,
         ])->assertOk()->streamedContent();
 
-        $this->assertStringContainsString('sufficiently sourced answer', $content);
+        $this->assertStringContainsString('supporting guidance directly', $content);
+        $this->assertStringContainsString('official Malaysian Emergency Service Centre', $content);
         $this->assertStringNotContainsString('Call 999 immediately', $content);
         $message = AiHelperMessage::query()->where('role', AiHelperMessage::ROLE_ASSISTANT)->latest('id')->firstOrFail();
-        $this->assertSame('rejected', $message->retrieval_metadata['citation_validation']['status']);
-        $this->assertSame([], $message->sources);
+        $this->assertSame('fallback_extractive', $message->retrieval_metadata['verification']['status']);
+        $this->assertSame('validated', $message->retrieval_metadata['citation_validation']['status']);
+        $this->assertSame(['S1'], collect($message->sources)->pluck('source_id')->all());
     }
 
     public function test_unsupported_knowledge_question_returns_deterministic_not_found_without_calling_the_model(): void

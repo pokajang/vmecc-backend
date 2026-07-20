@@ -21,7 +21,8 @@ class AiHelperTopicAliasRegistry
         'inspection' => ['inspection', 'inspect', 'inspection report', 'pemeriksaan', 'laporan pemeriksaan'],
         'inspection_issue' => ['inspection issue', 'inspection finding', 'defect', 'issue management', 'isu pemeriksaan', 'dapatan pemeriksaan', 'kecacatan'],
         'inspection_verification' => ['inspection verification', 'verify inspection issue', 'issue verification', 'pengesahan pemeriksaan', 'sahkan isu pemeriksaan', 'pengesahan isu'],
-        'extinguisher' => ['fire extinguisher', 'extinguisher', 'alat pemadam api', 'pemadam api'],
+        'extinguisher' => ['fire extinguisher', 'fire extinguishers', 'extinguisher', 'extinguishers', 'alat pemadam api', 'pemadam api'],
+        'height_rescue' => ['high-angle rescue', 'high angle rescue', 'rescue at height', 'work at height rescue', 'stuck at height', 'trapped at height', 'suspended person', 'menyelamat di tempat tinggi', 'mangsa di tempat tinggi', 'mangsa tersangkut', 'tersangkut di tempat tinggi'],
         'payroll' => ['payroll', 'payslip', 'pay slip', 'gaji', 'slip gaji'],
         'salary_claim' => ['salary claim', 'salary claims', 'tuntutan gaji', 'claim gaji'],
         'salary_assignment' => ['salary assignment', 'assign salary', 'tetapan gaji', 'gaji pekerja'],
@@ -99,6 +100,23 @@ class AiHelperTopicAliasRegistry
 
             return min(3, $matched);
         });
+    }
+
+    /** @return array<int, string> */
+    public function matchedTopicKeys(string $identity, array $topicKeys): array
+    {
+        $identity = $this->normalize($identity);
+
+        return collect($topicKeys)
+            ->filter(function (string $topic) use ($identity): bool {
+                $aliases = array_merge([$topic], self::TOPICS[$topic] ?? []);
+
+                return collect($aliases)->contains(
+                    fn (string $alias) => $this->containsPhrase($identity, $this->normalize($alias)),
+                );
+            })
+            ->values()
+            ->all();
     }
 
     private function normalize(string $value): string

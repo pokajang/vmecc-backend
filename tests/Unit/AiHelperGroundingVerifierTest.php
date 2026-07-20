@@ -202,4 +202,46 @@ class AiHelperGroundingVerifierTest extends TestCase
         $this->assertFalse($result['valid']);
         $this->assertSame('missing_requested_fact', $result['failures'][0]['reason']);
     }
+
+    public function test_verifier_contract_allows_disclosed_evidence_gaps_in_partial_answers(): void
+    {
+        config(['ai_helper.grounding_verification_mode' => 'enforce']);
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('structuredResponse')
+                ->once()
+                ->withArgs(function ($model, $instructions): bool {
+                    $this->assertStringContainsString(
+                        'absent from all supplied evidence is not a missing_requested_fact',
+                        $instructions,
+                    );
+
+                    return true;
+                })
+                ->andReturn([
+                    'response_id' => 'verify-partial',
+                    'data' => [
+                        'verdict' => 'pass',
+                        'question_answered' => true,
+                        'claims' => [[
+                            'claim' => 'The guide describes the VMECC inspection workflow.',
+                            'source_ids' => ['S1'],
+                            'supported' => true,
+                            'contradicted' => false,
+                            'missing_qualifier' => false,
+                            'reason' => null,
+                        ]],
+                        'missing_requested_facts' => [],
+                    ],
+                ]);
+        });
+
+        $result = app(AiHelperGroundingVerifier::class)->verify(
+            'How do I inspect or physically maintain an extinguisher?',
+            'The VMECC inspection workflow is documented. [S1] The supplied source does not provide a physical maintenance checklist.',
+            $this->guidance,
+        );
+
+        $this->assertTrue($result['valid']);
+        $this->assertSame('verified', $result['status']);
+    }
 }

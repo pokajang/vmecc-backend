@@ -31,7 +31,15 @@ class AiHelperKnowledgeQueryAnalyzer
             : $message;
         $normalizedQuery = $this->normalize($retrievalQuery);
         $topicKeys = $this->topics->topicKeys($normalizedQuery);
+        $operationKeys = $this->operationKeys($normalizedQuery);
+        $sourceMode = $this->sourceMode($normalized);
+        if ($sourceMode === 'system'
+            && array_intersect($topicKeys, ['extinguisher', 'height_rescue']) !== []
+            && array_intersect($operationKeys, ['inspect', 'maintain']) !== []) {
+            $sourceMode = 'mixed';
+        }
         $contextDependency = $this->contextDependency($normalized, $currentTopics);
+        $subqueries = $this->subqueries($retrievalQuery);
 
         preg_match_all('/\b(?:annex(?:e)?|lampiran)\s*0*(\d{1,3})\b/i', $retrievalQuery, $annexMatches);
         preg_match_all('/\b(?:rev(?:ision)?[.\s:-]*)0*(\d{1,4})\b/i', $retrievalQuery, $revisionMatches);
@@ -39,7 +47,7 @@ class AiHelperKnowledgeQueryAnalyzer
 
         $plan = new AiHelperQueryPlan(
             intent: $this->intent($normalized),
-            sourceMode: $this->sourceMode($normalized),
+            sourceMode: $sourceMode,
             contextDependency: $contextDependency,
             language: $this->language($normalized),
             message: $message,
@@ -48,12 +56,13 @@ class AiHelperKnowledgeQueryAnalyzer
             terms: $this->terms($retrievalQuery),
             expandedTerms: $this->topics->expandedTerms($topicKeys),
             topicKeys: $topicKeys,
-            subqueries: $this->subqueries($retrievalQuery),
+            operationKeys: $operationKeys,
+            subqueries: $subqueries,
             annexNumbers: collect($annexMatches[1] ?? [])->map(fn ($value) => (int) $value)->unique()->values()->all(),
             revisions: collect($revisionMatches[1] ?? [])->map(fn ($value) => ltrim((string) $value, '0') ?: '0')->unique()->values()->all(),
             documentCodes: collect($codeMatches[0] ?? [])->map(fn ($value) => Str::upper($value))->unique()->values()->all(),
             followUp: $followUp && is_string($previous),
-            requiresMultipleDocuments: $this->requiresMultipleDocuments($normalized) || count($currentTopics) > 1,
+            requiresMultipleDocuments: $this->requiresMultipleDocuments($normalized) || count($subqueries) > 1,
             sensitiveRequest: $this->isSensitiveRequest($normalized),
         );
 
@@ -68,12 +77,14 @@ class AiHelperKnowledgeQueryAnalyzer
             'all files', 'all documents', 'knowledge documents', 'knowledge sources',
             'source documents', 'what documents', 'which documents', 'how many documents',
             'uploaded files', 'uploaded documents', 'uploaded guidance', 'guidance has been uploaded',
+            'how many guides', 'how many guidance documents', 'available guides',
             'senarai', 'semua fail', 'semua dokumen', 'semua lampiran',
             'senarai lampiran', 'dokumen pengetahuan', 'dokumen rujukan', 'dokumen yang dimuat naik',
+            'panduan yang dimuat naik', 'panduan dimuat naik', 'panduan dimuatnaik',
         ];
 
         return collect($phrases)->contains(fn (string $phrase) => str_contains($message, $phrase))
-            || preg_match('/\bberapa\s+(?:dokumen|fail|lampiran|sumber)\b/u', $message) === 1;
+            || preg_match('/\bberapa\s+(?:dokumen|fail|lampiran|sumber|panduan)\b/u', $message) === 1;
     }
 
     private function intent(string $message): string
@@ -113,7 +124,15 @@ class AiHelperKnowledgeQueryAnalyzer
 
     private function normalize(string $value): string
     {
-        return trim((string) preg_replace('/\s+/u', ' ', Str::lower($value)));
+        $normalized = Str::lower($value);
+        $normalized = str_replace(
+            ['fire extiguisher', 'fire extinguishr', 'fire extenguisher', 'high angle rescue'],
+            ['fire extinguisher', 'fire extinguisher', 'fire extinguisher', 'high-angle rescue'],
+            $normalized,
+        );
+        $normalized = (string) preg_replace('/\bnk\b/u', 'nak', $normalized);
+
+        return trim((string) preg_replace('/\s+/u', ' ', $normalized));
     }
 
     private function looksLikeFollowUp(string $message): bool
@@ -140,8 +159,8 @@ class AiHelperKnowledgeQueryAnalyzer
 
     private function sourceMode(string $message): string
     {
-        $system = preg_match('/\b(?:how (?:do|can|should) i|where (?:do|can) i|which button|what status|navigate|screen|page|form|field|apply|submit|save|edit|delete|cancel|cara|macam mana|bagaimana|butang|status|halaman|borang|medan|mohon|hantar|simpan|kemas kini|padam|batal)\b/u', $message) === 1;
-        $reference = preg_match('/\b(?:emergency procedure|policy|telephone|phone number|procedure|annex|erp|prosedur kecemasan|polisi|nombor telefon|lampiran)\b/u', $message) === 1;
+        $system = preg_match('/\b(?:how (?:do|can|should) i|how to|what are the steps|steps for|instructions? for|guide for|where (?:do|can) i|which button|what status|navigate|screen|page|form|field|apply|submit|save|edit|delete|cancel|ada (?:tak )?panduan|nak buat|langkah untuk|cara(?: buat)?|macam (?:mana|nak)|bagaimana|butang|status|halaman|borang|medan|mohon|hantar|simpan|kemas kini|padam|batal)\b/u', $message) === 1;
+        $reference = preg_match('/\b(?:emergency procedure|physical (?:inspection|maintenance)|maintenance|servicing|maintenance procedure|servicing procedure|policy|telephone|phone number|procedure|annex|erp|rescue|prosedur kecemasan|penyelenggaraan|selenggara|prosedur penyelenggaraan|polisi|nombor telefon|lampiran|menyelamat)\b/u', $message) === 1;
 
         if ($system && $reference) {
             return 'mixed';
@@ -158,8 +177,8 @@ class AiHelperKnowledgeQueryAnalyzer
 
     private function language(string $message): string
     {
-        $malay = preg_match_all('/\b(?:apa|bagaimana|macam|mana|nak|boleh|saya|anda|untuk|dengan|yang|dan|mohon|cuti|gaji|pemeriksaan|halaman|butang|simpan|hantar|padam|batal)\b/u', $message) ?: 0;
-        $english = preg_match_all('/\b(?:what|how|where|which|can|should|apply|leave|salary|inspection|page|button|save|submit|delete|cancel)\b/u', $message) ?: 0;
+        $malay = preg_match_all('/\b(?:apa|ada|tak|bagaimana|macam|mana|nak|boleh|saya|anda|untuk|dengan|yang|dan|mohon|cuti|gaji|pemeriksaan|periksa|panduan|langkah|halaman|butang|simpan|hantar|padam|batal|selenggara|servis)\b/u', $message) ?: 0;
+        $english = preg_match_all('/\b(?:what|how|where|which|can|should|steps?|guide|instructions?|apply|leave|salary|inspection|inspect|maintenance|page|button|save|submit|delete|cancel)\b/u', $message) ?: 0;
 
         if ($malay > 0 && $english > 0) {
             return 'mixed';
@@ -171,6 +190,28 @@ class AiHelperKnowledgeQueryAnalyzer
     private function requiresMultipleDocuments(string $message): bool
     {
         return preg_match('/\b(compare|comparison|across|all annex|differences?|banding|perbezaan|semua lampiran)\b/u', $message) === 1;
+    }
+
+    /** @return array<int, string> */
+    private function operationKeys(string $message): array
+    {
+        $patterns = [
+            'view' => '/\b(?:view|find|search|read|check status|lihat|cari|semak|papar)\b/u',
+            'create' => '/\b(?:create|add|new|register|record|buat|tambah|baharu|daftar|rekod)\b/u',
+            'inspect' => '/\b(?:inspect|inspection|checklist|check|conduct|pemeriksaan|periksa)\b/u',
+            'maintain' => '/\b(?:maintain|maintenance|service|servicing|lifecycle|selenggara|penyelenggaraan|servis)\b/u',
+            'submit' => '/\b(?:submit|send|hantar)\b/u',
+            'approve' => '/\b(?:approve|review|verify|reject|lulus|semak|sahkan|tolak)\b/u',
+            'configure' => '/\b(?:configure|setting|settings|enable|disable|tetapan|konfigurasi|aktifkan|nyahaktif)\b/u',
+            'troubleshoot' => '/\b(?:error|problem|failed|cannot|can\x{2019}t|stuck|ralat|masalah|gagal|tak boleh|tersangkut)\b/u',
+            'list' => '/\b(?:list|how many|count|senarai|berapa)\b/u',
+        ];
+
+        return collect($patterns)
+            ->filter(fn (string $pattern) => preg_match($pattern, $message) === 1)
+            ->keys()
+            ->values()
+            ->all();
     }
 
     private function isSensitiveRequest(string $message): bool
@@ -192,6 +233,11 @@ class AiHelperKnowledgeQueryAnalyzer
         if ($query === '') {
             return [];
         }
+        $query = trim((string) preg_replace(
+            '/^(?:(?:as per|according to|based on)\s+(?:your|the|available)?\s*(?:knowledge|guidance))\s*,?\s*/iu',
+            '',
+            $query,
+        ));
 
         $parts = preg_split(
             '/\s*(?:;|\?|,(?=\s*(?:what|who|which|where|when|how|apa|siapa|mana|bila|bagaimana)\b)|'.
