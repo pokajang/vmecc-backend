@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\LeaveAssignment;
 use App\Models\Setting;
 use App\Models\Team;
 use App\Models\TeamMember;
@@ -74,7 +75,28 @@ class E2eScenarioSeeder extends Seeder
             $this->seedPersona($persona, $teams->get($persona['team']));
         }
 
+        $this->seedFutureLeaveEntitlement();
         $this->seedWorkflowSettings();
+    }
+
+    private function seedFutureLeaveEntitlement(): void
+    {
+        $trt = User::query()
+            ->where('email', 'codex.smoke.tactical-response-team@vmecc.local')
+            ->firstOrFail();
+
+        LeaveAssignment::query()->updateOrCreate(
+            [
+                'user_id' => $trt->id,
+                'year' => now()->addYear()->year,
+                'leave_type' => 'Annual Leave',
+            ],
+            [
+                'entitlement' => 30,
+                'used' => 0,
+                'pending' => 0,
+            ],
+        );
     }
 
     private function seedPersona(array $persona, ?Team $team): void

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\LeaveAssignment;
 use App\Models\OvertimeRecord;
 use App\Models\User;
 use App\Services\OvertimeManagementScopeService;
@@ -59,6 +60,14 @@ class E2eScenarioSeederTest extends TestCase
         $this->assertTrue($scope->canManageRecord($approver, $record));
         $this->assertTrue(
             $scope->canPerformWorkflowRole($approver, $record, 'Client Contract Manager'),
+        );
+        $this->assertTrue(
+            LeaveAssignment::query()
+                ->where('user_id', $owner->id)
+                ->where('year', now()->addYear()->year)
+                ->where('leave_type', 'Annual Leave')
+                ->where('entitlement', 30)
+                ->exists(),
         );
     }
 }
