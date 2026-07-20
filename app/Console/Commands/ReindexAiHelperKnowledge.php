@@ -9,6 +9,7 @@ use App\Services\AiHelperEmbeddingService;
 use App\Services\AiHelperKnowledgeLifecycleService;
 use App\Services\AiHelperKnowledgeProcessingService;
 use Illuminate\Console\Command;
+use Throwable;
 
 class ReindexAiHelperKnowledge extends Command
 {
@@ -28,7 +29,10 @@ class ReindexAiHelperKnowledge extends Command
         $query = AiHelperKnowledgeEntry::query()
             ->where('source_mime', 'text/markdown')
             ->whereNotNull('source_path')
-            ->where('status', '!=', AiHelperKnowledgeEntry::STATUS_DELETING);
+            ->whereNotIn('status', [
+                AiHelperKnowledgeEntry::STATUS_DISABLED,
+                AiHelperKnowledgeEntry::STATUS_DELETING,
+            ]);
         if ($this->option('entry')) {
             $query->whereKey((int) $this->option('entry'));
         }
@@ -49,19 +53,36 @@ class ReindexAiHelperKnowledge extends Command
                     if ($this->option('sync')) {
                         app(AiHelperKnowledgeProcessingService::class)->process($entry->id, $runId);
                         $result = $entry->fresh();
-                        if (! $result
+                        if ($this->option('semantic')
+                            && $result?->status === AiHelperKnowledgeEntry::STATUS_PROCESSING) {
+                            try {
+                                app(AiHelperEmbeddingService::class)->embedEntry(
+                                    $result,
+                                    (int) $result->ingestion_version,
+                                    $runId,
+                                );
+                            } catch (Throwable $exception) {
+                                app(AiHelperKnowledgeProcessingService::class)->markFailedForRun(
+                                    $result->id,
+                                    $runId,
+                                    'Semantic indexing failed: '.$exception->getMessage(),
+                                );
+                            }
+                            $result = $entry->fresh();
+                        }
+
+                        $stillBuilding = $result?->status === AiHelperKnowledgeEntry::STATUS_PROCESSING
+                            && ! $this->option('semantic');
+                        if (! $stillBuilding && (! $result
                             || $result->status !== AiHelperKnowledgeEntry::STATUS_ACTIVE
                             || ! $result->extraction_complete
-                            || trim((string) $result->error) !== '') {
+                            || trim((string) $result->error) !== '')) {
                             $failed++;
                             $this->error(sprintf(
                                 'Knowledge #%d failed: %s',
                                 $entry->id,
                                 trim((string) ($result?->error ?: 'incomplete extraction')),
                             ));
-                        }
-                        if ($this->option('semantic') && $result?->status === AiHelperKnowledgeEntry::STATUS_ACTIVE) {
-                            app(AiHelperEmbeddingService::class)->embedEntry($result);
                         }
                     } else {
                         ProcessAiHelperKnowledgeEntry::dispatch($entry->id, $runId);

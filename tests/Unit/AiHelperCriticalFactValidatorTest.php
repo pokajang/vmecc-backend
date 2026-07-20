@@ -67,4 +67,20 @@ class AiHelperCriticalFactValidatorTest extends TestCase
         $this->assertSame('missing_revision_status_label', $missing['failures'][0]['type']);
         $this->assertTrue($labelled['valid']);
     }
+
+    public function test_it_matches_bahasa_melayu_operational_units_to_english_evidence(): void
+    {
+        $guidance = [[
+            'source_id' => 'S1',
+            'title' => 'Response limits',
+            'content' => 'The team can handle 2 people for 30 minutes over 5 kilometers, representing 50 percent.',
+        ]];
+
+        $result = app(AiHelperCriticalFactValidator::class)->validate(
+            'Hadnya ialah 2 orang selama 30 minit dalam jarak 5 kilometer, iaitu 50 peratus. [S1]',
+            $guidance,
+        );
+
+        $this->assertTrue($result['valid'], json_encode($result['failures']));
+    }
 }

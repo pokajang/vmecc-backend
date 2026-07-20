@@ -28,4 +28,14 @@ class AiHelperThread extends Model
     {
         return $this->hasMany(AiHelperMessage::class, 'thread_id');
     }
+
+    public function responseReports(): HasMany
+    {
+        return $this->hasMany(AiHelperResponseReport::class, 'thread_id');
+    }
+
+    public function runs(): HasMany
+    {
+        return $this->hasMany(AiHelperRun::class, 'thread_id');
+    }
 }

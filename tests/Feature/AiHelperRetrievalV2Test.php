@@ -108,7 +108,11 @@ class AiHelperRetrievalV2Test extends TestCase
 
     public function test_catalogue_stream_is_deterministic_and_does_not_call_the_model(): void
     {
-        config(['ai_helper.enabled' => true, 'ai_helper.api_key' => 'test-key']);
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'test-key',
+            'ai_helper.knowledge_strict_readiness' => false,
+        ]);
         $this->knowledge('ANNEX 1 Active knowledge', 'Approved Markdown content.');
         $this->mock(AiHelperOpenAiService::class, function ($mock) {
             $mock->shouldReceive('isAvailable')->andReturnTrue();

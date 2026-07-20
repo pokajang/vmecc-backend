@@ -89,8 +89,13 @@ class AiHelperCriticalFactValidator
         ], '', $block) ?? $block;
         preg_match_all(
             '/\b(?:[A-Z]{2,}(?:-[A-Z0-9]+){2,}|PRO-\d{4,})\b|'.
+            '\bRM\s*\d+(?:,\d{3})*(?:\.\d{1,2})?\b|'.
+            '\b\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\b|'.
+            '\b\d{1,2}:\d{2}(?:\s*(?:am|pm|pagi|petang|malam))?\b|'.
             '\b\d+(?:\.\d+)?\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|'.
-            'casualties?|persons?|people|members?|teams?|metres?|meters?|km|%|percent)\b|'.
+            'casualties?|persons?|people|members?|teams?|metres?|meters?|kilometres?|kilometers?|km|'.
+            'saat|minit|jam|hari|mangsa|orang|ahli|pasukan|meter|kilometer|peratus|percent)\b|'.
+            '\b\d+(?:\.\d+)?\s*%|'.
             '\b\d{3,}(?:[\s-]\d{2,})*\b/iu',
             $plain,
             $matches,
@@ -106,7 +111,29 @@ class AiHelperCriticalFactValidator
 
     private function evidenceContains(string $evidence, string $token): bool
     {
-        $normalize = static fn (string $value) => trim((string) preg_replace('/\s+/u', ' ', Str::lower($value)));
+        $normalize = function (string $value): string {
+            $value = Str::lower($value);
+            $value = (string) preg_replace('/(?<=\d),(?=\d{3}\b)/u', '', $value);
+            $value = (string) preg_replace('/\brm\s+(?=\d)/u', 'rm', $value);
+            $unitFamilies = [
+                '/\b(?:seconds?|secs?|saat)\b/u' => 'second',
+                '/\b(?:minutes?|mins?|minit)\b/u' => 'minute',
+                '/\b(?:hours?|hrs?|jam)\b/u' => 'hour',
+                '/\b(?:days?|hari)\b/u' => 'day',
+                '/\b(?:casualties?|mangsa)\b/u' => 'casualty',
+                '/\b(?:persons?|people|orang)\b/u' => 'person',
+                '/\b(?:members?|ahli)\b/u' => 'member',
+                '/\b(?:teams?|pasukan)\b/u' => 'team',
+                '/\b(?:metres?|meters?|meter)\b/u' => 'meter',
+                '/\b(?:kilometres?|kilometers?|kilometer|km)\b/u' => 'kilometer',
+                '/\b(?:percent|peratus)\b|%/u' => 'percent',
+            ];
+            foreach ($unitFamilies as $pattern => $replacement) {
+                $value = (string) preg_replace($pattern, $replacement, $value);
+            }
+
+            return trim((string) preg_replace('/\s+/u', ' ', $value));
+        };
         $normalizedEvidence = $normalize($evidence);
         $normalizedToken = $normalize($token);
         if (str_contains($normalizedEvidence, $normalizedToken)) {

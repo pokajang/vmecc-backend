@@ -25,6 +25,25 @@ class E2eScenarioSeederTest extends TestCase
             ]);
         }
 
+        $this->assertDatabaseHas('users', [
+            'email' => E2eScenarioSeeder::LOCKED_PERSONA_EMAIL,
+            'status' => 'Active',
+            'failed_login_count' => 5,
+        ]);
+        $this->assertNotNull(
+            User::query()->where('email', E2eScenarioSeeder::LOCKED_PERSONA_EMAIL)->value('locked_at'),
+        );
+
+        $this->assertDatabaseHas('users', [
+            'email' => E2eScenarioSeeder::PERSONAS['break_glass_admin']['email'],
+            'status' => 'Active',
+            'locked_at' => null,
+        ]);
+        $this->assertSame(
+            2,
+            User::role('System Administrator')->where('status', 'Active')->whereNull('locked_at')->count(),
+        );
+
         $owner = User::query()
             ->where('email', 'codex.smoke.tactical-response-team@vmecc.local')
             ->firstOrFail();

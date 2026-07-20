@@ -19,7 +19,10 @@ class AiHelperKnowledgeProcessingService
         'Guide maintenance',
     ];
 
-    public function __construct(private readonly AiHelperMarkdownStructureParser $markdownStructure) {}
+    public function __construct(
+        private readonly AiHelperMarkdownStructureParser $markdownStructure,
+        private readonly AiHelperEmbeddingService $embeddings,
+    ) {}
 
     public function process(int $entryId, ?string $expectedRunId = null): void
     {
@@ -73,16 +76,42 @@ class AiHelperKnowledgeProcessingService
             return false;
         }
 
+        $requiresEmbedding = $activate && $this->embeddings->isAvailable();
+
         try {
-            $processed = DB::transaction(function () use ($entry, $content, $summary, $metadata, $expectedRunId, $chunks, $pages, $extractionMode, $activate, $extractionComplete) {
+            $result = DB::transaction(function () use ($entry, $content, $summary, $metadata, $expectedRunId, $chunks, $pages, $extractionMode, $activate, $extractionComplete, $requiresEmbedding) {
                 $locked = AiHelperKnowledgeEntry::query()->lockForUpdate()->find($entry->id);
                 if (! $locked || ! $this->canProcess($locked, $expectedRunId)) {
-                    return false;
+                    return ['processed' => false];
                 }
 
-                $locked->chunks()->delete();
-                $locked->pages()->delete();
                 $ingestionVersion = max(1, (int) $locked->ingestion_version);
+                $previousUsable = $this->hasPreviousUsableIndex($locked);
+                $activeVersion = $previousUsable
+                    ? $locked->chunks()->where('active', true)->max('ingestion_version')
+                    : null;
+
+                if ($requiresEmbedding) {
+                    // Keep the serving version intact while the replacement is
+                    // embedded. A repeated/stale ingestion run may have left an
+                    // inactive stage, which is safe to replace.
+                    $locked->chunks()->where('active', false)->delete();
+                    if ($activeVersion === null) {
+                        $locked->pages()->delete();
+                    } else {
+                        $locked->pages()->where('ingestion_version', '!=', $activeVersion)->delete();
+                    }
+                    if ($activeVersion !== null && $ingestionVersion <= (int) $activeVersion) {
+                        $ingestionVersion = (int) $activeVersion + 1;
+                        $locked->ingestion_version = $ingestionVersion;
+                    }
+                } else {
+                    // Lexical-only indexing is completed in this transaction,
+                    // so readers move directly from the old version to the new.
+                    $locked->chunks()->delete();
+                    $locked->pages()->delete();
+                }
+
                 foreach ($chunks as $index => $chunk) {
                     AiHelperKnowledgeChunk::create([
                         'knowledge_entry_id' => $locked->id,
@@ -97,7 +126,7 @@ class AiHelperKnowledgeProcessingService
                         'token_estimate' => $this->estimateTokens($chunk['content']),
                         'module_key' => $locked->module_key,
                         'route_key' => $locked->route_key,
-                        'active' => $activate,
+                        'active' => $activate && ! $requiresEmbedding,
                         'extraction_mode' => $chunk['extraction_mode'],
                         'ingestion_version' => $ingestionVersion,
                     ]);
@@ -122,49 +151,73 @@ class AiHelperKnowledgeProcessingService
                     ]);
                 }
 
-                $locked->forceFill([
+                $attributes = [
                     'content' => $content,
                     'summary' => $summary !== null && trim($summary) !== ''
                         ? Str::limit($this->normalizeText($summary), 320, '')
                         : $this->buildSummary($content),
                     'content_hash' => hash('sha256', $content),
-                    'status' => $activate
-                        ? AiHelperKnowledgeEntry::STATUS_ACTIVE
-                        : AiHelperKnowledgeEntry::STATUS_DISABLED,
-                    'active' => $activate,
-                    'processed_at' => now(),
-                    'ingestion_completed_at' => now(),
+                    'status' => $requiresEmbedding
+                        ? AiHelperKnowledgeEntry::STATUS_PROCESSING
+                        : ($activate
+                            ? AiHelperKnowledgeEntry::STATUS_ACTIVE
+                            : AiHelperKnowledgeEntry::STATUS_DISABLED),
+                    'active' => $requiresEmbedding ? $previousUsable : $activate,
+                    'processed_at' => $requiresEmbedding ? $locked->processed_at : now(),
+                    'ingestion_completed_at' => $requiresEmbedding ? null : now(),
                     'extraction_mode' => $extractionMode,
-                    'extraction_complete' => $extractionComplete,
+                    'extraction_complete' => $requiresEmbedding && ! $previousUsable
+                        ? false
+                        : $extractionComplete,
                     'quality_status' => $metadata['quality_status'] ?? ($extractionComplete ? 'ready' : 'review_required'),
                     'retrieval_metadata' => $this->retrievalMetadata($locked, $chunks),
                     'extracted_characters' => Str::length($content),
                     'error' => null,
-                    'embedding_status' => 'pending',
-                    'embedding' => null,
-                    'embedding_model' => null,
-                    'embedding_hash' => null,
-                    'embedded_at' => null,
+                    'embedding_status' => $requiresEmbedding ? 'processing' : 'pending',
                     'embedding_error' => null,
-                ] + $metadata)->save();
+                    'ingestion_version' => $ingestionVersion,
+                ] + $metadata;
 
-                return true;
+                if (! $requiresEmbedding) {
+                    $attributes += [
+                        'embedding' => null,
+                        'embedding_model' => null,
+                        'embedding_hash' => null,
+                        'embedded_at' => null,
+                    ];
+                }
+
+                $locked->forceFill($attributes)->save();
+
+                return [
+                    'processed' => true,
+                    'requires_embedding' => $requiresEmbedding,
+                    'ingestion_version' => $ingestionVersion,
+                    'ingestion_run_id' => $locked->ingestion_run_id,
+                ];
             });
 
-            if ($processed && $activate && (bool) config('ai_helper.embedding_enabled', true)) {
+            if (($result['processed'] ?? false) && ($result['requires_embedding'] ?? false)) {
                 try {
-                    EmbedAiHelperKnowledgeEntry::dispatch($entry->id);
+                    EmbedAiHelperKnowledgeEntry::dispatch(
+                        $entry->id,
+                        (int) $result['ingestion_version'],
+                        $result['ingestion_run_id'],
+                    )->afterCommit();
                 } catch (Throwable $e) {
-                    // A sync queue executes the embedding job inline. Keep the lexical
-                    // index usable if the optional semantic provider rejects a request.
                     Log::warning('Ask AI knowledge semantic indexing failed; lexical index remains active', [
                         'knowledge_entry_id' => $entry->id,
                         'exception_class' => $e::class,
                     ]);
+                    $this->markFailed(
+                        $entry->id,
+                        $result['ingestion_run_id'],
+                        'Semantic indexing could not be queued: '.$e->getMessage(),
+                    );
                 }
             }
 
-            return $processed;
+            return (bool) ($result['processed'] ?? false);
         } catch (Throwable $e) {
             Log::warning('Ask AI knowledge chunk persistence failed', [
                 'knowledge_entry_id' => $entry->id,
@@ -277,10 +330,21 @@ class AiHelperKnowledgeProcessingService
                 return;
             }
             if ($this->hasPreviousUsableIndex($entry)) {
+                $entry->chunks()
+                    ->where('ingestion_version', $entry->ingestion_version)
+                    ->where('active', false)
+                    ->delete();
+                $entry->pages()
+                    ->where('ingestion_version', $entry->ingestion_version)
+                    ->delete();
                 $entry->forceFill([
                     'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
                     'active' => true,
                     'ingestion_completed_at' => now(),
+                    'embedding_status' => is_array($entry->embedding) && $entry->embedding !== []
+                        ? 'ready'
+                        : 'failed',
+                    'embedding_error' => Str::limit($message, 1000, ''),
                     'error' => Str::limit('Re-index failed; the previous index remains active. '.$message, 1000, ''),
                 ])->save();
 

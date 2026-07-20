@@ -43,7 +43,11 @@ class AiHelperKnowledgeAudienceResolver
             || $entry->knowledge_type !== AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
             || ! str_starts_with((string) $entry->source_path, 'seed:system-guide:')
             || ! $entry->active
-            || $entry->status !== AiHelperKnowledgeEntry::STATUS_ACTIVE
+            || ! in_array($entry->status, [
+                AiHelperKnowledgeEntry::STATUS_ACTIVE,
+                AiHelperKnowledgeEntry::STATUS_PROCESSING,
+            ], true)
+            || ($entry->status === AiHelperKnowledgeEntry::STATUS_PROCESSING && ! $entry->extraction_complete)
             || $entry->review_status !== AiHelperKnowledgeEntry::REVIEW_APPROVED
             || $entry->review_due_at === null
             || $entry->review_due_at->isPast()

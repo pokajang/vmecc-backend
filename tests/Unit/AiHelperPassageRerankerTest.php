@@ -51,7 +51,7 @@ class AiHelperPassageRerankerTest extends TestCase
         $this->assertTrue($result['metadata']['fallback']);
     }
 
-    public function test_it_returns_no_candidates_when_the_provider_finds_no_relevant_evidence(): void
+    public function test_an_empty_model_ranking_falls_back_to_deterministic_candidates(): void
     {
         config(['ai_helper.rerank_enabled' => true, 'ai_helper.rerank_min_relevance' => 1]);
         $this->mock(AiHelperOpenAiService::class, function ($mock) {
@@ -72,9 +72,37 @@ class AiHelperPassageRerankerTest extends TestCase
             collect([$this->candidate(1), $this->candidate(2)]),
         );
 
-        $this->assertSame([], $result['candidates']->all());
-        $this->assertSame('no_relevant_candidates', $result['metadata']['status']);
-        $this->assertFalse($result['metadata']['fallback']);
+        $this->assertSame([1, 2], $result['candidates']->pluck('chunk.id')->all());
+        $this->assertSame('fallback', $result['metadata']['status']);
+        $this->assertTrue($result['metadata']['fallback']);
+        $this->assertSame('no_relevant_candidates', $result['metadata']['reason']);
+    }
+
+    public function test_it_preserves_a_protected_deterministic_match_omitted_by_the_model(): void
+    {
+        config(['ai_helper.rerank_enabled' => true]);
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('structuredResponse')->once()->andReturn([
+                'response_id' => 'rerank-protected',
+                'data' => ['results' => [[
+                    'chunk_id' => 2,
+                    'relevance' => 3,
+                    'direct_answer' => true,
+                    'covers' => ['answer'],
+                ]]],
+            ]);
+        });
+        $protected = $this->candidate(1);
+        $protected['protected_match'] = true;
+
+        $result = app(AiHelperPassageReranker::class)->rerank(
+            'question',
+            [],
+            collect([$protected, $this->candidate(2)]),
+        );
+
+        $this->assertSame([1, 2], $result['candidates']->pluck('chunk.id')->all());
+        $this->assertSame('completed_with_protected_matches', $result['metadata']['status']);
     }
 
     private function candidate(int $id): array

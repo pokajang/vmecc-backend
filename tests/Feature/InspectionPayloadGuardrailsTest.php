@@ -611,6 +611,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
                 ],
                 'submittedByRole' => 'Spoofed Role',
                 'submittedByRoleCode' => 'BAD',
+                'submittedBy' => 'Spoofed User',
             ],
         ]);
 
@@ -621,6 +622,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonPath('data.inspectionActor.roleCode', 'IC');
         $response->assertJsonPath('data.submittedByRole', 'Incident Commander');
         $response->assertJsonPath('data.submittedByRoleCode', 'IC');
+        $response->assertJsonPath('data.submittedBy', 'Session Inspector');
         $response->assertJsonPath('data.approvalHistory.0.actorRole', 'Incident Commander');
         $response->assertJsonPath('data.approvalHistory.0.actorRoleCode', 'IC');
         $response->assertJsonPath('data.timeline.0.meta.actorRole', 'Incident Commander');
@@ -631,6 +633,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $this->assertSame('IC', $report->payload['inspectionActor']['roleCode'] ?? null);
         $this->assertSame('Incident Commander', $report->payload['submittedByRole'] ?? null);
         $this->assertSame('IC', $report->payload['submittedByRoleCode'] ?? null);
+        $this->assertSame('Session Inspector', $report->payload['submittedBy'] ?? null);
     }
 
     public function test_inspection_draft_overwrites_spoofed_actor_role_with_session_role(): void
@@ -654,6 +657,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
                 ],
                 'submitted_by_role' => 'Spoofed Role',
                 'submitted_by_role_code' => 'BAD',
+                'submitted_by' => 'Spoofed Draft User',
             ],
         ]);
 
@@ -664,6 +668,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonPath('data.payload.inspectionActor.roleCode', 'TRT');
         $response->assertJsonPath('data.payload.submittedByRole', 'Tactical Response Team');
         $response->assertJsonPath('data.payload.submittedByRoleCode', 'TRT');
+        $response->assertJsonPath('data.payload.submittedBy', 'Draft Inspector');
 
         $draft = ReportDraft::query()
             ->where('user_id', $user->id)
@@ -674,6 +679,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $this->assertSame('TRT', $draft->payload['inspectionActor']['roleCode'] ?? null);
         $this->assertSame('Tactical Response Team', $draft->payload['submittedByRole'] ?? null);
         $this->assertSame('TRT', $draft->payload['submittedByRoleCode'] ?? null);
+        $this->assertSame('Draft Inspector', $draft->payload['submittedBy'] ?? null);
     }
 
     public function test_inspection_workflow_review_snapshots_actor_role(): void

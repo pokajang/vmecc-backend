@@ -140,6 +140,151 @@ class AiHelperSystemGuideEvaluationCases
         return $cases;
     }
 
+    /**
+     * Deterministic Retrieval V4 release gate. Every guide is queried from two
+     * unrelated routes, then common English/BM/mixed layman aliases are tested
+     * without relying on the current page to identify the requested topic.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function global(): array
+    {
+        $cases = [];
+        foreach ($this->catalog->keys() as $key) {
+            $definition = $this->catalog->definition($key);
+            $parsed = $this->parser->parseFile(database_path("ai-helper-system-guides/{$key}.md"), true);
+            $title = trim((string) ($parsed['frontmatter']['title'] ?? $key));
+            [$englishPath, $malayPath] = $this->unrelatedPaths($definition['route_key']);
+            $common = [
+                'guide_key' => $key,
+                'persona' => $this->authorizedPersona($definition),
+                'exact_document_titles' => [$title],
+                'top_title' => $title,
+                'expected_source_type' => 'system_guide',
+                'expected_pipeline_version' => 4,
+                'retrieval_only' => true,
+                'guide_route_key' => $definition['route_key'],
+            ];
+
+            $cases[] = [
+                ...$common,
+                'id' => "system-guide-global-en-{$key}",
+                'question' => "How do I use {$title} in VMECC?",
+                'path' => $englishPath,
+                'response_language' => 'en',
+            ];
+            $cases[] = [
+                ...$common,
+                'id' => "system-guide-global-bm-{$key}",
+                'question' => "Tolong, macam mana saya nak guna {$title} dalam VMECC ya?",
+                'path' => $malayPath,
+                'response_language' => 'bm',
+            ];
+        }
+
+        foreach ($this->aliasCases() as $aliasCase) {
+            $key = $aliasCase['guide_key'];
+            $definition = $this->catalog->definition($key);
+            $parsed = $this->parser->parseFile(database_path("ai-helper-system-guides/{$key}.md"), true);
+            $title = trim((string) ($parsed['frontmatter']['title'] ?? $key));
+            $cases[] = [
+                ...$aliasCase,
+                'persona' => $this->authorizedPersona($definition),
+                'exact_document_titles' => [$title],
+                'top_title' => $title,
+                'expected_source_type' => 'system_guide',
+                'expected_pipeline_version' => 4,
+                'expected_context_dependency' => 'explicit_topic',
+                'retrieval_only' => true,
+                'guide_route_key' => $definition['route_key'],
+            ];
+        }
+
+        return $cases;
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function aliasCases(): array
+    {
+        return [
+            [
+                'id' => 'system-guide-global-alias-leave-bm-noise',
+                'guide_key' => 'leave-self-service',
+                'question' => 'Err, macam mana nak apply cuti ya?',
+                'path' => '/inspection',
+                'response_language' => 'bm',
+                'expected_topic_key' => 'leave',
+            ],
+            [
+                'id' => 'system-guide-global-alias-overtime-mixed-noise',
+                'guide_key' => 'overtime-self-service',
+                'question' => 'Hi, camne nak submit OT saya ah?',
+                'path' => '/payroll',
+                'response_language' => 'auto',
+                'expected_topic_key' => 'overtime',
+            ],
+            [
+                'id' => 'system-guide-global-alias-inspection-bm',
+                'guide_key' => 'inspection-view',
+                'question' => 'Inspection tu apa ya, macam mana nak tengok rekod?',
+                'path' => '/leave',
+                'response_language' => 'auto',
+                'expected_topic_key' => 'inspection',
+            ],
+            [
+                'id' => 'system-guide-global-alias-payslip-bm-noise',
+                'guide_key' => 'payroll-self-service',
+                'question' => 'Kat mana nak tengok slip gaji saya?',
+                'path' => '/inspection',
+                'response_language' => 'bm',
+                'expected_topic_key' => 'payroll',
+            ],
+            [
+                'id' => 'system-guide-global-alias-password-english',
+                'guide_key' => 'profile-security',
+                'question' => 'How can I reset my password safely?',
+                'path' => '/inspection',
+                'response_language' => 'en',
+                'expected_topic_key' => 'password_security',
+            ],
+            [
+                'id' => 'system-guide-global-alias-roster-bm-noise',
+                'guide_key' => 'roster-view',
+                'question' => 'Mcm mana nak view jadual tugas team saya?',
+                'path' => '/leave',
+                'response_language' => 'auto',
+                'expected_topic_key' => 'roster',
+            ],
+            [
+                'id' => 'system-guide-global-alias-extinguisher-mixed',
+                'guide_key' => 'extinguisher-management',
+                'question' => 'How do I manage alat pemadam api records?',
+                'path' => '/leave',
+                'response_language' => 'auto',
+                'expected_topic_key' => 'extinguisher',
+            ],
+            [
+                'id' => 'system-guide-global-alias-role-permission-bm',
+                'guide_key' => 'role-permissions',
+                'question' => 'Camne nak ubah kebenaran akses untuk role?',
+                'path' => '/leave',
+                'response_language' => 'auto',
+                'expected_topic_key' => 'role_permission',
+            ],
+        ];
+    }
+
+    /** @return array{0: string, 1: string} */
+    private function unrelatedPaths(string $guideRouteKey): array
+    {
+        $paths = ['/dashboard', '/inspection', '/leave', '/payroll', '/messages'];
+        $unrelated = collect($paths)
+            ->reject(fn (string $path) => $this->catalog->resolveTrustedRoute($path)['route_key'] === $guideRouteKey)
+            ->values();
+
+        return [$unrelated[0], $unrelated[1]];
+    }
+
     private function authorizedPersona(array $definition): string
     {
         if (in_array('*', $definition['permissions'], true)

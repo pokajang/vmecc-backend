@@ -35,9 +35,19 @@ class RouteServiceProvider extends ServiceProvider
                 'retry_after' => (int) ($headers['Retry-After'] ?? 60),
             ], 429, $headers);
 
-            return Limit::perMinute(max(1, (int) config('ai_helper.rate_limit_per_minute', 12)))
-                ->by($request->user()?->id ?: $request->ip())
-                ->response($response);
+            $identity = $request->user()?->id ?: $request->ip();
+
+            return [
+                Limit::perMinute(max(1, (int) config('ai_helper.rate_limit_per_minute', 4)))
+                    ->by('user-minute:'.$identity)
+                    ->response($response),
+                Limit::perHour(max(1, (int) config('ai_helper.rate_limit_per_hour', 30)))
+                    ->by('user-hour:'.$identity)
+                    ->response($response),
+                Limit::perMinute(max(1, (int) config('ai_helper.ip_rate_limit_per_minute', 12)))
+                    ->by('ip-minute:'.$request->ip())
+                    ->response($response),
+            ];
         });
 
         RateLimiter::for('ai-helper-knowledge-upload', function (Request $request) {
@@ -135,6 +145,12 @@ class RouteServiceProvider extends ServiceProvider
 
             Route::middleware('web')
                 ->group(base_path('routes/web.php'));
+
+            if (app()->environment(['testing', 'e2e'])) {
+                Route::middleware('api')
+                    ->prefix('__e2e')
+                    ->group(base_path('routes/e2e.php'));
+            }
         });
     }
 }

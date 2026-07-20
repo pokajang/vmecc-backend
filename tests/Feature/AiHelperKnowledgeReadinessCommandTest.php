@@ -33,6 +33,15 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
 
         $this->assertSame(1, Artisan::call('ai-helper:knowledge-readiness', ['--json' => true]));
         $this->assertStringContainsString('"retrieval_configuration_valid":false', Artisan::output());
+
+        config([
+            'ai_helper.retrieval_min_lexical_coverage' => 0.6,
+            'ai_helper.retrieval_v4' => true,
+            'ai_helper.pipeline_version' => 3,
+        ]);
+
+        $this->assertSame(1, Artisan::call('ai-helper:knowledge-readiness', ['--json' => true]));
+        $this->assertStringContainsString('"retrieval_configuration_valid":false', Artisan::output());
     }
 
     public function test_production_gate_also_requires_the_complete_reference_and_system_guide_corpora(): void
@@ -43,6 +52,7 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
             'ai_helper.api_key' => 'test-key',
             'ai_helper.retrieval_v2' => true,
             'ai_helper.retrieval_v3' => true,
+            'ai_helper.retrieval_v4' => true,
             'ai_helper.system_guides_enabled' => true,
             'ai_helper.system_guide_final_corpus_enforced' => true,
             'ai_helper.embedding_enabled' => true,
@@ -119,6 +129,7 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
             'ai_helper.api_key' => 'test-key',
             'ai_helper.retrieval_v2' => true,
             'ai_helper.retrieval_v3' => true,
+            'ai_helper.retrieval_v4' => true,
             'ai_helper.embedding_enabled' => true,
             'ai_helper.rerank_enabled' => true,
             'ai_helper.citation_validation_enabled' => true,
@@ -147,6 +158,18 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
         $disabledCorpusOutput = Artisan::output();
         $this->assertStringContainsString('"production_configuration_valid":false', $disabledCorpusOutput);
         $this->assertStringContainsString('"final_corpus_enforced":false', $disabledCorpusOutput);
+
+        config([
+            'ai_helper.system_guide_final_corpus_enforced' => true,
+            'ai_helper.system_guide_approval_enforced' => false,
+        ]);
+        $this->assertSame(1, Artisan::call('ai-helper:knowledge-readiness', [
+            '--production' => true,
+            '--json' => true,
+        ]));
+        $approvalOutput = Artisan::output();
+        $this->assertStringContainsString('"production_configuration_valid":false', $approvalOutput);
+        $this->assertStringContainsString('"system_guide_approval_enforced":false', $approvalOutput);
     }
 
     public function test_readiness_requires_active_status_and_an_index_for_each_entry(): void

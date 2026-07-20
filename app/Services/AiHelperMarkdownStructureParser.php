@@ -32,7 +32,6 @@ class AiHelperMarkdownStructureParser
                 $level = strlen($heading[1]);
                 $headingPath = array_slice($headingPath, 0, $level - 1);
                 $headingPath[$level - 1] = trim($heading[2]);
-                $blocks[] = $this->block(trim($line), $headingPath, 'heading');
 
                 continue;
             }

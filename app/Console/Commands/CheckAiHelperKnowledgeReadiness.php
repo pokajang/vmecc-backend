@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
+use App\Services\AiHelperEmbeddingService;
 use App\Services\AiHelperKnowledgeProcessingService;
 use App\Services\AiHelperMarkdownKnowledgeParser;
 use App\Services\AiHelperSystemGuideCatalog;
@@ -17,8 +18,6 @@ use Throwable;
 
 class CheckAiHelperKnowledgeReadiness extends Command
 {
-    private const EXPECTED_REFERENCE_COUNT = 34;
-
     protected $signature = 'ai-helper:knowledge-readiness
         {--json : Emit machine-readable JSON}
         {--production : Require the complete fail-closed production configuration}';
@@ -28,6 +27,7 @@ class CheckAiHelperKnowledgeReadiness extends Command
     public function handle(
         AiHelperSystemGuideCatalog $catalog,
         AiHelperMarkdownKnowledgeParser $parser,
+        AiHelperEmbeddingService $embeddings,
     ): int {
         $productionGate = (bool) $this->option('production');
         $schemaReady = collect([
@@ -49,12 +49,16 @@ class CheckAiHelperKnowledgeReadiness extends Command
 
         $semanticRequired = (bool) config('ai_helper.embedding_enabled', true)
             && trim((string) config('ai_helper.api_key')) !== '';
+        $expectedReferenceCount = max(1, (int) config('ai_helper.reference_corpus_expected_count', 34));
         $references = $this->entries(AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT);
         $referenceChunks = $this->chunks(AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT);
         $referenceEmbeddedChunks = $referenceChunks->whereNotNull('embedding')->count();
+        $referenceCompatible = $semanticRequired
+            ? $references->filter(fn (AiHelperKnowledgeEntry $entry) => $embeddings->isEntryCurrent($entry))->count()
+            : $references->count();
         $referenceIndexed = $references->filter(fn (AiHelperKnowledgeEntry $entry) => $entry->active_chunks_count > 0)->count();
         $referencePayload = [
-            'expected' => self::EXPECTED_REFERENCE_COUNT,
+            'expected' => $expectedReferenceCount,
             'total' => $references->count(),
             'active' => $references->where('active', true)->count(),
             'approved' => $references->where('review_status', AiHelperKnowledgeEntry::REVIEW_APPROVED)->count(),
@@ -63,11 +67,14 @@ class CheckAiHelperKnowledgeReadiness extends Command
             'status_active' => $references->where('status', AiHelperKnowledgeEntry::STATUS_ACTIVE)->count(),
             'embedded' => $references->where('embedding_status', 'ready')->count(),
             'missing_embeddings' => max(0, $referenceChunks->count() - $referenceEmbeddedChunks),
+            'compatible_embeddings' => $referenceCompatible,
+            'incompatible_embeddings' => max(0, $references->count() - $referenceCompatible),
             'processing' => $references->where('status', AiHelperKnowledgeEntry::STATUS_PROCESSING)->count(),
             'failed' => $references->where('status', AiHelperKnowledgeEntry::STATUS_FAILED)->count(),
+            'reindex_errors' => $references->filter(fn (AiHelperKnowledgeEntry $entry) => trim((string) $entry->error) !== '')->count(),
         ];
         $referenceReady = $references->isNotEmpty()
-            && (! $productionGate || $references->count() === self::EXPECTED_REFERENCE_COUNT)
+            && (! $productionGate || $references->count() === $expectedReferenceCount)
             && $referencePayload['active'] === $references->count()
             && $referencePayload['approved'] === $references->count()
             && $referencePayload['linked_to_pdf'] === $references->count()
@@ -75,14 +82,21 @@ class CheckAiHelperKnowledgeReadiness extends Command
             && $referencePayload['status_active'] === $references->count()
             && $referencePayload['processing'] === 0
             && $referencePayload['failed'] === 0
+            && $referencePayload['reindex_errors'] === 0
             && $referenceChunks->isNotEmpty()
-            && (! $semanticRequired || $referencePayload['missing_embeddings'] === 0);
+            && (! $semanticRequired || (
+                $referencePayload['missing_embeddings'] === 0
+                && $referencePayload['incompatible_embeddings'] === 0
+            ));
 
         $guides = $this->entries(AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE)
             ->filter(fn (AiHelperKnowledgeEntry $entry) => str_starts_with((string) $entry->source_path, 'seed:system-guide:'))
             ->values();
         $guideChunks = $this->chunks(AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE, true);
         $guideEmbeddedChunks = $guideChunks->whereNotNull('embedding')->count();
+        $guideCompatible = $semanticRequired
+            ? $guides->filter(fn (AiHelperKnowledgeEntry $entry) => $embeddings->isEntryCurrent($entry))->count()
+            : $guides->count();
         $guideIndexed = $guides->filter(fn (AiHelperKnowledgeEntry $entry) => $entry->active_chunks_count > 0)->count();
         $sourceHashMatches = $guides->filter(function (AiHelperKnowledgeEntry $entry) use ($parser): bool {
             $key = Str::after((string) $entry->source_path, 'seed:system-guide:');
@@ -155,8 +169,11 @@ class CheckAiHelperKnowledgeReadiness extends Command
             'maintainer_chunk_violations' => $maintainerChunkViolations,
             'embedded' => $guides->where('embedding_status', 'ready')->count(),
             'missing_embeddings' => max(0, $guideChunks->count() - $guideEmbeddedChunks),
+            'compatible_embeddings' => $guideCompatible,
+            'incompatible_embeddings' => max(0, $guides->count() - $guideCompatible),
             'processing' => $guides->where('status', AiHelperKnowledgeEntry::STATUS_PROCESSING)->count(),
             'failed' => $guides->where('status', AiHelperKnowledgeEntry::STATUS_FAILED)->count(),
+            'reindex_errors' => $guides->filter(fn (AiHelperKnowledgeEntry $entry) => trim((string) $entry->error) !== '')->count(),
             'legacy_active' => $legacyActive,
             'catalog_errors' => $catalogErrors,
         ];
@@ -179,10 +196,14 @@ class CheckAiHelperKnowledgeReadiness extends Command
             && $maintainerChunkViolations === 0
             && $systemPayload['processing'] === 0
             && $systemPayload['failed'] === 0
+            && $systemPayload['reindex_errors'] === 0
             && $legacyActive === 0
             && $catalogErrors === []
             && $guideChunks->isNotEmpty()
-            && (! $semanticRequired || $systemPayload['missing_embeddings'] === 0);
+            && (! $semanticRequired || (
+                $systemPayload['missing_embeddings'] === 0
+                && $systemPayload['incompatible_embeddings'] === 0
+            ));
 
         $groundingMode = (string) config('ai_helper.grounding_verification_mode', 'disabled');
         $verificationAttempts = (int) config('ai_helper.verification_max_attempts', 2);
@@ -193,11 +214,14 @@ class CheckAiHelperKnowledgeReadiness extends Command
             && trim((string) config('ai_helper.api_key')) !== '';
         $systemGuidesEnabled = (bool) config('ai_helper.system_guides_enabled', false);
         $finalCorpusEnforced = (bool) config('ai_helper.system_guide_final_corpus_enforced', true);
+        $approvalEnforced = (bool) config('ai_helper.system_guide_approval_enforced', true);
         $productionConfigurationValid = $providerConfigured
             && (bool) config('ai_helper.retrieval_v2', true)
             && (bool) config('ai_helper.retrieval_v3', false)
+            && (bool) config('ai_helper.retrieval_v4', false)
             && $systemGuidesEnabled
             && $finalCorpusEnforced
+            && $approvalEnforced
             && (bool) config('ai_helper.embedding_enabled', true)
             && (bool) config('ai_helper.rerank_enabled', false)
             && (bool) config('ai_helper.citation_validation_enabled', true)
@@ -214,7 +238,7 @@ class CheckAiHelperKnowledgeReadiness extends Command
             && $roleAwareReady
             && (! $productionGate || ($systemReady && $productionConfigurationValid));
         $deploymentState = match (true) {
-            $ready && $systemGuidesEnabled && $finalCorpusEnforced => 'production_ready',
+            $ready && $systemGuidesEnabled && $finalCorpusEnforced && $approvalEnforced => 'production_ready',
             $systemReady && ! $systemGuidesEnabled => 'staged_disabled',
             default => 'incomplete',
         };
@@ -227,11 +251,15 @@ class CheckAiHelperKnowledgeReadiness extends Command
             'role_aware_retrieval_ready' => $roleAwareReady,
             'system_guides_runtime_enabled' => $systemGuidesEnabled,
             'final_corpus_enforced' => $finalCorpusEnforced,
+            'system_guide_approval_enforced' => $approvalEnforced,
             'deployment_state' => $deploymentState,
             'reference_knowledge' => $referencePayload,
             'system_guides' => $systemPayload,
             'retrieval' => [
-                'pipeline_version' => (bool) config('ai_helper.retrieval_v3', false) ? 3 : 2,
+                'pipeline_version' => (bool) config('ai_helper.retrieval_v4', false)
+                    ? 4
+                    : ((bool) config('ai_helper.retrieval_v3', false) ? 3 : 2),
+                'index_fingerprint' => $embeddings->indexFingerprint(),
                 'schema_ready' => true,
                 'verification_configuration_valid' => $verificationValid,
                 'retrieval_configuration_valid' => $retrievalConfigurationValid,
@@ -270,13 +298,23 @@ class CheckAiHelperKnowledgeReadiness extends Command
         $lexical = (float) config('ai_helper.retrieval_min_lexical_coverage', 0.6);
         $semantic = (float) config('ai_helper.retrieval_min_semantic_similarity', 0.42);
         $rerank = (int) config('ai_helper.rerank_min_relevance', 1);
+        $retrievalV4 = (bool) config('ai_helper.retrieval_v4', false);
 
         return $lexical >= 0.0 && $lexical <= 1.0
             && $semantic >= 0.0 && $semantic <= 1.0
             && $rerank >= 0 && $rerank <= 3
             && (int) config('ai_helper.knowledge_document_candidate_limit', 12) > 0
             && (int) config('ai_helper.retrieval_candidate_chunks', 40) > 0
-            && (int) config('ai_helper.knowledge_context_token_budget', 12000) > 0;
+            && (int) config('ai_helper.knowledge_context_token_budget', 12000) > 0
+            && (! $retrievalV4 || (
+                (int) config('ai_helper.pipeline_version', 4) === 4
+                && (int) config('ai_helper.index_profile_version', 4) > 0
+                && (int) config('ai_helper.retrieval_v4_document_candidate_limit', 18) > 0
+                && (int) config('ai_helper.retrieval_v4_topic_candidate_limit', 6) > 0
+                && (int) config('ai_helper.retrieval_v4_page_candidate_limit', 4) > 0
+                && (int) config('ai_helper.retrieval_v4_global_candidate_limit', 12) > 0
+                && (int) config('ai_helper.retrieval_v4_recovery_document_limit', 32) > 0
+            ));
     }
 
     private function render(array $payload): int

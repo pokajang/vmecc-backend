@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Services\AiHelperOpenAiService;
+use App\Services\AiHelperProviderException;
 use App\Services\AiHelperResponsePipeline;
 use Tests\TestCase;
 
@@ -220,5 +221,148 @@ class AiHelperResponsePipelineTest extends TestCase
         $this->assertSame('verified', $result['verification']['status']);
         $this->assertSame(1, $result['verification']['attempts']);
         $this->assertStringContainsString('revision not stated [S2]', $result['content']);
+    }
+
+    public function test_it_requires_evidence_before_generating_an_operational_answer(): void
+    {
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldNotReceive('streamResponse');
+        });
+
+        $result = app(AiHelperResponsePipeline::class)->respond(
+            'How do I apply for leave?',
+            'Use the evidence.',
+            [['role' => 'user', 'content' => 'How do I apply for leave?']],
+            [],
+            [],
+            null,
+            'en',
+            fn () => null,
+            fn () => null,
+        );
+
+        $this->assertSame('AI_HELPER_NO_AUTHORIZED_EVIDENCE', $result['outcome_code']);
+        $this->assertSame('retrieve_more_evidence', $result['recovery_action']);
+        $this->assertSame('rejected', $result['verification']['status']);
+    }
+
+    public function test_it_returns_a_direct_approved_extract_when_generation_is_temporarily_unavailable(): void
+    {
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('streamResponse')->once()->andThrow(new AiHelperProviderException(
+                'AI_HELPER_PROVIDER_RATE_LIMITED',
+                'rate limited',
+                true,
+                429,
+                'req-rate',
+            ));
+        });
+
+        $result = app(AiHelperResponsePipeline::class)->respond(
+            'What is 999?',
+            'Use the evidence.',
+            [['role' => 'user', 'content' => 'What is 999?']],
+            $this->guidance,
+            $this->sources,
+            null,
+            'en',
+            fn () => null,
+            fn () => null,
+        );
+
+        $this->assertSame('AI_HELPER_PROVIDER_RATE_LIMITED', $result['outcome_code']);
+        $this->assertSame('retry_provider', $result['recovery_action']);
+        $this->assertSame('fallback_extractive', $result['verification']['status']);
+        $this->assertStringContainsString('999 is the official', $result['content']);
+        $this->assertSame(['req-rate'], $result['provider_request_ids']);
+        $this->assertSame(['S1'], collect($result['sources'])->pluck('source_id')->all());
+    }
+
+    public function test_missing_requested_evidence_signals_retrieval_recovery_without_a_second_generation(): void
+    {
+        config(['ai_helper.grounding_verification_mode' => 'enforce']);
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('streamResponse')->once()->andReturnUsing(function ($instructions, $input, $onDelta) {
+                $onDelta('999 is the official emergency number. [S1]');
+
+                return ['response_id' => 'answer-1'];
+            });
+            $mock->shouldReceive('structuredResponse')->once()->andReturn([
+                'response_id' => 'verify-1',
+                'data' => [
+                    'verdict' => 'revise',
+                    'question_answered' => false,
+                    'claims' => [[
+                        'claim' => '999 is the official emergency number.',
+                        'source_ids' => ['S1'],
+                        'supported' => true,
+                        'contradicted' => false,
+                        'missing_qualifier' => false,
+                        'reason' => null,
+                    ]],
+                    'missing_requested_facts' => ['Who must make the call'],
+                ],
+            ]);
+        });
+
+        $result = app(AiHelperResponsePipeline::class)->respond(
+            'What is 999 and who calls it?',
+            'Use the evidence.',
+            [['role' => 'user', 'content' => 'What is 999 and who calls it?']],
+            $this->guidance,
+            $this->sources,
+            null,
+            'en',
+            fn () => null,
+            fn () => null,
+        );
+
+        $this->assertSame('AI_HELPER_EVIDENCE_INCOMPLETE', $result['outcome_code']);
+        $this->assertSame('retrieve_more_evidence', $result['recovery_action']);
+        $this->assertSame('fallback_extractive', $result['verification']['status']);
+    }
+
+    public function test_it_can_render_a_missing_single_source_citation_before_grounding_verification(): void
+    {
+        config(['ai_helper.grounding_verification_mode' => 'enforce']);
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('streamResponse')->once()->andReturnUsing(function ($instructions, $input, $onDelta) {
+                $onDelta('999 is the official Malaysian Emergency Service Centre telephone number.');
+
+                return ['response_id' => 'answer-1'];
+            });
+            $mock->shouldReceive('structuredResponse')->once()->andReturn([
+                'response_id' => 'verify-1',
+                'data' => [
+                    'verdict' => 'pass',
+                    'question_answered' => true,
+                    'claims' => [[
+                        'claim' => '999 is the official Malaysian Emergency Service Centre telephone number.',
+                        'source_ids' => ['S1'],
+                        'supported' => true,
+                        'contradicted' => false,
+                        'missing_qualifier' => false,
+                        'reason' => null,
+                    ]],
+                    'missing_requested_facts' => [],
+                ],
+            ]);
+        });
+
+        $result = app(AiHelperResponsePipeline::class)->respond(
+            'What is 999?',
+            'Use the evidence.',
+            [['role' => 'user', 'content' => 'What is 999?']],
+            $this->guidance,
+            $this->sources,
+            null,
+            'en',
+            fn () => null,
+            fn () => null,
+        );
+
+        $this->assertSame('verified', $result['verification']['status']);
+        $this->assertTrue($result['verification']['citation_rendered']);
+        $this->assertStringEndsWith('[S1]', $result['content']);
     }
 }

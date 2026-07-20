@@ -14,8 +14,9 @@ class AiHelperApiResponder
     {
         $existing = trim((string) $request->headers->get('X-Request-Id', ''));
 
-        if ($existing !== '') {
-            return Str::limit($existing, 80, '');
+        if ($existing !== ''
+            && preg_match('/\A[A-Za-z0-9][A-Za-z0-9._:-]{0,79}\z/D', $existing) === 1) {
+            return $existing;
         }
 
         $attributesRequestId = trim((string) $request->attributes->get('ai_helper_request_id', ''));

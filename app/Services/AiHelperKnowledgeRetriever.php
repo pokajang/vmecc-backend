@@ -16,11 +16,20 @@ class AiHelperKnowledgeRetriever
         private readonly AiHelperRetrievalRankFusion $rankFusion,
         private readonly AiHelperPassageReranker $reranker,
         private readonly AiHelperKnowledgeAudienceResolver $audienceResolver,
+        private readonly AiHelperDocumentCandidateSelector $candidateSelector,
+        private readonly AiHelperTopicAliasRegistry $topicAliases,
     ) {}
 
     /** @return array{analysis: array<string, mixed>, guidance: array<int, array<string, mixed>>, trace: array<string, mixed>} */
-    public function retrieve(array $context, ?User $user, string $message, array $previousUserMessages = []): array
-    {
+    public function retrieve(
+        array $context,
+        ?User $user,
+        string $message,
+        array $previousUserMessages = [],
+        bool $forceRecovery = false,
+        ?AiHelperRequestDeadline $deadline = null,
+        ?string $safetyIdentifier = null,
+    ): array {
         $startedAt = microtime(true);
         $analysis = $this->analyzer->analyze($message, $previousUserMessages);
         if ($analysis['sensitive_request'] ?? false) {
@@ -63,58 +72,94 @@ class AiHelperKnowledgeRetriever
         // unknown path receives no route/module ranking boost.
         $rankingContext['route_key'] = $audience->routeKey;
         $rankingContext['module_key'] = $audience->moduleKey;
-        $authorizedIds = $this->authorizedEntryIds($user, $audience, $message);
+        $authorizedIds = $this->authorizedEntryIds($user, $audience, $analysis);
         $entries = AiHelperKnowledgeEntry::query()
             ->whereKey($authorizedIds)
             ->with('sourceDocument:id,title,source_filename')
             ->get();
+        $semanticCompatibleIds = $entries
+            ->filter(fn (AiHelperKnowledgeEntry $entry) => $this->embeddings->isEntryVectorCurrent($entry))
+            ->pluck('id')
+            ->mapWithKeys(fn ($id) => [(int) $id => true]);
         $queryEmbedding = null;
         $semanticFallback = false;
-        if ($entries->contains(fn (AiHelperKnowledgeEntry $entry) => is_array($entry->embedding) && $entry->embedding !== [])) {
+        if ($semanticCompatibleIds->isNotEmpty()) {
             try {
-                $queryEmbedding = $this->embeddings->embedQuery((string) $analysis['query']);
+                $queryEmbedding = $this->embeddings->embedQuery((string) $analysis['query'], $deadline);
                 $semanticFallback = $queryEmbedding === null;
             } catch (\Throwable) {
                 $semanticFallback = true;
             }
+        } elseif ((bool) config('ai_helper.embedding_enabled', true) && $entries->isNotEmpty()) {
+            $semanticFallback = true;
         }
 
-        $rankedDocuments = $entries->map(function (AiHelperKnowledgeEntry $entry) use ($analysis, $rankingContext, $queryEmbedding, $message) {
-            return ['entry' => $entry, 'score' => $this->documentScore($entry, $analysis, $rankingContext, $queryEmbedding, $message)];
+        $retrievalV4 = (bool) config('ai_helper.retrieval_v4', false);
+        $rankedDocuments = $entries->map(function (AiHelperKnowledgeEntry $entry) use ($analysis, $rankingContext, $queryEmbedding, $retrievalV4, $semanticCompatibleIds) {
+            $topicScore = $retrievalV4 ? $this->documentTopicScore($entry, $analysis) : 0;
+            $exactMatch = $this->isExactDocumentMatch($entry, $analysis);
+            $pageMatch = $this->isPageMatch($entry, $rankingContext);
+            $semanticCompatible = $semanticCompatibleIds->has((int) $entry->id);
+            $documentQueryEmbedding = $semanticCompatible ? $queryEmbedding : null;
+
+            return [
+                'entry' => $entry,
+                'score' => $this->documentScore($entry, $analysis, $rankingContext, $documentQueryEmbedding),
+                'global_score' => $this->documentScore($entry, $analysis, [], $documentQueryEmbedding),
+                'exact_match' => $exactMatch,
+                'topic_score' => $topicScore,
+                'page_match' => $pageMatch,
+                'semantic_compatible' => $semanticCompatible,
+                'protected_match' => $exactMatch || ($topicScore > 0
+                    && in_array($analysis['context_dependency'] ?? null, ['explicit_topic', 'mixed'], true))
+                    || ($pageMatch && ($analysis['context_dependency'] ?? null) === 'page_deictic'),
+            ];
         })->sortByDesc('score')->values();
         $documentLimit = max(1, (int) config('ai_helper.knowledge_document_candidate_limit', 12));
-        $exactDocuments = $rankedDocuments->filter(fn (array $item) => $this->isExactDocumentMatch($item['entry'], $analysis));
-        $selectedDocuments = $exactDocuments->isNotEmpty()
-            ? $exactDocuments->take(max($documentLimit, 12))->values()
-            : $rankedDocuments->take($documentLimit);
+        $exactDocuments = $rankedDocuments->where('exact_match', true)->values();
+        $candidateLanes = ['exact' => $exactDocuments->count(), 'topic' => 0, 'global' => 0, 'page' => 0];
+        if ($retrievalV4) {
+            $selection = $this->candidateSelector->select($rankedDocuments, $analysis);
+            $selectedDocuments = $selection['documents'];
+            $candidateLanes = $selection['lanes'];
+        } else {
+            $selectedDocuments = $exactDocuments->isNotEmpty()
+                ? $exactDocuments->take(max($documentLimit, 12))->values()
+                : $rankedDocuments->take($documentLimit);
+        }
         $selectedDocuments = $this->hydrateSelectedDocuments($selectedDocuments);
 
-        $rankedChunks = collect();
-        foreach ($selectedDocuments as $document) {
-            /** @var AiHelperKnowledgeEntry $entry */
-            $entry = $document['entry'];
-            foreach ($entry->chunks as $chunk) {
-                $lexical = $this->chunkLexicalMetrics($chunk, $analysis);
-                $rankedChunks->push([
-                    'chunk' => $chunk,
-                    'entry' => $entry,
-                    'document_score' => (float) $document['score'],
-                    'lexical_score' => $lexical['score'],
-                    'lexical_coverage' => $lexical['coverage'],
-                    'matched_terms' => $lexical['matched_terms'],
-                    'semantic_score' => $queryEmbedding && is_array($chunk->embedding)
-                        ? max(0, $this->cosineSimilarity($queryEmbedding, $chunk->embedding))
-                        : 0.0,
-                    'score' => $this->chunkScore($chunk, (float) $document['score'], $analysis, $queryEmbedding),
-                ]);
-            }
-        }
+        $rankedChunks = $this->chunkCandidates($selectedDocuments, $analysis, $queryEmbedding);
         if ($exactDocuments->isEmpty()) {
             $rankedChunks = $rankedChunks
-                ->filter(fn (array $candidate) => $this->isRelevantCandidate($candidate))
+                ->filter(fn (array $candidate) => ($retrievalV4 && ($candidate['protected_match'] ?? false))
+                    || $this->isRelevantCandidate($candidate))
                 ->values();
         }
-        $retrievalV3 = (bool) config('ai_helper.retrieval_v3', false);
+        $recoveryAttempted = false;
+        $recoverySucceeded = false;
+        if ($retrievalV4 && ($forceRecovery || $rankedChunks->isEmpty()) && $rankedDocuments->isNotEmpty()) {
+            $recoveryAttempted = true;
+            $recoveryLimit = max(
+                (int) config('ai_helper.retrieval_v4_document_candidate_limit', 18),
+                (int) config('ai_helper.retrieval_v4_recovery_document_limit', 32),
+            );
+            $recoveryDocuments = $rankedDocuments
+                ->sortByDesc('global_score')
+                ->take($recoveryLimit)
+                ->values();
+            $recoveryDocuments = $this->hydrateSelectedDocuments($recoveryDocuments);
+            $recoveryChunks = $this->chunkCandidates($recoveryDocuments, $analysis, $queryEmbedding)
+                ->filter(fn (array $candidate) => ($candidate['protected_match'] ?? false)
+                    || $this->isRelevantCandidate($candidate))
+                ->values();
+            if ($recoveryChunks->isNotEmpty()) {
+                $rankedChunks = $recoveryChunks;
+                $selectedDocuments = $recoveryDocuments;
+                $recoverySucceeded = true;
+            }
+        }
+        $retrievalV3 = (bool) config('ai_helper.retrieval_v3', false) || $retrievalV4;
         $rankedChunks = $retrievalV3
             ? $this->rankChunksWithFusion($rankedChunks)
             : $rankedChunks->sortByDesc('score')->values();
@@ -129,7 +174,23 @@ class AiHelperKnowledgeRetriever
         $preRerankCandidates = $rankedChunks;
         $rerankMetadata = ['enabled' => false, 'status' => 'not_run', 'fallback' => false];
         if ($retrievalV3) {
-            $reranked = $this->reranker->rerank((string) $analysis['query'], $analysis, $rankedChunks);
+            $rerankAnalysis = $analysis;
+            $protectedEntryCount = $rankedChunks
+                ->filter(fn (array $candidate) => (bool) ($candidate['protected_match'] ?? false))
+                ->pluck('entry.id')
+                ->unique()
+                ->count();
+            $rerankAnalysis['skip_rerank'] = $retrievalV4
+                && (bool) config('ai_helper.rerank_adaptive', true)
+                && $protectedEntryCount === 1
+                && ($analysis['context_dependency'] ?? null) === 'explicit_topic';
+            $reranked = $this->reranker->rerank(
+                (string) $analysis['query'],
+                $rerankAnalysis,
+                $rankedChunks,
+                $deadline,
+                $safetyIdentifier,
+            );
             $rankedChunks = $reranked['candidates'];
             $rerankMetadata = $reranked['metadata'];
             if ($exactDocuments->count() > 1) {
@@ -203,7 +264,7 @@ class AiHelperKnowledgeRetriever
             ->all();
 
         return ['analysis' => $analysis, 'guidance' => $guidance, 'trace' => [
-            'pipeline_version' => $retrievalV3 ? 3 : 2,
+            'pipeline_version' => $retrievalV4 ? 4 : ($retrievalV3 ? 3 : 2),
             'mode' => $queryEmbedding ? 'hybrid' : 'lexical',
             'documents_considered' => $entries->count(),
             'documents_selected' => $selected->pluck('entry.id')->unique()->count(),
@@ -221,6 +282,19 @@ class AiHelperKnowledgeRetriever
             'token_estimate' => $tokens,
             'semantic_fallback' => $semanticFallback,
             'rerank' => $rerankMetadata,
+            'query_plan' => [
+                'intent' => $analysis['intent'] ?? null,
+                'source_mode' => $analysis['source_mode'] ?? null,
+                'context_dependency' => $analysis['context_dependency'] ?? null,
+                'language' => $analysis['language'] ?? null,
+                'topic_keys' => $analysis['topic_keys'] ?? [],
+                'follow_up' => (bool) ($analysis['follow_up'] ?? false),
+            ],
+            'candidate_lanes' => $candidateLanes,
+            'recovery_attempted' => $recoveryAttempted,
+            'recovery_succeeded' => $recoverySucceeded,
+            'recovery_forced' => $forceRecovery,
+            'index_fingerprint' => $this->embeddings->indexFingerprint(),
             'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
         ]];
     }
@@ -230,18 +304,18 @@ class AiHelperKnowledgeRetriever
         $audience = $this->audienceResolver->resolve($user, $context);
 
         return AiHelperKnowledgeEntry::query()
-            ->whereKey($this->authorizedEntryIds($user, $audience, $message));
+            ->whereKey($this->authorizedEntryIds($user, $audience, $this->analyzer->analyze($message)));
     }
 
     /** @return array<int, int> */
-    private function authorizedEntryIds(?User $user, AiHelperKnowledgeAudience $audience, string $message): array
+    private function authorizedEntryIds(?User $user, AiHelperKnowledgeAudience $audience, array $analysis): array
     {
         $candidates = AiHelperKnowledgeEntry::query()
             ->select([
                 'id', 'uploaded_by', 'source_document_id', 'knowledge_type', 'required_permissions',
                 'permission_match', 'allowed_roles', 'module_gate', 'source_path', 'visibility',
                 'module_key', 'route_key', 'guide_owner', 'status', 'review_status', 'active',
-                'review_due_at', 'source_mime',
+                'review_due_at', 'source_mime', 'extraction_complete',
             ])
             ->where('source_mime', 'text/markdown')
             ->where('active', true)
@@ -264,7 +338,7 @@ class AiHelperKnowledgeRetriever
             })
             ->get();
 
-        $sourceMode = $this->questionSourceMode($message);
+        $sourceMode = (string) ($analysis['source_mode'] ?? 'any');
 
         return $candidates
             ->filter(function (AiHelperKnowledgeEntry $entry) use ($audience) {
@@ -296,11 +370,15 @@ class AiHelperKnowledgeRetriever
         array $analysis,
         array $context,
         ?array $queryEmbedding,
-        string $message,
     ): float {
         $document = $entry->sourceDocument;
-        $title = Str::lower(trim(($document?->title ?? $entry->title).' '.($document?->source_filename ?? '').' '.($entry->summary ?? '')));
+        $title = Str::lower($this->documentIdentity($entry));
         $score = $this->termScore($title, $analysis['terms'] ?? []) * 35;
+        $retrievalV4 = (bool) config('ai_helper.retrieval_v4', false);
+        $topicScore = $retrievalV4 ? $this->documentTopicScore($entry, $analysis) : 0;
+        if ($topicScore > 0) {
+            $score += $topicScore * 240;
+        }
         foreach ($analysis['annex_numbers'] ?? [] as $number) {
             if (preg_match('/\bannex(?:e)?\s*0*'.preg_quote((string) $number, '/').'\b/i', $title)) {
                 $score += 1600;
@@ -316,13 +394,26 @@ class AiHelperKnowledgeRetriever
                 $score += 600;
             }
         }
+        $contextDependency = (string) ($analysis['context_dependency'] ?? 'neutral');
+        $routeBoost = ! $retrievalV4 ? 900 : match ($contextDependency) {
+            'page_deictic' => 900,
+            'mixed' => 260,
+            'explicit_topic' => 0,
+            default => 90,
+        };
+        $moduleBoost = ! $retrievalV4 ? 500 : match ($contextDependency) {
+            'page_deictic' => 500,
+            'mixed' => 140,
+            'explicit_topic' => 0,
+            default => 50,
+        };
         if ($entry->route_key && $entry->route_key === ($context['route_key'] ?? null)) {
-            $score += $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE ? 900 : 80;
+            $score += $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE ? $routeBoost : min(80, $routeBoost);
         } elseif ($entry->module_key && $entry->module_key === ($context['module_key'] ?? null)) {
-            $score += $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE ? 500 : 50;
+            $score += $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE ? $moduleBoost : min(50, $moduleBoost);
         }
         if ($entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
-            && in_array($this->questionSourceMode($message), ['system', 'mixed'], true)) {
+            && in_array($analysis['source_mode'] ?? null, ['system', 'mixed'], true)) {
             $score += 300;
         }
         if ($queryEmbedding && is_array($entry->embedding)) {
@@ -330,6 +421,73 @@ class AiHelperKnowledgeRetriever
         }
 
         return $score;
+    }
+
+    private function documentIdentity(AiHelperKnowledgeEntry $entry): string
+    {
+        $document = $entry->sourceDocument;
+        $metadata = is_array($entry->retrieval_metadata) ? $entry->retrieval_metadata : [];
+
+        return collect([
+            $document?->title ?: $entry->title,
+            $document?->source_filename ?: $entry->source_filename,
+            $entry->summary,
+            $entry->module_key,
+            $entry->route_key,
+            str_replace(['seed:system-guide:', '-', '_'], [' ', ' ', ' '], (string) $entry->source_path),
+            collect($entry->tags ?? [])->filter()->join(' '),
+            collect($metadata['headings'] ?? [])->filter()->join(' '),
+        ])->filter(fn ($value) => is_string($value) && trim($value) !== '')
+            ->join(' ');
+    }
+
+    private function documentTopicScore(AiHelperKnowledgeEntry $entry, array $analysis): int
+    {
+        return $this->topicAliases->matchScore(
+            $this->documentIdentity($entry),
+            is_array($analysis['topic_keys'] ?? null) ? $analysis['topic_keys'] : [],
+        );
+    }
+
+    private function isPageMatch(AiHelperKnowledgeEntry $entry, array $context): bool
+    {
+        return ($entry->route_key && $entry->route_key === ($context['route_key'] ?? null))
+            || ($entry->module_key && $entry->module_key === ($context['module_key'] ?? null));
+    }
+
+    /**
+     * @param  Collection<int, array<string, mixed>>  $documents
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function chunkCandidates(Collection $documents, array $analysis, ?array $queryEmbedding): Collection
+    {
+        $candidates = collect();
+        foreach ($documents as $document) {
+            /** @var AiHelperKnowledgeEntry $entry */
+            $entry = $document['entry'];
+            foreach ($entry->chunks as $chunk) {
+                $lexical = $this->chunkLexicalMetrics($chunk, $analysis);
+                $chunkSemanticCompatible = ($document['semantic_compatible'] ?? false)
+                    && $queryEmbedding
+                    && $this->embeddings->isChunkCurrent($chunk);
+                $semanticQueryEmbedding = $chunkSemanticCompatible ? $queryEmbedding : null;
+                $candidates->push([
+                    'chunk' => $chunk,
+                    'entry' => $entry,
+                    'document_score' => (float) $document['score'],
+                    'lexical_score' => $lexical['score'],
+                    'lexical_coverage' => $lexical['coverage'],
+                    'matched_terms' => $lexical['matched_terms'],
+                    'semantic_score' => $semanticQueryEmbedding
+                        ? max(0, $this->cosineSimilarity($semanticQueryEmbedding, $chunk->embedding))
+                        : 0.0,
+                    'protected_match' => (bool) ($document['protected_match'] ?? false),
+                    'score' => $this->chunkScore($chunk, (float) $document['score'], $analysis, $semanticQueryEmbedding),
+                ]);
+            }
+        }
+
+        return $candidates;
     }
 
     private function isExactDocumentMatch(AiHelperKnowledgeEntry $entry, array $analysis): bool
@@ -703,24 +861,6 @@ class AiHelperKnowledgeRetriever
                 ? AiHelperSystemGuideCatalog::DISPLAY_LABEL
                 : null,
         ];
-    }
-
-    private function questionSourceMode(string $message): string
-    {
-        $system = preg_match('/\b(?:how (?:do|can|should) i|where (?:do|can) i|which button|what status|navigate|screen|page|form|field)\b/i', $message) === 1;
-        $reference = preg_match('/\b(?:emergency|policy|telephone|phone number|procedure|annex|erp)\b/i', $message) === 1;
-
-        if ($system && $reference) {
-            return 'mixed';
-        }
-        if ($system) {
-            return 'system';
-        }
-        if ($reference) {
-            return 'reference';
-        }
-
-        return 'any';
     }
 
     private function sourceScope(?string $module, ?string $route, array $context): string

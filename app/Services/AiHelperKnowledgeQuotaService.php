@@ -8,6 +8,8 @@ use Illuminate\Http\UploadedFile;
 
 class AiHelperKnowledgeQuotaService
 {
+    public function __construct(private readonly AiHelperStorageCapacityService $storageCapacity) {}
+
     /**
      * @return array{ok: bool, message?: string, code?: string}
      */
@@ -15,7 +17,6 @@ class AiHelperKnowledgeQuotaService
     {
         $activeLimit = (int) config('ai_helper.knowledge_max_active_uploads_per_user', 100);
         $userBytesLimit = (int) config('ai_helper.knowledge_max_upload_bytes_per_user', 2147483648);
-        $globalBytesLimit = (int) config('ai_helper.knowledge_max_total_upload_bytes', 21474836480);
         $incomingSize = (int) ($file->getSize() ?: 0);
 
         if ($activeLimit > 0) {
@@ -52,20 +53,28 @@ class AiHelperKnowledgeQuotaService
             }
         }
 
-        if ($globalBytesLimit > 0) {
-            $globalBytes = (int) AiHelperKnowledgeEntry::query()
-                ->withTrashed()
-                ->sum('source_size');
-
-            if (($globalBytes + $incomingSize) > $globalBytesLimit) {
-                return [
-                    'ok' => false,
-                    'message' => 'Ask AI storage is currently full. Please contact an administrator.',
-                    'code' => 'AI_HELPER_KNOWLEDGE_GLOBAL_STORAGE_LIMIT',
-                ];
-            }
+        $capacity = $this->storageCapacity->checkUpload(
+            AiHelperStorageCapacityService::UPLOAD_KNOWLEDGE,
+            $incomingSize,
+        );
+        if (! $capacity['ok']) {
+            return $this->capacityFailure((string) ($capacity['code'] ?? 'AI_HELPER_STORAGE_CAPACITY_UNAVAILABLE'));
         }
 
         return ['ok' => true];
+    }
+
+    /** @return array{ok: false, message: string, code: string} */
+    private function capacityFailure(string $code): array
+    {
+        return [
+            'ok' => false,
+            'message' => match ($code) {
+                'AI_HELPER_KNOWLEDGE_GLOBAL_STORAGE_LIMIT' => 'Ask AI storage is currently full. Please contact an administrator.',
+                'AI_HELPER_STORAGE_HEADROOM_LIMIT' => 'Ask AI knowledge uploads are temporarily paused to preserve server storage capacity.',
+                default => 'Ask AI knowledge upload capacity could not be verified. Please try again later.',
+            },
+            'code' => $code,
+        ];
     }
 }

@@ -1458,9 +1458,15 @@ class ReportController extends Controller
         }
 
         $payload['inspectionActor'] = $actor;
+        $payload['submittedBy'] = $actor['name'];
         $payload['submittedByRole'] = $actor['role'];
         $payload['submittedByRoleCode'] = $actor['roleCode'];
-        unset($payload['inspection_actor'], $payload['submitted_by_role'], $payload['submitted_by_role_code']);
+        unset(
+            $payload['inspection_actor'],
+            $payload['submitted_by'],
+            $payload['submitted_by_role'],
+            $payload['submitted_by_role_code'],
+        );
 
         return $payload;
     }

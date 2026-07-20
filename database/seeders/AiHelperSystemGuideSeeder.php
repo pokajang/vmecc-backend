@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\AiHelperKnowledgeEntry;
 use App\Models\AuditLog;
+use App\Services\AiHelperKnowledgeLifecycleService;
 use App\Services\AiHelperKnowledgeProcessingService;
 use App\Services\AiHelperMarkdownKnowledgeParser;
 use App\Services\AiHelperSystemGuideCatalog;
@@ -19,6 +20,7 @@ class AiHelperSystemGuideSeeder extends Seeder
     public function run(): void
     {
         $processor = app(AiHelperKnowledgeProcessingService::class);
+        $lifecycle = app(AiHelperKnowledgeLifecycleService::class);
         $parser = app(AiHelperMarkdownKnowledgeParser::class);
         $catalog = app(AiHelperSystemGuideCatalog::class);
         $registryErrors = $catalog->validateRegistry();
@@ -142,9 +144,11 @@ class AiHelperSystemGuideSeeder extends Seeder
                     'version' => $metadata['version'],
                 ])->save();
 
+                $runId = $lifecycle->beginIngestion($entry);
                 $processor->processTextEntry(
                     $entry,
                     $content,
+                    expectedRunId: $runId,
                     activate: $metadata['active'],
                 );
                 $fresh = $entry->fresh();

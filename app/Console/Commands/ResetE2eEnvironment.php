@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Support\E2eEnvironmentGuard;
+use App\Support\E2eRunLock;
 use Database\Seeders\E2eScenarioSeeder;
 use Illuminate\Console\Command;
 
@@ -16,6 +17,7 @@ class ResetE2eEnvironment extends Command
     public function handle(): int
     {
         E2eEnvironmentGuard::assertCurrentEnvironmentIsSafe();
+        E2eRunLock::fromConfig()->assertOwned();
 
         if (! $this->option('seed-only')) {
             $exitCode = $this->call('migrate:fresh', ['--force' => true]);

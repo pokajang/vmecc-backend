@@ -13,6 +13,22 @@ abstract class TestCase extends BaseTestCase
 
     protected ?string $testCsrfToken = null;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $database = (string) config(
+            'database.connections.'.config('database.default').'.database',
+        );
+        $e2eDatabase = (string) env('PHPUNIT_FORBIDDEN_DATABASE');
+
+        if ($e2eDatabase !== '' && $database === $e2eDatabase) {
+            throw new \RuntimeException(
+                'PHPUnit must use its isolated database and cannot run against the browser E2E database.',
+            );
+        }
+    }
+
     public function actingAs(Authenticatable $user, $guard = null): static
     {
         parent::actingAs($user, $guard);

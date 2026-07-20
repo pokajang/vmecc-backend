@@ -18,7 +18,7 @@ class EvaluateAiHelperKnowledge extends Command
 {
     protected $signature = 'ai-helper:evaluate-knowledge
         {--live : Ask the configured response model and grade its answers}
-        {--suite=core : Evaluation suite: core, coverage, all, system-guide-core, or system-guide-coverage}
+        {--suite=core : Evaluation suite: core, coverage, all, system-guide-core, system-guide-coverage, or system-guide-global}
         {--case=* : Run only the specified case IDs}
         {--actor-map= : Server-only JSON file mapping system-guide personas to active user IDs}
         {--json : Emit machine-readable JSON}';
@@ -42,13 +42,14 @@ class EvaluateAiHelperKnowledge extends Command
         }
         $selectedIds = collect($this->option('case'))->filter()->values();
         $suite = strtolower(trim((string) $this->option('suite')));
-        if (! in_array($suite, ['core', 'coverage', 'all', 'system-guide-core', 'system-guide-coverage'], true)) {
-            throw new RuntimeException('Evaluation suite must be core, coverage, all, system-guide-core, or system-guide-coverage.');
+        if (! in_array($suite, ['core', 'coverage', 'all', 'system-guide-core', 'system-guide-coverage', 'system-guide-global'], true)) {
+            throw new RuntimeException('Evaluation suite must be core, coverage, all, system-guide-core, system-guide-coverage, or system-guide-global.');
         }
         $systemGuideSuite = str_starts_with($suite, 'system-guide-');
         $cases = collect(match ($suite) {
             'system-guide-core' => $this->systemGuideCases->core(),
             'system-guide-coverage' => $this->systemGuideCases->coverage(),
+            'system-guide-global' => $this->systemGuideCases->global(),
             default => AiHelperKnowledgeEvaluationCases::all(),
         })
             ->when(! $systemGuideSuite && $suite !== 'all', fn ($items) => $items->filter(
@@ -134,6 +135,7 @@ class EvaluateAiHelperKnowledge extends Command
         );
         $evidence = $guidance->pluck('content')->join("\n");
         $titles = $guidance->pluck('title')->unique()->values()->all();
+        $topTitle = (string) ($guidance->first()['title'] ?? '');
         $expectedTitles = collect($case['titles'] ?? [])
             ->merge($case['exact_document_titles'] ?? [])
             ->unique()
@@ -155,6 +157,21 @@ class EvaluateAiHelperKnowledge extends Command
             if (! collect($titles)->contains(fn (string $actual) => $actual === $title)) {
                 $missing[] = 'exact_title:'.$title;
             }
+        }
+        if (isset($case['top_title']) && $topTitle !== (string) $case['top_title']) {
+            $missing[] = 'top_title:'.$case['top_title'];
+        }
+        if (isset($case['expected_pipeline_version'])
+            && (int) ($context['retrieval']['pipeline_version'] ?? 0) !== (int) $case['expected_pipeline_version']) {
+            $missing[] = 'pipeline_version:'.$case['expected_pipeline_version'];
+        }
+        if (isset($case['expected_context_dependency'])
+            && ($context['retrieval']['query_plan']['context_dependency'] ?? null) !== $case['expected_context_dependency']) {
+            $missing[] = 'context_dependency:'.$case['expected_context_dependency'];
+        }
+        if (isset($case['expected_topic_key'])
+            && ! in_array($case['expected_topic_key'], $context['retrieval']['query_plan']['topic_keys'] ?? [], true)) {
+            $missing[] = 'topic_key:'.$case['expected_topic_key'];
         }
         if (isset($case['expected_source_type']) && ! $guidance->contains(
             fn (array $item) => ($item['source_type'] ?? null) === $case['expected_source_type']
@@ -259,6 +276,9 @@ class EvaluateAiHelperKnowledge extends Command
             'answer_passed' => $live ? ($liveCase ? $answerMissing === [] : true) : null,
             'answer_skipped' => $live && ! $liveCase,
             'retrieval_mode' => $context['retrieval']['mode'] ?? 'unknown',
+            'pipeline_version' => $context['retrieval']['pipeline_version'] ?? null,
+            'context_dependency' => $context['retrieval']['query_plan']['context_dependency'] ?? null,
+            'topic_keys' => $context['retrieval']['query_plan']['topic_keys'] ?? [],
             'guidance_count' => $guidance->count(),
             'document_titles' => ($case['expect_no_system_guidance'] ?? false) ? [] : $titles,
             'document_recall' => $documentRecall,

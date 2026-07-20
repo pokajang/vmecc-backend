@@ -23,6 +23,7 @@ MD;
         $text = collect($chunks)->firstWhere('content_type', 'text');
         $visual = collect($chunks)->firstWhere('content_type', 'visual_reference');
 
+        $this->assertNotContains('heading', collect($chunks)->pluck('content_type')->all());
         $this->assertSame(['Fire response', 'Initial action'], $text['heading_path']);
         $this->assertNull($text['page_start']);
         $this->assertSame(4, $visual['page_start']);

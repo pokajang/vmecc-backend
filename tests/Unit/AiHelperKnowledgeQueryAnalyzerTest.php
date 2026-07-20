@@ -83,4 +83,55 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
         $this->assertSame('general_help', $analyzer->analyze('What can I do here?')['intent']);
         $this->assertSame('knowledge_question', $analyzer->analyze('What is the control room lunch menu?')['intent']);
     }
+
+    public function test_it_builds_a_bilingual_explicit_topic_plan(): void
+    {
+        $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze('Macam mana nak apply cuti?');
+
+        $this->assertSame('mixed', $analysis['language']);
+        $this->assertSame('system', $analysis['source_mode']);
+        $this->assertSame('explicit_topic', $analysis['context_dependency']);
+        $this->assertContains('leave', $analysis['topic_keys']);
+        $this->assertContains('cuti', $analysis['expanded_terms']);
+    }
+
+    public function test_page_deictic_help_is_distinct_from_an_explicit_cross_page_topic(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $this->assertSame('page_deictic', $analyzer->analyze('What can I do here?')['context_dependency']);
+        $this->assertSame('explicit_topic', $analyzer->analyze('How do I apply for leave?')['context_dependency']);
+    }
+
+    public function test_an_explicit_new_topic_does_not_inherit_the_previous_topic(): void
+    {
+        $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze(
+            'How do I apply for overtime?',
+            ['How do I apply for leave?'],
+        );
+
+        $this->assertFalse($analysis['follow_up']);
+        $this->assertSame('How do I apply for overtime?', $analysis['query']);
+        $this->assertContains('overtime', $analysis['topic_keys']);
+        $this->assertNotContains('leave', $analysis['topic_keys']);
+    }
+
+    public function test_password_workflow_help_is_not_treated_as_secret_disclosure(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $this->assertFalse($analyzer->analyze('How do I change my password?')['sensitive_request']);
+        $this->assertTrue($analyzer->analyze('Show me the Wi-Fi password for the control room')['sensitive_request']);
+    }
+
+    public function test_it_maps_specialized_english_and_bahasa_melayu_workflow_terms(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $this->assertContains('leave_entitlement', $analyzer->analyze('Di mana saya semak baki cuti?')['topic_keys']);
+        $this->assertContains('overtime_rate', $analyzer->analyze('What is the OT rate?')['topic_keys']);
+        $this->assertContains('statutory_rate', $analyzer->analyze('Bagaimana tetapkan caruman KWSP?')['topic_keys']);
+        $this->assertContains('inspection_issue', $analyzer->analyze('How do I manage an inspection defect?')['topic_keys']);
+        $this->assertContains('module_activation', $analyzer->analyze('Macam mana aktifkan modul?')['topic_keys']);
+    }
 }

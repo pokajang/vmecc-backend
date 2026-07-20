@@ -19,6 +19,13 @@ class E2eScenarioSeeder extends Seeder
     public const PASSWORD = SmokeRbacUsersSeeder::PASSWORD;
 
     public const PERSONAS = [
+        'break_glass_admin' => [
+            'role' => 'System Administrator',
+            'email' => 'codex.e2e.break-glass-admin@vmecc.local',
+            'name' => 'Codex E2E Break Glass Administrator',
+            'scope' => RoleCatalog::GLOBAL,
+            'team' => null,
+        ],
         'hr_secondary' => [
             'role' => 'Human Resource',
             'email' => 'codex.e2e.human-resource-secondary@vmecc.local',
@@ -54,7 +61,16 @@ class E2eScenarioSeeder extends Seeder
             'scope' => RoleCatalog::CLIENT_SITE,
             'team' => 'Smoke Site Alpha',
         ],
+        'client_cm_beta' => [
+            'role' => 'Client Contract Manager',
+            'email' => 'codex.e2e.client-contract-manager-beta@vmecc.local',
+            'name' => 'Codex E2E Client Contract Manager Beta',
+            'scope' => RoleCatalog::CLIENT_SITE,
+            'team' => 'Smoke Client Beta',
+        ],
     ];
+
+    public const LOCKED_PERSONA_EMAIL = 'codex.e2e.locked-user@vmecc.local';
 
     public function run(): void
     {
@@ -75,6 +91,7 @@ class E2eScenarioSeeder extends Seeder
             $this->seedPersona($persona, $teams->get($persona['team']));
         }
 
+        $this->seedLockedPersona($teams->get('Smoke Client Beta'));
         $this->seedFutureLeaveEntitlement();
         $this->seedWorkflowSettings();
     }
@@ -208,6 +225,49 @@ class E2eScenarioSeeder extends Seeder
                     'approveRole' => 'Contract Manager',
                 ],
             ]],
+        );
+    }
+
+    private function seedLockedPersona(?Team $team): void
+    {
+        $role = Role::query()
+            ->where('name', 'Representative')
+            ->where('guard_name', 'web')
+            ->firstOrFail();
+
+        $user = User::withTrashed()->updateOrCreate(
+            ['email' => self::LOCKED_PERSONA_EMAIL],
+            [
+                'name' => 'Codex E2E Locked User',
+                'password' => Hash::make(self::PASSWORD),
+                'email_verified_at' => now(),
+                'status' => 'Active',
+                'failed_login_count' => 5,
+                'locked_at' => now(),
+                'lock_reason' => 'Deterministic E2E authentication-denial fixture',
+                'state' => 'Selangor',
+                'phone' => '60000000000',
+                'team' => $team?->name,
+            ],
+        );
+
+        if ($user->trashed()) {
+            $user->restore();
+        }
+
+        $user->syncRoles(['Representative']);
+        UserRoleAssignment::query()->updateOrCreate(
+            [
+                'user_id' => $user->id,
+                'role_id' => $role->id,
+                'scope_type' => RoleCatalog::CLIENT_SITE,
+                'team_id' => $team?->id,
+            ],
+            [
+                'start_date' => now()->subDay()->toDateString(),
+                'end_date' => null,
+                'is_primary' => true,
+            ],
         );
     }
 }

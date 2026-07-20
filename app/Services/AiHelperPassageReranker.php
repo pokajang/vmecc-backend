@@ -15,18 +15,30 @@ class AiHelperPassageReranker
      * @param  Collection<int, array<string, mixed>>  $candidates
      * @return array{candidates: Collection<int, array<string, mixed>>, metadata: array<string, mixed>}
      */
-    public function rerank(string $question, array $analysis, Collection $candidates): array
-    {
-        if (! (bool) config('ai_helper.rerank_enabled', false) || $candidates->count() < 2) {
+    public function rerank(
+        string $question,
+        array $analysis,
+        Collection $candidates,
+        ?AiHelperRequestDeadline $deadline = null,
+        ?string $safetyIdentifier = null,
+    ): array {
+        if (! (bool) config('ai_helper.rerank_enabled', false)
+            || $candidates->count() < 2
+            || (bool) ($analysis['skip_rerank'] ?? false)) {
             return ['candidates' => $candidates, 'metadata' => [
                 'enabled' => false,
-                'status' => 'not_run',
+                'status' => (bool) ($analysis['skip_rerank'] ?? false) ? 'skipped_high_confidence' : 'not_run',
                 'fallback' => false,
             ]];
         }
 
         $limit = max(2, (int) config('ai_helper.rerank_candidate_limit', 32));
-        $inputCandidates = $candidates->take($limit)->values();
+        $protected = $candidates->filter(fn (array $candidate) => (bool) ($candidate['protected_match'] ?? false));
+        $inputCandidates = $protected
+            ->concat($candidates)
+            ->unique(fn (array $candidate) => (int) $candidate['chunk']->id)
+            ->take($limit)
+            ->values();
         $payload = $inputCandidates->map(fn (array $item) => [
             'chunk_id' => (int) $item['chunk']->id,
             'document' => (string) ($item['entry']->sourceDocument?->title ?: $item['entry']->title),
@@ -52,6 +64,8 @@ class AiHelperPassageReranker
                 'ai_helper_passage_ranking',
                 $this->schema(),
                 (int) config('ai_helper.rerank_timeout', 20),
+                $deadline,
+                $safetyIdentifier,
             );
             $allowed = $inputCandidates->keyBy(fn (array $item) => (int) $item['chunk']->id);
             $minimumRelevance = max(0, min(3, (int) config('ai_helper.rerank_min_relevance', 1)));
@@ -64,10 +78,28 @@ class AiHelperPassageReranker
                 ->unique()
                 ->values();
             $ranked = $rankedIds->map(fn (int $id) => $allowed->get($id))->values();
+            if ($ranked->isEmpty()) {
+                return ['candidates' => $candidates, 'metadata' => [
+                    'enabled' => true,
+                    'status' => 'fallback',
+                    'fallback' => true,
+                    'reason' => 'no_relevant_candidates',
+                    'provider_response_id' => $result['response_id'] ?? null,
+                    'candidate_count' => $inputCandidates->count(),
+                ]];
+            }
+
+            $protectedOmitted = $protected->reject(
+                fn (array $candidate) => $rankedIds->contains((int) $candidate['chunk']->id),
+            );
+            $ranked = $protectedOmitted
+                ->concat($ranked)
+                ->unique(fn (array $candidate) => (int) $candidate['chunk']->id)
+                ->values();
 
             return ['candidates' => $ranked, 'metadata' => [
                 'enabled' => true,
-                'status' => $ranked->isEmpty() ? 'no_relevant_candidates' : 'completed',
+                'status' => $protectedOmitted->isEmpty() ? 'completed' : 'completed_with_protected_matches',
                 'fallback' => false,
                 'provider_response_id' => $result['response_id'] ?? null,
                 'candidate_count' => $inputCandidates->count(),

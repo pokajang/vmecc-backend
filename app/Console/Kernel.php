@@ -19,7 +19,14 @@ class Kernel extends ConsoleKernel
             }
         }
         $schedule->command('messages:digest')->dailyAt('09:00')->withoutOverlapping();
+        $schedule->command('ai-helper:reconcile-stale-streams')
+            ->everyFiveMinutes()
+            ->withoutOverlapping(10);
+        $schedule->command('ai-helper:reconcile-stuck-embeddings --retry')
+            ->everyTenMinutes()
+            ->withoutOverlapping(20);
         $schedule->command('ai-helper:prune-knowledge-files')->dailyAt('02:30')->withoutOverlapping();
+        $schedule->command('ai-helper:prune-runtime-data')->dailyAt('02:40')->withoutOverlapping();
         $schedule->command('report-media:prune')->dailyAt('03:00')->withoutOverlapping();
         $schedule->command('inspection:prune-duty-confirmations')->dailyAt('03:20')->withoutOverlapping();
     }

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class AiHelperMessage extends Model
 {
@@ -40,5 +41,15 @@ class AiHelperMessage extends Model
     public function thread(): BelongsTo
     {
         return $this->belongsTo(AiHelperThread::class, 'thread_id');
+    }
+
+    public function responseReports(): HasMany
+    {
+        return $this->hasMany(AiHelperResponseReport::class, 'assistant_message_id');
+    }
+
+    public function runs(): HasMany
+    {
+        return $this->hasMany(AiHelperRun::class, 'assistant_message_id');
     }
 }

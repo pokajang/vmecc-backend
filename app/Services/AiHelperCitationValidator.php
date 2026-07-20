@@ -109,10 +109,12 @@ class AiHelperCitationValidator
 
         return preg_match(
             '/^(?:if you (?:want|need)|let me know|would you like|please (?:clarify|ask)|'
+            .'i could not verify a complete answer|additional verification could not be completed|'
             .'here(?: is|\'s|’s) (?:a |an )?(?:(?:brief|concise|focused|side-by-side) )?(?:comparison|summary|overview)|'
             .'below is (?:a |an )?(?:comparison|summary|overview)|'
             .'(?:no\.? )?the available (?:knowledge|guidance|sources?) does not (?:establish|identify|state|show)|'
             .'jika anda|sekiranya anda|sila (?:jelaskan|tanya)|saya boleh bantu|'
+            .'saya tidak dapat mengesahkan jawapan yang lengkap|pengesahan tambahan tidak dapat diselesaikan|'
             .'(?:the )?(?:answer|information|detail) (?:was )?(?:not found|not available)|'
             .'i (?:could not|couldn\'t|cannot|can\'t) (?:find|determine|provide)|'
             .'maklumat (?:tidak|tiada)|jawapan (?:tidak|tiada))/iu',
@@ -172,10 +174,10 @@ class AiHelperCitationValidator
     private function rejectionMessage(string $responseLanguage): string
     {
         if ($responseLanguage === 'bm') {
-            return 'Saya tidak dapat memberikan jawapan yang mempunyai rujukan mencukupi daripada pengetahuan VMECC yang tersedia. Sila nyatakan lampiran atau dokumen tertentu dan cuba lagi.';
+            return 'Saya tidak dapat memberikan jawapan yang mempunyai rujukan mencukupi daripada panduan VMECC yang tersedia. Nyatakan halaman, urusan, prosedur atau dokumen yang dimaksudkan dan cuba lagi.';
         }
 
-        return 'I could not provide a sufficiently sourced answer from the available VMECC knowledge. Please name a specific annex or document and try again.';
+        return 'I could not provide a sufficiently sourced answer from the available VMECC guidance. Please name the page, task, procedure, or document you mean and try again.';
     }
 
     /** @return array{valid: bool, status: string, reason: ?string, cited_source_ids: array<int, string>, uncited_blocks: array<int, int>, unknown_source_ids: array<int, string>} */

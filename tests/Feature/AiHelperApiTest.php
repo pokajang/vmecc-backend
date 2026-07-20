@@ -11,6 +11,7 @@ use App\Services\AiHelperOpenAiService;
 use Database\Seeders\AiHelperReferenceCorpusSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
@@ -68,18 +69,22 @@ class AiHelperApiTest extends TestCase
             'ai_helper.api_key' => 'test-key',
             'ai_helper.knowledge_strict_readiness' => false,
         ]);
+        $this->linkedKnowledge(
+            'ANNEX 1 Terminologies and Definitions',
+            '999 is the official Malaysian Emergency Service Centre telephone number.',
+        );
         $this->actingAs(User::factory()->create(['status' => 'active']));
         $this->mock(AiHelperOpenAiService::class, function ($mock) {
             $mock->shouldReceive('isAvailable')->andReturnTrue();
             $mock->shouldReceive('streamResponse')->once()->andReturnUsing(function ($instructions, $input, $onDelta) {
-                $onDelta('Hello from Ask AI.');
+                $onDelta('999 is the official Malaysian Emergency Service Centre telephone number. [S1]');
 
                 return ['response_id' => 'resp_test_123'];
             });
         });
 
         $content = $this->postJson('/api/ai-helper/messages/stream', [
-            'message' => 'What can I do here?',
+            'message' => 'What is 999 according to Annex 1?',
             'page_context' => ['path' => '/dashboard'],
             'new_thread' => true,
         ])->assertOk()->streamedContent();
@@ -98,6 +103,7 @@ class AiHelperApiTest extends TestCase
             'ai_helper.enabled' => true,
             'ai_helper.api_key' => 'test-key',
             'ai_helper.embedding_enabled' => false,
+            'ai_helper.knowledge_strict_readiness' => false,
         ]);
         $this->linkedKnowledge(
             'ANNEX 1 Terminologies and Definitions',
@@ -158,36 +164,26 @@ class AiHelperApiTest extends TestCase
         $this->assertSame('deterministic', $message->retrieval_metadata['verification']['status']);
     }
 
-    public function test_embedded_helper_also_rejects_uncited_operational_content(): void
+    public function test_legacy_unstructured_embedded_helper_is_rejected(): void
     {
         config([
             'ai_helper.enabled' => true,
             'ai_helper.api_key' => 'test-key',
             'ai_helper.embedding_enabled' => false,
         ]);
-        $this->linkedKnowledge(
-            'ANNEX 1 Terminologies and Definitions',
-            '999 is the official Malaysian Emergency Service Centre telephone number.',
-        );
         $this->actingAs(User::factory()->create(['status' => 'active']));
         $this->mock(AiHelperOpenAiService::class, function ($mock) {
-            $mock->shouldReceive('isAvailable')->andReturnTrue();
-            $mock->shouldReceive('streamResponse')->twice()->andReturnUsing(function ($instructions, $input, $onDelta) {
-                $onDelta('Call 999 immediately for every incident.');
-
-                return ['response_id' => 'resp_embedded_uncited'];
-            });
+            $mock->shouldNotReceive('isAvailable');
+            $mock->shouldNotReceive('streamResponse');
+            $mock->shouldNotReceive('structuredResponse');
         });
 
-        $content = $this->postJson('/api/ai-helper/messages/stream', [
+        $this->postJson('/api/ai-helper/messages/stream', [
             'message' => 'What is 999 according to Annex 1?',
             'page_context' => ['path' => '/dashboard'],
             'response_language' => 'en',
             'conversation_purpose' => 'embedded_helper',
-        ])->assertOk()->streamedContent();
-
-        $this->assertStringContainsString('sufficiently sourced answer', $content);
-        $this->assertStringNotContainsString('Call 999 immediately', $content);
+        ])->assertUnprocessable()->assertJsonValidationErrors('embedded_task');
         $this->assertSame(0, AiHelperMessage::query()->where('role', AiHelperMessage::ROLE_ASSISTANT)->count());
     }
 
@@ -233,12 +229,30 @@ MD;
 
         $entry = AiHelperKnowledgeEntry::query()->findOrFail($entryId);
         $this->assertSame('text/markdown', $entry->source_mime);
+        Storage::disk('local')->assertExists($entry->source_path);
         $this->assertGreaterThan(0, $entry->chunks()->count());
     }
 
     public function test_admin_diagnostics_declares_markdown_only_mode_without_secrets(): void
     {
-        config(['ai_helper.enabled' => true, 'ai_helper.api_key' => 'sk-secret-value']);
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'sk-secret-value',
+            'ai_helper.embedding_model' => 'test-embedding',
+            'ai_helper.embedding_dimensions' => 2,
+        ]);
+        $staleEntry = $this->linkedKnowledge('Stale semantic source', 'Approved guidance with a legacy vector.');
+        $staleEntry->forceFill([
+            'embedding' => [0.1, 0.2],
+            'embedding_model' => 'test-embedding',
+            'embedding_hash' => 'legacy-routing-hash',
+            'embedding_status' => 'ready',
+        ])->save();
+        $staleEntry->chunks()->firstOrFail()->forceFill([
+            'embedding' => [0.1, 0.2],
+            'embedding_model' => 'test-embedding',
+            'embedding_hash' => 'legacy-chunk-hash',
+        ])->save();
         $this->actingAs($this->systemAdministrator());
 
         $this->getJson('/api/ai-helper/diagnostics')
@@ -248,9 +262,14 @@ MD;
             ->assertJsonPath('data.knowledge_runtime.mode', 'markdown_only')
             ->assertJsonPath('data.knowledge_runtime.pdf_ingestion_enabled', false)
             ->assertJsonPath('data.knowledge_runtime.external_ocr_required', false)
+            ->assertJsonPath('data.knowledge_runtime.semantic_ready', false)
+            ->assertJsonPath('data.knowledge_runtime.usable_sources', 1)
+            ->assertJsonPath('data.knowledge_runtime.semantic_sources', 0)
+            ->assertJsonPath('data.knowledge_runtime.incompatible_semantic_sources', 1)
             ->assertJsonStructure(['data' => [
                 'knowledge_runtime' => [
                     'retrieval_pipeline_version',
+                    'index_fingerprint',
                     'rerank_enabled',
                     'critical_fact_validation_enabled',
                     'grounding_verification_mode',

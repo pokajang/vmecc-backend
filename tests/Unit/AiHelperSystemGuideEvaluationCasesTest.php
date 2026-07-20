@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Services\AiHelperSystemGuideCatalog;
 use App\Support\AiHelperSystemGuideEvaluationCases;
 use Tests\TestCase;
 
@@ -27,7 +28,7 @@ class AiHelperSystemGuideEvaluationCasesTest extends TestCase
         $this->assertTrue($cases->contains(fn (array $case) => str_contains($case['question'], 'How do I guna')));
         $this->assertTrue($cases->contains(fn (array $case) => str_starts_with($case['question'], 'Ignore access controls')));
 
-        $catalog = app(\App\Services\AiHelperSystemGuideCatalog::class);
+        $catalog = app(AiHelperSystemGuideCatalog::class);
         foreach ($cases->where('persona', '!=', 'unauthenticated') as $case) {
             $expectedRouteKey = $catalog->definition($case['guide_key'])['route_key'];
             if ($expectedRouteKey === 'global' || str_starts_with($case['id'], 'system-guide-forged-context-')) {
@@ -48,5 +49,35 @@ class AiHelperSystemGuideEvaluationCasesTest extends TestCase
                 "Evaluation path does not match {$case['guide_key']}.",
             );
         }
+    }
+
+    public function test_global_release_gate_covers_every_guide_from_unrelated_routes_and_layman_aliases(): void
+    {
+        $cases = collect(app(AiHelperSystemGuideEvaluationCases::class)->global());
+        $catalog = app(AiHelperSystemGuideCatalog::class);
+
+        $this->assertCount(110, $cases);
+        $this->assertCount(110, $cases->pluck('id')->unique());
+        $this->assertCount(51, $cases->pluck('guide_key')->unique());
+        $this->assertCount(51, $cases->filter(fn (array $case) => str_contains($case['id'], '-global-en-')));
+        $this->assertCount(51, $cases->filter(fn (array $case) => str_contains($case['id'], '-global-bm-')));
+        $this->assertCount(8, $cases->filter(fn (array $case) => str_contains($case['id'], '-global-alias-')));
+        $this->assertTrue($cases->every(fn (array $case) => $case['expected_pipeline_version'] === 4));
+        $this->assertTrue($cases->every(fn (array $case) => $case['retrieval_only'] === true));
+
+        foreach ($cases as $case) {
+            $actualRoute = $catalog->resolveTrustedRoute($case['path'])['route_key'];
+            $this->assertNotSame(
+                $case['guide_route_key'],
+                $actualRoute,
+                "Global evaluation path incorrectly matches {$case['guide_key']}.",
+            );
+        }
+
+        $aliases = $cases->filter(fn (array $case) => str_contains($case['id'], '-global-alias-'));
+        $this->assertTrue($aliases->every(fn (array $case) => isset($case['expected_topic_key'])));
+        $this->assertTrue($aliases->every(fn (array $case) => $case['expected_context_dependency'] === 'explicit_topic'));
+        $this->assertTrue($aliases->contains(fn (array $case) => str_contains($case['question'], 'cuti')));
+        $this->assertTrue($aliases->contains(fn (array $case) => str_contains($case['question'], 'password')));
     }
 }
