@@ -36,11 +36,12 @@ Confirm duty context, inspection type, location or asset, inspector identity, ch
 ## Steps
 
 1. Go to **Inspection**.
-2. Open **New Inspection** and choose the implemented inspection type.
+2. Select **Conduct Inspection** and choose the implemented inspection type.
 3. Confirm the required duty context and complete each location, asset, checklist, finding, and evidence section.
 4. Save the draft, then reopen it and verify the recovered content before continuing.
-5. Review all findings and submit once every required field is complete.
-6. For assigned workflow work, open the record and select **Review**, **Approve**, or **Reject** only when that action is shown; reload and verify the new status.
+5. Review all findings, then select **Continue to Review** once every required field is complete.
+6. Confirm the report details on the review page, then select **Submit Report**.
+7. For assigned workflow work, open the record and select **Review**, **Approve**, or **Reject** only when that action is shown; reload and verify the new status.
 
 ## What happens next
 

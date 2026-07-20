@@ -19,23 +19,28 @@ class AiHelperKnowledgeQueryAnalyzer
         $message = trim($message);
         $normalized = $this->normalize($message);
         $currentTopics = $this->topics->topicKeys($normalized);
-        // An explicit new topic always wins over conversational history. Only
-        // genuinely elliptical follow-ups inherit the latest user question.
-        $followUp = $currentTopics === [] && $this->looksLikeFollowUp($normalized);
         $previous = collect($previousUserMessages)
             ->filter(fn ($value) => is_string($value) && trim($value) !== '')
             ->map(fn (string $value) => trim($value))
             ->last();
+        $previousTopics = is_string($previous)
+            ? $this->topics->topicKeys($this->normalize($previous))
+            : [];
+        $followUp = is_string($previous)
+            && $this->looksLikeFollowUp($normalized)
+            && $this->topicsAreCompatible($currentTopics, $previousTopics);
         $retrievalQuery = $followUp && is_string($previous)
             ? $previous."\n".$message
             : $message;
         $normalizedQuery = $this->normalize($retrievalQuery);
         $topicKeys = $this->topics->topicKeys($normalizedQuery);
         $operationKeys = $this->operationKeys($normalizedQuery);
-        $sourceMode = $this->sourceMode($normalized);
+        $intent = $this->intent($normalized);
+        $taskKeys = $this->taskKeys($normalizedQuery, $topicKeys, $operationKeys, $intent);
+        $sourceMode = $this->sourceMode($followUp ? $normalizedQuery : $normalized);
         if ($sourceMode === 'system'
             && array_intersect($topicKeys, ['extinguisher', 'height_rescue']) !== []
-            && array_intersect($operationKeys, ['inspect', 'maintain']) !== []) {
+            && in_array('maintain', $operationKeys, true)) {
             $sourceMode = 'mixed';
         }
         $contextDependency = $this->contextDependency($normalized, $currentTopics);
@@ -46,7 +51,7 @@ class AiHelperKnowledgeQueryAnalyzer
         preg_match_all('/\b(?:[A-Z]{2,}(?:-[A-Z0-9]+){2,}|PRO-\d{4,})\b/i', $retrievalQuery, $codeMatches);
 
         $plan = new AiHelperQueryPlan(
-            intent: $this->intent($normalized),
+            intent: $intent,
             sourceMode: $sourceMode,
             contextDependency: $contextDependency,
             language: $this->language($normalized),
@@ -57,6 +62,7 @@ class AiHelperKnowledgeQueryAnalyzer
             expandedTerms: $this->topics->expandedTerms($topicKeys),
             topicKeys: $topicKeys,
             operationKeys: $operationKeys,
+            taskKeys: $taskKeys,
             subqueries: $subqueries,
             annexNumbers: collect($annexMatches[1] ?? [])->map(fn ($value) => (int) $value)->unique()->values()->all(),
             revisions: collect($revisionMatches[1] ?? [])->map(fn ($value) => ltrim((string) $value, '0') ?: '0')->unique()->values()->all(),
@@ -89,6 +95,9 @@ class AiHelperKnowledgeQueryAnalyzer
 
     private function intent(string $message): string
     {
+        if ($this->isInspectionCapabilityCatalogueIntent($message)) {
+            return 'capability_catalogue';
+        }
         if ($this->isCatalogueIntent($message)) {
             return 'catalogue';
         }
@@ -141,7 +150,35 @@ class AiHelperKnowledgeQueryAnalyzer
             return true;
         }
 
-        return preg_match('/^(and|also|then|what about|how about|dan|juga|kemudian|bagaimana pula)\b/u', $message) === 1;
+        return preg_match('/^(and|also|then|but|what about|how about|dan|juga|kemudian|tetapi|tapi|bagaimana pula)\b/u', $message) === 1;
+    }
+
+    /** @param array<int, string> $currentTopics @param array<int, string> $previousTopics */
+    private function topicsAreCompatible(array $currentTopics, array $previousTopics): bool
+    {
+        if ($currentTopics === [] || $previousTopics === []) {
+            return true;
+        }
+
+        if (array_intersect($currentTopics, $previousTopics) !== []) {
+            return true;
+        }
+
+        $inspectionFamily = ['inspection', 'inspection_issue', 'inspection_verification', 'extinguisher'];
+
+        return array_intersect($currentTopics, $inspectionFamily) !== []
+            && array_intersect($previousTopics, $inspectionFamily) !== [];
+    }
+
+    private function isInspectionCapabilityCatalogueIntent(string $message): bool
+    {
+        $mentionsInspection = preg_match('/\b(?:inspection|inspections|pemeriksaan)\b/u', $message) === 1;
+        $asksForTypes = preg_match('/\b(?:types?|kinds?)\s+of\s+(?:inspection|inspections)\b/u', $message) === 1
+            || preg_match('/\b(?:inspection|inspections)\s+(?:types?|kinds?)\b/u', $message) === 1
+            || preg_match('/\bjenis\s+pemeriksaan\b/u', $message) === 1
+            || preg_match('/\b(?:what|which|list|apa|senarai)\b.{0,35}\b(?:inspections?|pemeriksaan)\b.{0,20}\b(?:available|provided|tersedia|disediakan)\b/u', $message) === 1;
+
+        return $mentionsInspection && $asksForTypes;
     }
 
     private function contextDependency(string $message, array $currentTopics): string
@@ -212,6 +249,62 @@ class AiHelperKnowledgeQueryAnalyzer
             ->keys()
             ->values()
             ->all();
+    }
+
+    /**
+     * Map a question to the user's concrete job, not just broad words such as
+     * "inspection". These keys let retrieval keep conduct, record viewing,
+     * issue handling, verification and asset maintenance separate.
+     *
+     * @param  array<int, string>  $topicKeys
+     * @param  array<int, string>  $operationKeys
+     * @return array<int, string>
+     */
+    private function taskKeys(string $message, array $topicKeys, array $operationKeys, string $intent): array
+    {
+        if ($intent === 'capability_catalogue') {
+            return ['inspection.types.list'];
+        }
+
+        $inspectionDomain = array_intersect(
+            $topicKeys,
+            ['inspection', 'inspection_issue', 'inspection_verification', 'extinguisher'],
+        ) !== [];
+        if (! $inspectionDomain) {
+            return [];
+        }
+
+        if (preg_match('/\b(?:verify|verification|approve|reject|pending verification|sahkan|pengesahan|lulus|tolak)\b/u', $message) === 1) {
+            return ['inspection.issue.verify'];
+        }
+
+        if (preg_match('/\b(?:issue|issues|defect|defects|finding|findings|masalah|kecacatan|penemuan)\b/u', $message) === 1) {
+            return ['inspection.issue.manage'];
+        }
+
+        if (in_array('extinguisher', $topicKeys, true)
+            && preg_match('/\b(?:asset|register|inventory|lifecycle|replace|retire|aset|daftar|inventori|ganti)\b/u', $message) === 1) {
+            return ['inspection.asset.manage'];
+        }
+
+        if (in_array('maintain', $operationKeys, true)) {
+            return in_array('inspect', $operationKeys, true)
+                ? ['inspection.conduct', 'inspection.physical.maintain']
+                : ['inspection.physical.maintain'];
+        }
+
+        if (in_array('view', $operationKeys, true)
+            && ! in_array('inspect', $operationKeys, true)
+            && preg_match('/\b(?:record|report|history|status|rekod|laporan|sejarah)\b/u', $message) === 1) {
+            return ['inspection.records.view'];
+        }
+
+        if (in_array('inspect', $operationKeys, true)
+            || preg_match('/\b(?:onsite|on-site|new inspection|buat pemeriksaan|jalankan pemeriksaan)\b/u', $message) === 1) {
+            return ['inspection.conduct'];
+        }
+
+        return [];
     }
 
     private function isSensitiveRequest(string $message): bool

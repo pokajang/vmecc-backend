@@ -1,6 +1,6 @@
 # AI Helper final system-guide production runbook
 
-This runbook deploys the complete 34-reference and 51-system-guide corpus. It must not be used while `php artisan ai-helper:system-guides:audit` reports any draft, inactive, non-v3, missing, invalid, maintainer-oriented, or unverified guide.
+This runbook deploys the complete 34-reference and 53-system-guide corpus. It must not be used while `php artisan ai-helper:system-guides:audit` reports any draft, inactive, non-v3, missing, invalid, maintainer-oriented, or unverified guide.
 
 ## Release record
 
@@ -128,19 +128,19 @@ reference_knowledge.embedded: 34
 reference_knowledge.missing_embeddings: 0
 reference_knowledge.compatible_embeddings: 34
 reference_knowledge.incompatible_embeddings: 0
-system_guides.total: 51
-system_guides.active: 51
-system_guides.approved: 51
-system_guides.expected_versions: 51
-system_guides.source_final: 51
-system_guides.source_active: 51
-system_guides.source_hash_matches: 51
-system_guides.verification_dossiers: 51
+system_guides.total: 53
+system_guides.active: 53
+system_guides.approved: 53
+system_guides.expected_versions: 53
+system_guides.source_final: 53
+system_guides.source_active: 53
+system_guides.source_hash_matches: 53
+system_guides.verification_dossiers: 53
 system_guides.processing: 0
 system_guides.failed: 0
-system_guides.embedded: 51
+system_guides.embedded: 53
 system_guides.missing_embeddings: 0
-system_guides.compatible_embeddings: 51
+system_guides.compatible_embeddings: 53
 system_guides.incompatible_embeddings: 0
 system_guides.legacy_active: 0
 system_guides.catalog_errors: []

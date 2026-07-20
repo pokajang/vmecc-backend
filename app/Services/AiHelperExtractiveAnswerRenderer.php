@@ -34,6 +34,7 @@ final class AiHelperExtractiveAnswerRenderer
                 return [
                     'source_id' => (string) $item['source_id'],
                     'content' => $content,
+                    'language' => $this->contentLanguage($content),
                 ];
             })
             ->filter()
@@ -44,7 +45,10 @@ final class AiHelperExtractiveAnswerRenderer
             return null;
         }
 
-        $lead = $this->lead($responseLanguage, $reason);
+        $extractLanguage = $extracts->pluck('language')->unique()->count() === 1
+            ? (string) $extracts->first()['language']
+            : 'mixed';
+        $lead = $this->lead($responseLanguage, $reason, $extractLanguage);
         $content = $lead."\n\n".$extracts
             ->map(fn (array $extract) => '> '.str_replace("\n", "\n> ", $extract['content']).' ['.$extract['source_id'].']')
             ->join("\n\n");
@@ -90,9 +94,13 @@ final class AiHelperExtractiveAnswerRenderer
         return trim($safeEnd > 0 ? mb_substr($bounded, 0, $safeEnd) : $bounded).'…';
     }
 
-    private function lead(string $language, string $reason): string
+    private function lead(string $language, string $reason, string $extractLanguage): string
     {
         if ($language === 'bm') {
+            if ($extractLanguage === 'en') {
+                return 'Ringkasan yang dijana tidak dapat disahkan dengan selamat. Petikan panduan diluluskan berikut tersedia dalam bahasa Inggeris:';
+            }
+
             return match ($reason) {
                 'evidence_incomplete' => 'Saya tidak dapat mengesahkan jawapan yang lengkap. Berikut ialah petikan terus daripada panduan diluluskan yang ditemui:',
                 'validation_failed' => 'Saya menemui panduan diluluskan yang berkaitan, tetapi ringkasan yang dijana tidak dapat disahkan dengan selamat. Berikut ialah panduan sokongan secara terus:',
@@ -105,5 +113,20 @@ final class AiHelperExtractiveAnswerRenderer
             'validation_failed' => 'I found relevant approved guidance, but could not safely deliver the generated summary. Here is the supporting guidance directly:',
             default => 'Additional verification could not be completed. Here is a direct extract from the approved guidance that was found:',
         };
+    }
+
+    private function contentLanguage(string $content): string
+    {
+        $malay = preg_match_all('/\b(?:yang|dan|untuk|dengan|dalam|pada|atau|jika|pilih|buka|simpan|hantar)\b/iu', $content) ?: 0;
+        $english = preg_match_all('/\b(?:the|and|for|with|from|this|that|select|open|save|submit|inspection)\b/iu', $content) ?: 0;
+
+        if ($malay === 0 && $english === 0) {
+            return 'unknown';
+        }
+        if ($malay === $english) {
+            return 'mixed';
+        }
+
+        return $malay > $english ? 'ms' : 'en';
     }
 }

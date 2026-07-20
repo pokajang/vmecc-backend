@@ -295,6 +295,7 @@ class AuthController extends Controller
             'statutory_info.perkesoNo' => ['nullable', 'string', 'max:100'],
             'statutory_info.incomeTaxNo' => ['nullable', 'string', 'max:100'],
             'medical_info' => ['sometimes', 'array'],
+            'medical_info.noKnownCriticalMedicalInfo' => ['sometimes', 'boolean'],
             'medical_info.bloodType' => ['nullable', 'string', 'max:50'],
             'medical_info.allergies' => ['nullable', 'array'],
             'medical_info.allergies.*' => ['nullable', 'string', 'max:255'],

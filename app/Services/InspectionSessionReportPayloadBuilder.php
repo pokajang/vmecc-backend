@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\InspectionExtinguisherResult;
 use App\Models\InspectionSession;
+use App\Services\InspectionReports\InspectionReportLocationService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
@@ -18,6 +19,10 @@ class InspectionSessionReportPayloadBuilder
         'boxGlassAvailability' => 'Box Glass Availability',
         'operationalCondition' => 'Operational Condition',
     ];
+
+    public function __construct(
+        private readonly InspectionReportLocationService $locationService,
+    ) {}
 
     public function build(InspectionSession $session, iterable $completedResults, Carbon $submittedAt): array
     {
@@ -103,110 +108,27 @@ class InspectionSessionReportPayloadBuilder
 
     private function deriveFromChecks(array $checks): array
     {
-        $locations = $this->locations($checks);
-        $mainLocations = $this->uniqueValues($locations, 'mainLocation');
-        $zones = $this->uniqueValues($locations, 'zone');
+        $locationData = $this->locationService->derive(array_map(
+            $this->locationService->fromRow(...),
+            array_values(array_filter($checks, 'is_array')),
+        ));
+        $locations = $locationData['locations'];
         $itemEvidencePhotoCount = $this->evidencePhotoCount($checks);
-        $locationSummary = $this->locationSummary($locations);
-        $allHaveZones = $this->allHaveValue($locations, 'zone');
-        $allHaveMainLocations = $this->allHaveValue($locations, 'mainLocation');
 
         return [
-            'location' => $locationSummary,
-            'selectedLocation' => $locationSummary,
-            'zone' => $allHaveZones && count($zones) === 1 ? $zones[0] : '',
-            'mainLocation' => $allHaveMainLocations && count($mainLocations) === 1 ? $mainLocations[0] : '',
-            'subLocation' => count($locations) === 1 ? $locations[0]['subLocation'] : '',
+            'location' => $locationData['summary'],
+            'selectedLocation' => $locationData['summary'],
+            'zone' => $locationData['zone'],
+            'mainLocation' => $locationData['mainLocation'],
+            'subLocation' => $locationData['subLocation'],
             'locationPath' => count($locations) === 1
-                ? array_values(array_filter([
-                    $this->zoneLabel($locations[0]['zone']),
-                    $locations[0]['mainLocation'],
-                    $locations[0]['subLocation'],
-                ]))
+                ? $locationData['pathParts'][0]
                 : [],
             'inspectionLocations' => $locations,
             'itemEvidencePhotoCount' => $itemEvidencePhotoCount,
             'generalPhotoCount' => 0,
             'evidencePhotoCount' => $itemEvidencePhotoCount,
         ];
-    }
-
-    private function locations(array $checks): array
-    {
-        $locations = [];
-        foreach ($checks as $check) {
-            if (! is_array($check)) {
-                continue;
-            }
-            $location = [
-                'zone' => $this->text($check['zone'] ?? ''),
-                'mainLocation' => $this->text($check['mainLocation'] ?? $check['main_location'] ?? $check['location'] ?? ''),
-                'subLocation' => $this->text($check['subLocation'] ?? $check['sub_location'] ?? ''),
-            ];
-            if ($location['zone'] === '' && $location['mainLocation'] === '' && $location['subLocation'] === '') {
-                continue;
-            }
-            $key = collect($location)->map(fn (string $value): string => Str::lower($value))->implode("\0");
-            $locations[$key] ??= $location;
-        }
-
-        $locations = array_values($locations);
-        usort($locations, fn (array $left, array $right): int => strnatcasecmp(
-            implode('|', $left),
-            implode('|', $right),
-        ));
-
-        return $locations;
-    }
-
-    private function locationSummary(array $locations): string
-    {
-        if ($locations === []) {
-            return '';
-        }
-        if (count($locations) === 1) {
-            return implode(' > ', array_filter([
-                $this->zoneLabel($locations[0]['zone']),
-                $locations[0]['mainLocation'],
-                $locations[0]['subLocation'],
-            ]));
-        }
-
-        $zones = $this->uniqueValues($locations, 'zone');
-        $mainLocations = $this->uniqueValues($locations, 'mainLocation');
-        $allHaveZones = $this->allHaveValue($locations, 'zone');
-        $allHaveMainLocations = $this->allHaveValue($locations, 'mainLocation');
-        if ($allHaveMainLocations && count($mainLocations) === 1) {
-            return implode(' > ', array_filter([
-                $allHaveZones && count($zones) === 1 ? $this->zoneLabel($zones[0]) : '',
-                $mainLocations[0],
-            ])).' · '.count($locations).' locations';
-        }
-        if (! $allHaveMainLocations) {
-            return sprintf('%d inspection locations', count($locations));
-        }
-
-        return sprintf('%d locations across %d areas', count($locations), count($mainLocations));
-    }
-
-    private function uniqueValues(array $rows, string $key): array
-    {
-        $values = [];
-        foreach ($rows as $row) {
-            $value = $this->text($row[$key] ?? '');
-            if ($value !== '') {
-                $values[Str::lower($value)] ??= $value;
-            }
-        }
-
-        return array_values($values);
-    }
-
-    private function allHaveValue(array $rows, string $key): bool
-    {
-        return $rows !== [] && collect($rows)->every(
-            fn (array $row): bool => $this->text($row[$key] ?? '') !== '',
-        );
     }
 
     private function evidencePhotoCount(array $checks): int
@@ -254,15 +176,6 @@ class InspectionSessionReportPayloadBuilder
             ])
             ->values()
             ->all();
-    }
-
-    private function zoneLabel(string $zone): string
-    {
-        if ($zone === '' || Str::startsWith(Str::lower($zone), 'zone ')) {
-            return $zone;
-        }
-
-        return 'Zone '.$zone;
     }
 
     private function text(mixed $value): string

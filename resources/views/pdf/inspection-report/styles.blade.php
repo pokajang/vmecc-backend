@@ -95,6 +95,23 @@
             word-break: break-word;
             white-space: pre-wrap;
         }
+        .inspected-locations-card { page-break-inside: auto; }
+        .inspection-location-grid {
+            display: table;
+            width: 100%;
+            table-layout: fixed;
+        }
+        .inspection-location-item {
+            display: inline-block;
+            width: 48%;
+            margin: 0 1% 2px 0;
+            color: #374151;
+            font-size: 9px;
+            line-height: 1.35;
+            vertical-align: top;
+            word-break: break-word;
+            page-break-inside: avoid;
+        }
         .divider { height: 1px; background: #e5e7eb; margin: 6px 0; }
         .checklist-list {
             margin: 0;

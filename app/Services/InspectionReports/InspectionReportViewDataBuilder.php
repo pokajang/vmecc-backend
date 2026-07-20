@@ -9,6 +9,8 @@ class InspectionReportViewDataBuilder
         private readonly InspectionReportEvidenceViewDataBuilder $evidenceBuilder,
         private readonly InspectionReportSectionDataBuilder $sectionDataBuilder,
         private readonly InspectionReportHseViewDataBuilder $hseViewDataBuilder,
+        private readonly InspectionReportLocationExtractor $locationExtractor,
+        private readonly InspectionReportLocationService $locationService,
     ) {}
 
     public function build(array $record): array
@@ -19,6 +21,8 @@ class InspectionReportViewDataBuilder
         $type = $this->typeResolver->resolve($inspectionType);
         $inspectionTypeKey = $this->typeResolver->normalize($inspectionType);
         $reportEvidence = $this->evidenceBuilder->build($record);
+        $fallbackLocation = $this->text($record['location'] ?? $record['selectedLocation'] ?? '');
+        $locationData = $this->locationService->derive($this->locationExtractor->extract($record, $type));
 
         return [
             'displayId' => (string) ($record['displayId'] ?? '-'),
@@ -26,7 +30,9 @@ class InspectionReportViewDataBuilder
             'inspectionType' => $inspectionType,
             'inspectionTypeKey' => $inspectionTypeKey,
             'type' => $type,
-            'location' => $this->text($record['location'] ?? $record['selectedLocation'] ?? ''),
+            'location' => $locationData['summary'] ?: $fallbackLocation,
+            'inspectionLocations' => $locationData['locations'],
+            'inspectionLocationPaths' => $locationData['paths'],
             'description' => (string) ($record['description'] ?? ''),
             'reportRemarks' => $this->text($record['reportRemarks'] ?? $record['report_remarks'] ?? ''),
             'reportEvidence' => $reportEvidence,

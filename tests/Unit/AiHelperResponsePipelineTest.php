@@ -66,6 +66,73 @@ class AiHelperResponsePipelineTest extends TestCase
         $this->assertSame(['response-1', 'response-2'], $result['provider_response_ids']);
     }
 
+    public function test_incomplete_answer_after_repair_requests_expanded_retrieval(): void
+    {
+        config(['ai_helper.grounding_verification_mode' => 'enforce']);
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('streamResponse')->twice()->andReturnUsing(function ($instructions, $input, $onDelta) {
+                $onDelta('999 is the official Malaysian Emergency Service Centre telephone number. [S1]');
+
+                return ['response_id' => 'incomplete-response'];
+            });
+            $mock->shouldReceive('structuredResponse')->twice()->andReturn([
+                'response_id' => 'verifier',
+                'data' => [
+                    'verdict' => 'revise',
+                    'question_answered' => false,
+                    'claims' => [[
+                        'claim' => '999 is the official Malaysian Emergency Service Centre telephone number.',
+                        'source_ids' => ['S1'],
+                        'supported' => true,
+                        'contradicted' => false,
+                        'missing_qualifier' => false,
+                        'reason' => null,
+                    ]],
+                    'missing_requested_facts' => [],
+                ],
+            ]);
+        });
+
+        $result = app(AiHelperResponsePipeline::class)->respond(
+            'What is 999 and who calls it?',
+            'Use the evidence.',
+            [['role' => 'user', 'content' => 'What is 999 and who calls it?']],
+            $this->guidance,
+            $this->sources,
+            null,
+            'en',
+            fn () => null,
+            fn () => null,
+        );
+
+        $this->assertSame('AI_HELPER_VALIDATION_FAILED', $result['outcome_code']);
+        $this->assertSame('retrieve_more_evidence', $result['recovery_action']);
+        $this->assertSame(2, $result['verification']['attempts']);
+    }
+
+    public function test_deterministic_cited_answers_keep_only_their_displayed_sources(): void
+    {
+        $sources = [
+            ['source_id' => 'S1', 'title' => 'Inspection Types'],
+            ['source_id' => 'S2', 'title' => 'Unrelated guide'],
+        ];
+
+        $result = app(AiHelperResponsePipeline::class)->respond(
+            'How many inspection types are there?',
+            'Not used.',
+            [],
+            [],
+            $sources,
+            'There are 8 inspection types. [S1]',
+            'en',
+            fn () => null,
+            fn () => null,
+        );
+
+        $this->assertSame('AI_HELPER_DETERMINISTIC', $result['outcome_code']);
+        $this->assertSame(['S1'], collect($result['sources'])->pluck('source_id')->all());
+    }
+
     public function test_it_returns_a_safe_approved_extract_after_the_repair_also_fails(): void
     {
         $this->mock(AiHelperOpenAiService::class, function ($mock) {
@@ -278,6 +345,34 @@ class AiHelperResponsePipelineTest extends TestCase
         $this->assertStringContainsString('999 is the official', $result['content']);
         $this->assertSame(['req-rate'], $result['provider_request_ids']);
         $this->assertSame(['S1'], collect($result['sources'])->pluck('source_id')->all());
+    }
+
+    public function test_auto_language_uses_the_latest_malay_question_for_a_safe_fallback(): void
+    {
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('streamResponse')->once()->andThrow(new AiHelperProviderException(
+                'AI_HELPER_PROVIDER_RATE_LIMITED',
+                'rate limited',
+                true,
+                429,
+                'req-rate-bm',
+            ));
+        });
+
+        $result = app(AiHelperResponsePipeline::class)->respond(
+            'Apakah nombor 999?',
+            'Use the evidence.',
+            [['role' => 'user', 'content' => 'Apakah nombor 999?']],
+            $this->guidance,
+            $this->sources,
+            null,
+            'auto',
+            fn () => null,
+            fn () => null,
+        );
+
+        $this->assertSame('fallback_extractive', $result['verification']['status']);
+        $this->assertStringContainsString('tersedia dalam bahasa Inggeris', $result['content']);
     }
 
     public function test_missing_requested_evidence_signals_retrieval_recovery_without_a_second_generation(): void

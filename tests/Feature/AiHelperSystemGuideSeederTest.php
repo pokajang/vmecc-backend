@@ -32,7 +32,7 @@ class AiHelperSystemGuideSeederTest extends TestCase
             ->where('knowledge_type', AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE)
             ->orderBy('source_path')
             ->get();
-        $this->assertCount(51, $guides);
+        $this->assertCount(53, $guides);
         $this->assertTrue($guides->every(fn (AiHelperKnowledgeEntry $entry) => $entry->active
             && $entry->status === AiHelperKnowledgeEntry::STATUS_ACTIVE
             && $entry->review_status === AiHelperKnowledgeEntry::REVIEW_APPROVED

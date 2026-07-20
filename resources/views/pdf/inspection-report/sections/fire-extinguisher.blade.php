@@ -71,7 +71,7 @@
                                 {{ trim((string) ($check['barcodeNo'] ?? $check['barcode_no'] ?? '')) ?: '--' }}
                             </div>
                         </td>
-                        <td>{{ trim((string) ($check['subLocation'] ?? $check['sub_location'] ?? $check['mainLocation'] ?? $check['main_location'] ?? '')) ?: '--' }}</td>
+                        <td>{{ trim((string) ($check['displayLocation'] ?? $check['display_location'] ?? $check['subLocation'] ?? $check['sub_location'] ?? $check['mainLocation'] ?? $check['main_location'] ?? '')) ?: '--' }}</td>
                         <td>{{ trim((string) ($check['feType'] ?? $check['fe_type'] ?? '')) ?: '--' }}</td>
                         <td>{{ trim((string) ($check['certificationValidity'] ?? $check['certification_validity'] ?? $check['certificationValidityRaw'] ?? $check['certification_validity_raw'] ?? '')) ?: '--' }}</td>
                         <td>{{ trim((string) ($check['physicalCondition'] ?? $check['physical_condition'] ?? '')) ?: '--' }}</td>

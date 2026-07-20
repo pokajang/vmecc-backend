@@ -11,11 +11,19 @@ final class AiHelperResponseResultFactory
     ) {}
 
     /** @return array<string, mixed> */
-    public function deterministic(string $content): array
+    public function deterministic(string $content, array $sources = []): array
     {
+        $citedIds = collect($sources)
+            ->pluck('source_id')
+            ->filter(fn ($sourceId) => is_string($sourceId) && str_contains($content, '['.$sourceId.']'))
+            ->values();
+        $displaySources = $citedIds->isEmpty()
+            ? []
+            : collect($sources)->whereIn('source_id', $citedIds->all())->values()->all();
+
         return [
             'content' => $content,
-            'sources' => [],
+            'sources' => $displaySources,
             'response_id' => null,
             'provider_response_ids' => [],
             'provider_request_ids' => [],

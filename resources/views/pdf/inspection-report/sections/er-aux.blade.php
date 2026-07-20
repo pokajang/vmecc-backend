@@ -77,7 +77,7 @@
                                 <div style="margin-top: 3px; color: #6b7280; font-size: 10px; line-height: 1.35;">{{ $equipmentDescription }}</div>
                             @endif
                         </td>
-                        <td>{{ trim((string) ($check['location'] ?? '')) ?: '--' }}</td>
+                        <td>{{ trim((string) ($check['displayLocation'] ?? $check['display_location'] ?? $check['location'] ?? '')) ?: '--' }}</td>
                         <td>{{ $quantity !== '' ? $quantity : '--' }}</td>
                         <td>{{ $condition !== '' ? $condition : '--' }}</td>
                         <td>{{ count($erAuxEvidence) > 0 ? implode('; ', $erAuxEvidence) : '--' }}</td>

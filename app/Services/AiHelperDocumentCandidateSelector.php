@@ -23,10 +23,11 @@ class AiHelperDocumentCandidateSelector
         $globalLimit = max($baseLimit, (int) config('ai_helper.retrieval_v4_global_candidate_limit', 12));
         $contextDependency = (string) ($analysis['context_dependency'] ?? 'neutral');
 
+        $eligible = $ranked->reject(fn (array $item) => (bool) ($item['task_conflict'] ?? false))->values();
         $exact = $ranked->where('exact_match', true)->values();
-        $topic = $ranked->filter(fn (array $item) => (int) ($item['topic_score'] ?? 0) > 0)
+        $topic = $eligible->filter(fn (array $item) => (int) ($item['topic_score'] ?? 0) > 0)
             ->sort(function (array $left, array $right): int {
-                foreach (['topic_coverage', 'topic_score', 'operation_score', 'score'] as $field) {
+                foreach (['task_score', 'topic_coverage', 'topic_score', 'operation_score', 'score'] as $field) {
                     $comparison = ($right[$field] ?? 0) <=> ($left[$field] ?? 0);
                     if ($comparison !== 0) {
                         return $comparison;
@@ -37,9 +38,9 @@ class AiHelperDocumentCandidateSelector
             })
             ->take($topicLimit)
             ->values();
-        $global = $ranked->take($globalLimit)->values();
+        $global = $eligible->take($globalLimit)->values();
         $page = in_array($contextDependency, ['page_deictic', 'mixed'], true)
-            ? $ranked->where('page_match', true)->take($pageLimit)->values()
+            ? $eligible->where('page_match', true)->take($pageLimit)->values()
             : collect();
 
         $documents = $exact

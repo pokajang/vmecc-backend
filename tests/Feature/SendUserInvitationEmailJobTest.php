@@ -135,4 +135,19 @@ class SendUserInvitationEmailJobTest extends TestCase
         $this->assertSame('failed', $delivery->status);
         $this->assertSame('Permanent failure', $delivery->last_error);
     }
+
+    public function test_invitation_reset_link_encodes_plus_address_email(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'invited+operations@example.test',
+            'status' => 'Active',
+        ]);
+
+        $rendered = (string) (new UserInvitationNotification('https://app.example.test'))
+            ->toMail($user)
+            ->render();
+
+        $this->assertStringContainsString('email=invited%2Boperations%40example.test', $rendered);
+        $this->assertStringNotContainsString('email=invited+operations@example.test', $rendered);
+    }
 }

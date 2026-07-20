@@ -22,7 +22,10 @@ class SendMessageDigest extends Command
             return self::SUCCESS;
         }
 
+        $cutoff = now();
+
         $recipientIds = Message::whereNull('read_at')
+            ->where('created_at', '<=', $cutoff)
             ->distinct()
             ->pluck('recipient_user_id');
 
@@ -39,11 +42,12 @@ class SendMessageDigest extends Command
             ->whereRaw("LOWER(TRIM(COALESCE(status, ''))) = 'active'")
             ->whereNotNull('email')
             ->whereRaw("TRIM(email) <> ''")
-            ->chunkById(100, function ($users) use (&$failures) {
+            ->chunkById(100, function ($users) use (&$failures, $cutoff) {
                 foreach ($users as $user) {
                     $messages = Message::with('sender')
                         ->where('recipient_user_id', $user->id)
                         ->whereNull('read_at')
+                        ->where('created_at', '<=', $cutoff)
                         ->when(
                             $user->last_message_digest_at,
                             fn ($query, $lastDigestAt) => $query->where('created_at', '>', $lastDigestAt),
@@ -82,7 +86,7 @@ class SendMessageDigest extends Command
 
                     try {
                         $user->notify(new MessageDigestNotification($count, $topSenders, $digestItems));
-                        $user->forceFill(['last_message_digest_at' => now()])->save();
+                        $user->forceFill(['last_message_digest_at' => $cutoff])->save();
                     } catch (\Throwable $e) {
                         $failures++;
                         $this->error("Failed to send digest to {$user->email}: {$e->getMessage()}");

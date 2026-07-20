@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\WorkflowEmailDelivery;
 use App\Models\WorkflowNotification;
 use App\Models\WorkflowNotificationRecipientState;
+use App\Services\WorkflowNotifications\WorkflowEmailModuleGate;
 use App\Services\WorkflowNotifications\WorkflowNotificationChannelPolicy;
 use App\Services\WorkflowNotifications\WorkflowNotificationLinkResolver;
 use Illuminate\Bus\Queueable;
@@ -28,6 +29,8 @@ class SendWorkflowImmediateEmailJob implements ShouldQueue
 
     public array $backoff = [30, 120, 300];
 
+    private const STALE_RESERVATION_MINUTES = 15;
+
     public function __construct(
         private readonly int $notificationId,
         private readonly int $userId,
@@ -40,6 +43,13 @@ class SendWorkflowImmediateEmailJob implements ShouldQueue
         }
 
         $notification = WorkflowNotification::find($this->notificationId);
+        if (! $notification || ! WorkflowEmailModuleGate::enabledFor(
+            $notification->module,
+            $notification->record_type,
+        )) {
+            return;
+        }
+
         $recipient = User::query()
             ->whereKey($this->userId)
             ->whereRaw("LOWER(TRIM(COALESCE(status, ''))) = 'active'")
@@ -51,15 +61,23 @@ class SendWorkflowImmediateEmailJob implements ShouldQueue
             ->where('user_id', $this->userId)
             ->first();
 
-        if (! $notification || ! $recipient || ! $state) {
+        if (! $recipient || ! $state || $state->dismissed_at !== null) {
             return;
         }
 
-        if ($state->emailed_immediate_at !== null) {
+        if ($notification->action_required && ($notification->resolved_at !== null || $state->resolved_at !== null)) {
             return;
         }
 
         if (! WorkflowNotificationChannelPolicy::sendsImmediateEmail((string) $state->channel_policy)) {
+            return;
+        }
+
+        if ($this->hasSentDelivery()) {
+            return;
+        }
+
+        if ($state->emailed_immediate_at !== null && ! $this->releaseStaleReservation($state)) {
             return;
         }
 
@@ -132,5 +150,83 @@ class SendWorkflowImmediateEmailJob implements ShouldQueue
 
             throw $exception;
         }
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        if ($this->hasSentDelivery()) {
+            return;
+        }
+
+        $delivery = WorkflowEmailDelivery::query()
+            ->where('notification_id', $this->notificationId)
+            ->where('user_id', $this->userId)
+            ->where('delivery_kind', 'immediate')
+            ->where('status', 'queued')
+            ->latest('id')
+            ->first();
+
+        if (! $delivery) {
+            return;
+        }
+
+        $delivery->update([
+            'status' => 'failed',
+            'attempts' => max(1, (int) $delivery->attempts),
+            'last_error' => $exception->getMessage(),
+        ]);
+
+        WorkflowNotificationRecipientState::query()
+            ->where('notification_id', $this->notificationId)
+            ->where('user_id', $this->userId)
+            ->where('emailed_immediate_at', '<=', $delivery->created_at)
+            ->update([
+                'emailed_immediate_at' => null,
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function hasSentDelivery(): bool
+    {
+        return WorkflowEmailDelivery::query()
+            ->where('notification_id', $this->notificationId)
+            ->where('user_id', $this->userId)
+            ->where('delivery_kind', 'immediate')
+            ->where('status', 'sent')
+            ->exists();
+    }
+
+    private function releaseStaleReservation(WorkflowNotificationRecipientState $state): bool
+    {
+        $reservedAt = $state->emailed_immediate_at;
+        if ($reservedAt === null || $reservedAt->isAfter(now()->subMinutes(self::STALE_RESERVATION_MINUTES))) {
+            return false;
+        }
+
+        $released = WorkflowNotificationRecipientState::query()
+            ->whereKey($state->id)
+            ->where('emailed_immediate_at', $reservedAt)
+            ->update([
+                'emailed_immediate_at' => null,
+                'updated_at' => now(),
+            ]);
+
+        if ($released !== 1) {
+            return false;
+        }
+
+        WorkflowEmailDelivery::query()
+            ->where('notification_id', $this->notificationId)
+            ->where('user_id', $this->userId)
+            ->where('delivery_kind', 'immediate')
+            ->where('status', 'queued')
+            ->where('created_at', '<=', $reservedAt->copy()->addSecond())
+            ->update([
+                'status' => 'failed',
+                'last_error' => 'Recovered stale immediate-email reservation.',
+                'updated_at' => now(),
+            ]);
+
+        return true;
     }
 }

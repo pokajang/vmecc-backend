@@ -15,6 +15,7 @@
     $status = $viewData['status'];
     $inspectionType = $viewData['inspectionType'];
     $location = $viewData['location'];
+    $inspectionLocationPaths = $viewData['inspectionLocationPaths'];
     $description = $viewData['description'];
     $reportEvidence = $viewData['reportEvidence'];
     $hse = $viewData['hse'];
@@ -122,7 +123,7 @@
             'title' => 'Back Plate',
             'rows' => $scbaBackPlateChecks,
             'columns' => [
-                ['label' => 'Location', 'camel' => 'location', 'snake' => 'location'],
+                ['label' => 'Location', 'camel' => 'displayLocation', 'snake' => 'display_location'],
                 ['label' => 'Brand', 'camel' => 'brand', 'snake' => 'brand'],
                 ['label' => 'Serial No.', 'camel' => 'serialNo', 'snake' => 'serial_no'],
                 ['label' => 'Back Plate & Harness', 'camel' => 'backPlateHarnessCondition', 'snake' => 'back_plate_harness_condition'],
@@ -148,7 +149,7 @@
             'title' => 'Cylinder',
             'rows' => $scbaCylinderChecks,
             'columns' => [
-                ['label' => 'Location', 'camel' => 'location', 'snake' => 'location'],
+                ['label' => 'Location', 'camel' => 'displayLocation', 'snake' => 'display_location'],
                 ['label' => 'Brand', 'camel' => 'brand', 'snake' => 'brand'],
                 ['label' => 'Serial No.', 'camel' => 'serialNo', 'snake' => 'serial_no'],
                 ['label' => 'Size (L)', 'camel' => 'size', 'snake' => 'size'],
@@ -174,7 +175,7 @@
             'title' => 'Face Mask',
             'rows' => $scbaFaceMaskChecks,
             'columns' => [
-                ['label' => 'Location', 'camel' => 'location', 'snake' => 'location'],
+                ['label' => 'Location', 'camel' => 'displayLocation', 'snake' => 'display_location'],
                 ['label' => 'Brand', 'camel' => 'brand', 'snake' => 'brand'],
                 ['label' => 'Serial No.', 'camel' => 'serialNo', 'snake' => 'serial_no'],
                 ['label' => 'Visor Condition', 'camel' => 'visorCondition', 'snake' => 'visor_condition'],
@@ -212,7 +213,7 @@
             continue;
         }
         $columns = [
-            ['label' => 'Location', 'camel' => 'location', 'snake' => 'location'],
+            ['label' => 'Location', 'camel' => 'displayLocation', 'snake' => 'display_location'],
             ['label' => 'Brand', 'camel' => 'brand', 'snake' => 'brand'],
             ['label' => 'Serial No.', 'camel' => 'serialNo', 'snake' => 'serial_no'],
         ];
@@ -271,10 +272,19 @@
         $parts = [];
         $locationPart = trim((string) ($check['location'] ?? ''));
         $subLocationPart = trim((string) ($check['subLocation'] ?? $check['sub_location'] ?? ''));
-        if ($locationPart !== '' && strcasecmp($locationPart, 'N/A') !== 0) {
+        $hasLocationPart = $locationPart !== '' && strcasecmp($locationPart, 'N/A') !== 0;
+        $hasSubLocationPart = $subLocationPart !== '' && strcasecmp($subLocationPart, 'N/A') !== 0;
+        if (! $hasLocationPart && ! $hasSubLocationPart) {
+            return 'General Kit Items';
+        }
+        $displayLocation = trim((string) ($check['displayLocation'] ?? $check['display_location'] ?? ''));
+        if ($displayLocation !== '') {
+            return $displayLocation;
+        }
+        if ($hasLocationPart) {
             $parts[] = $locationPart;
         }
-        if ($subLocationPart !== '' && strcasecmp($subLocationPart, 'N/A') !== 0) {
+        if ($hasSubLocationPart) {
             $parts[] = $subLocationPart;
         }
         return count($parts) > 0 ? implode(' - ', $parts) : 'General Kit Items';

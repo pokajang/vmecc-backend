@@ -94,10 +94,10 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
         $this->assertStringContainsString('"role_aware_retrieval_ready":false', $output);
         $this->assertStringContainsString('"linked_to_pdf":34', $output);
         $this->assertStringContainsString('"valid_catalog_metadata":0', $output);
-        $this->assertStringContainsString('"source_final":51', $output);
-        $this->assertStringContainsString('"source_active":51', $output);
+        $this->assertStringContainsString('"source_final":53', $output);
+        $this->assertStringContainsString('"source_active":53', $output);
         $this->assertStringContainsString('"source_hash_matches":0', $output);
-        $this->assertStringContainsString('"verification_dossiers":51', $output);
+        $this->assertStringContainsString('"verification_dossiers":53', $output);
         $this->assertStringContainsString('"deployment_state":"incomplete"', $output);
     }
 
@@ -117,7 +117,7 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
         $this->assertStringContainsString('"reference_knowledge_ready":true', $output);
         $this->assertStringContainsString('"system_guides_ready":true', $output);
         $this->assertStringContainsString('"role_aware_retrieval_ready":true', $output);
-        $this->assertStringContainsString('"source_hash_matches":51', $output);
+        $this->assertStringContainsString('"source_hash_matches":53', $output);
         $this->assertStringContainsString('"deployment_state":"production_ready"', $output);
     }
 

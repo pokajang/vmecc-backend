@@ -75,6 +75,137 @@ class InspectionReportViewDataBuilderTest extends TestCase
         $this->assertCount(1, $viewData['sections']['erAuxChecks']);
     }
 
+    #[DataProvider('multiLocationInspectionRecords')]
+    public function test_it_derives_multiple_locations_for_supported_row_based_types(
+        array $record,
+        string $expectedSummary,
+        array $expectedPaths,
+    ): void {
+        $viewData = app(InspectionReportViewDataBuilder::class)->build($record);
+
+        $this->assertSame($expectedSummary, $viewData['location']);
+        $this->assertSame($expectedPaths, $viewData['inspectionLocationPaths']);
+    }
+
+    public static function multiLocationInspectionRecords(): array
+    {
+        return [
+            'fire extinguisher' => [[
+                'incidentType' => 'Fire Extinguisher Inspection',
+                'fireExtinguisherChecks' => [
+                    ['idLocNo' => 'FE-1', 'zone' => '1', 'mainLocation' => 'Hub', 'subLocation' => 'Reception'],
+                    ['idLocNo' => 'FE-2', 'zone' => '1', 'mainLocation' => 'Hub', 'subLocation' => 'Workshop'],
+                ],
+            ], 'Zone 1 > Hub · 2 locations', [
+                'Zone 1 > Hub > Reception',
+                'Zone 1 > Hub > Workshop',
+            ]],
+            'hydraulic' => [[
+                'incidentType' => 'Hydraulic Rescue Tools Inspection',
+                'hydraulicChecks' => [
+                    ['equipment' => 'Pump', 'location' => 'FRT Bay'],
+                    ['equipment' => 'Cutter', 'location' => 'Rescue Store'],
+                ],
+            ], '2 locations across 2 areas', ['FRT Bay', 'Rescue Store']],
+            'ER Aux' => [[
+                'incidentType' => 'ER Aux Equipment Inspection',
+                'erAuxChecks' => [
+                    ['equipment' => 'Generator', 'location' => 'Aux Store'],
+                    ['equipment' => 'Light', 'location' => 'Staging Bay'],
+                ],
+            ], '2 locations across 2 areas', ['Aux Store', 'Staging Bay']],
+            'high angle' => [[
+                'incidentType' => 'High Angle Rescue Equipment Inspection',
+                'highAngleChecks' => [
+                    ['equipment' => 'Rope', 'mainLocation' => 'Response Kit', 'location' => 'Rope Store', 'subLocation' => 'Compartment 1'],
+                    ['equipment' => 'Harness', 'mainLocation' => 'Response Kit', 'location' => 'Rope Store', 'subLocation' => 'Compartment 2'],
+                ],
+            ], 'Response Kit · 2 locations', [
+                'Response Kit > Rope Store > Compartment 1',
+                'Response Kit > Rope Store > Compartment 2',
+            ]],
+            'SCBA including custom sections' => [[
+                'incidentType' => 'SCBA Inspection',
+                'scbaBackPlateChecks' => [['serialNo' => 'BP-1', 'location' => 'SCBA Room']],
+                'scbaCustomSections' => [[
+                    'title' => 'Telemetry',
+                    'rows' => [['brand' => 'Telemetry', 'location' => 'Control Room']],
+                ]],
+            ], '2 locations across 2 areas', ['Control Room', 'SCBA Room']],
+        ];
+    }
+
+    #[DataProvider('singleLocationInspectionRecords')]
+    public function test_it_preserves_single_location_policies_for_excluded_types(array $record): void
+    {
+        $viewData = app(InspectionReportViewDataBuilder::class)->build($record);
+
+        $this->assertSame($record['location'], $viewData['location']);
+        $this->assertSame([], $viewData['inspectionLocations']);
+        $this->assertSame([], $viewData['inspectionLocationPaths']);
+    }
+
+    public static function singleLocationInspectionRecords(): array
+    {
+        return [
+            'HSE' => [[
+                'incidentType' => 'HSE Inspection',
+                'location' => 'Zone A > Dock',
+                'erAuxChecks' => [['location' => 'Unrelated row location']],
+            ]],
+            'General' => [[
+                'incidentType' => 'General Inspection',
+                'location' => 'Main Yard',
+                'hydraulicChecks' => [['location' => 'Unrelated row location']],
+            ]],
+            'FRT' => [[
+                'incidentType' => 'FRT Daily Inspection',
+                'location' => 'AJG9555',
+                'frtDailyChecks' => [
+                    ['location' => 'Locker 1'],
+                    ['location' => 'Locker 2'],
+                ],
+            ]],
+        ];
+    }
+
+    public function test_it_adds_complete_display_locations_to_equipment_rows(): void
+    {
+        $viewData = app(InspectionReportViewDataBuilder::class)->build([
+            'incidentType' => 'Fire Extinguisher Inspection',
+            'fireExtinguisherChecks' => [[
+                'zone' => '2',
+                'mainLocation' => 'Pump House',
+                'subLocation' => 'Entrance',
+                'idLocNo' => 'FE-1',
+            ]],
+        ]);
+
+        $this->assertSame(
+            'Zone 2 > Pump House > Entrance',
+            $viewData['sections']['fireExtinguisherChecks'][0]['displayLocation'],
+        );
+    }
+
+    public function test_it_uses_stored_locations_for_historical_row_based_reports(): void
+    {
+        $viewData = app(InspectionReportViewDataBuilder::class)->build([
+            'incidentType' => 'Fire Extinguisher Inspection',
+            'location' => 'Legacy summary',
+            'fireExtinguisherChecks' => [['idLocNo' => 'FE-LEGACY']],
+            'inspectionLocations' => [
+                ['zone' => '1', 'mainLocation' => 'Hub', 'subLocation' => 'Reception'],
+                ['zone' => '1', 'mainLocation' => 'Hub', 'subLocation' => 'Workshop'],
+            ],
+        ]);
+
+        $this->assertSame('Zone 1 > Hub · 2 locations', $viewData['location']);
+        $this->assertSame([
+            'Zone 1 > Hub > Reception',
+            'Zone 1 > Hub > Workshop',
+        ], $viewData['inspectionLocationPaths']);
+    }
+
     public function test_it_builds_a_versioned_hse_view_model_that_owns_report_evidence(): void
     {
         $viewData = app(InspectionReportViewDataBuilder::class)->build([

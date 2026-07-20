@@ -13,6 +13,7 @@ use App\Services\WorkflowNotifications\WorkflowNotificationPolicyResolver;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class WorkflowNotificationService
 {
@@ -168,7 +169,16 @@ class WorkflowNotificationService
         });
 
         if ($this->shouldDispatchWorkflowEmail($module, $recordType)) {
-            DispatchWorkflowChannelsJob::dispatch($notification->id);
+            try {
+                DispatchWorkflowChannelsJob::dispatch($notification->id);
+            } catch (\Throwable $exception) {
+                Log::warning('Workflow notification persisted, but email dispatch could not be queued.', [
+                    'notification_id' => $notification->id,
+                    'module' => $module,
+                    'record_type' => $recordType,
+                    'error' => $exception->getMessage(),
+                ]);
+            }
         }
 
         return $notification;

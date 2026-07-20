@@ -940,6 +940,38 @@ class InspectionReportPdfTest extends TestCase
         }
     }
 
+    public function test_pdf_template_summarizes_and_lists_multiple_inspection_locations(): void
+    {
+        $html = view('pdf.inspection_report', [
+            'record' => [
+                'displayId' => 'INS-FE-MULTI-LOCATION',
+                'status' => 'Submitted',
+                'incidentType' => 'Fire Extinguisher Inspection',
+                'location' => 'Stale single location',
+                'fireExtinguisherChecks' => [
+                    [
+                        'zone' => '1',
+                        'mainLocation' => 'Manjung Hub',
+                        'subLocation' => 'Reception',
+                        'idLocNo' => 'FE-RECEPTION',
+                    ],
+                    [
+                        'zone' => '1',
+                        'mainLocation' => 'Manjung Hub',
+                        'subLocation' => 'Workshop',
+                        'idLocNo' => 'FE-WORKSHOP',
+                    ],
+                ],
+            ],
+        ])->render();
+
+        $this->assertStringContainsString('Zone 1 &gt; Manjung Hub · 2 locations', $html);
+        $this->assertStringContainsString('Inspected Locations (2)', $html);
+        $this->assertStringContainsString('Zone 1 &gt; Manjung Hub &gt; Reception', $html);
+        $this->assertStringContainsString('Zone 1 &gt; Manjung Hub &gt; Workshop', $html);
+        $this->assertStringNotContainsString('Stale single location', $html);
+    }
+
     public function test_pdf_template_renders_hydraulic_section_without_other_form_data(): void
     {
         $record = [

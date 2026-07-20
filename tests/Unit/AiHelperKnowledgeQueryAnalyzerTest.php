@@ -141,11 +141,12 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
             'ada tak panduan nk buat pemeriksaan fire extinguisher?'
         );
 
-        $this->assertSame('mixed', $analysis['source_mode']);
+        $this->assertSame('system', $analysis['source_mode']);
         $this->assertSame('explicit_topic', $analysis['context_dependency']);
         $this->assertContains('inspection', $analysis['topic_keys']);
         $this->assertContains('extinguisher', $analysis['topic_keys']);
         $this->assertContains('inspect', $analysis['operation_keys']);
+        $this->assertSame(['inspection.conduct'], $analysis['task_keys']);
         $this->assertFalse($analysis['requires_multiple_documents']);
     }
 
@@ -177,5 +178,73 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
         $analyzer = new AiHelperKnowledgeQueryAnalyzer;
 
         $this->assertSame('catalogue', $analyzer->analyze('Ada berapa panduan yang dimuatnaik dalam sistem?')['intent']);
+    }
+
+    public function test_it_keeps_a_specific_topic_for_a_compatible_follow_up(): void
+    {
+        $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze(
+            'but how do i do onsite inspection',
+            ['How do I inspect a fire extinguisher?'],
+        );
+
+        $this->assertTrue($analysis['follow_up']);
+        $this->assertContains('extinguisher', $analysis['topic_keys']);
+        $this->assertSame(['inspection.conduct'], $analysis['task_keys']);
+    }
+
+    public function test_it_keeps_related_inspection_family_context_in_a_short_follow_up(): void
+    {
+        $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze(
+            'But for fire extinguishers?',
+            ['How do I conduct an inspection?'],
+        );
+
+        $this->assertTrue($analysis['follow_up']);
+        $this->assertSame('system', $analysis['source_mode']);
+        $this->assertContains('inspection', $analysis['topic_keys']);
+        $this->assertContains('extinguisher', $analysis['topic_keys']);
+        $this->assertSame(['inspection.conduct'], $analysis['task_keys']);
+    }
+
+    public function test_specialized_inspection_tasks_do_not_require_the_word_inspection(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $this->assertSame(
+            ['inspection.asset.manage'],
+            $analyzer->analyze('How do I register a fire extinguisher asset?')['task_keys'],
+        );
+        $this->assertSame(
+            ['inspection.issue.verify'],
+            $analyzer->analyze('How do I verify a defect?')['task_keys'],
+        );
+        $this->assertSame(
+            ['inspection.issue.manage'],
+            $analyzer->analyze('How do I manage a defect?')['task_keys'],
+        );
+    }
+
+    public function test_it_recognizes_inspection_type_catalogue_questions(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $english = $analyzer->analyze('How many types of inspections are there?');
+        $malay = $analyzer->analyze('Ada berapa jenis pemeriksaan dalam sistem?');
+
+        $this->assertSame('capability_catalogue', $english['intent']);
+        $this->assertSame(['inspection.types.list'], $english['task_keys']);
+        $this->assertSame('capability_catalogue', $malay['intent']);
+        $this->assertSame(
+            'knowledge_question',
+            $analyzer->analyze('What are the steps for fire extinguisher inspection or maintenance?')['intent'],
+        );
+        $this->assertSame(
+            'knowledge_question',
+            $analyzer->analyze('How many inspections have been submitted?')['intent'],
+        );
+        $this->assertSame(
+            'knowledge_question',
+            $analyzer->analyze('What extinguisher types can I inspect?')['intent'],
+        );
     }
 }

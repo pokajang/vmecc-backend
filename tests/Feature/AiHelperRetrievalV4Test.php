@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\AiHelperKnowledgeEntry;
+use App\Models\AiHelperMessage;
 use App\Models\User;
 use App\Services\AiHelperKnowledgeRetriever;
+use App\Services\AiHelperOpenAiService;
 use Database\Seeders\AiHelperSystemGuideSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
@@ -85,9 +87,10 @@ class AiHelperRetrievalV4Test extends TestCase
         $user = $this->userWithPermissions([
             'reports.inspection.conduct',
             'reports.inspection.extinguishers.manage',
+            'reports.inspection.issues.verify',
         ]);
-        $inspectionGuide = $this->systemGuide('inspection-manage');
-        $extinguisherGuide = $this->systemGuide('extinguisher-management');
+        $fireInspectionGuide = $this->systemGuide('inspection-fire-extinguisher-conduct');
+        $verificationGuide = $this->systemGuide('inspection-issue-verification');
 
         $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
             ['path' => '/leave'],
@@ -96,20 +99,41 @@ class AiHelperRetrievalV4Test extends TestCase
         );
 
         $this->assertSame('explicit_topic', $result['analysis']['context_dependency']);
-        $this->assertContains($inspectionGuide->id, $result['trace']['document_ids']);
-        $this->assertContains($extinguisherGuide->id, $result['trace']['document_ids']);
+        $this->assertContains($fireInspectionGuide->id, $result['trace']['document_ids']);
+        $this->assertNotContains($verificationGuide->id, $result['trace']['document_ids']);
+        $this->assertSame($fireInspectionGuide->title, $result['guidance'][0]['title']);
+        $this->assertSame(['inspection.conduct'], $result['trace']['query_plan']['task_keys']);
         $this->assertGreaterThanOrEqual(1, $result['trace']['candidate_lanes']['topic_intersection']);
     }
 
-    public function test_compound_extinguisher_maintenance_question_searches_system_and_reference_lanes(): void
+    public function test_english_typo_and_compatible_follow_up_keep_the_fire_inspection_task(): void
+    {
+        $user = $this->userWithPermissions([
+            'reports.inspection.conduct',
+            'reports.inspection.issues.verify',
+        ]);
+        $fireInspectionGuide = $this->systemGuide('inspection-fire-extinguisher-conduct');
+        $verificationGuide = $this->systemGuide('inspection-issue-verification');
+
+        $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
+            ['path' => '/inspection'],
+            $user,
+            'but how do i do onsite inspection',
+            ['How do I inspect a fire extiguisher?'],
+        );
+
+        $this->assertTrue($result['analysis']['follow_up']);
+        $this->assertContains($fireInspectionGuide->id, $result['trace']['document_ids']);
+        $this->assertNotContains($verificationGuide->id, $result['trace']['document_ids']);
+        $this->assertSame($fireInspectionGuide->title, $result['guidance'][0]['title']);
+    }
+
+    public function test_compound_extinguisher_maintenance_question_separates_the_two_tasks(): void
     {
         $user = $this->userWithPermissions([
             'reports.inspection.conduct',
             'reports.inspection.extinguishers.manage',
         ]);
-        $inspectionGuide = $this->systemGuide('inspection-manage');
-        $extinguisherGuide = $this->systemGuide('extinguisher-management');
-
         $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
             ['path' => '/inspection'],
             $user,
@@ -119,9 +143,12 @@ class AiHelperRetrievalV4Test extends TestCase
         );
 
         $this->assertSame('mixed', $result['analysis']['source_mode']);
-        $this->assertContains($inspectionGuide->id, $result['trace']['document_ids']);
-        $this->assertContains($extinguisherGuide->id, $result['trace']['document_ids']);
+        $this->assertNotEmpty($result['guidance']);
         $this->assertContains('maintain', $result['trace']['query_plan']['operation_keys']);
+        $this->assertSame(
+            ['inspection.conduct', 'inspection.physical.maintain'],
+            $result['trace']['query_plan']['task_keys'],
+        );
         $this->assertTrue($result['trace']['recovery_attempted']);
         $this->assertContains('pemadam', $result['trace']['recovery_expansion_terms']);
     }
@@ -139,6 +166,110 @@ class AiHelperRetrievalV4Test extends TestCase
 
         $this->assertNotContains($extinguisherGuide->id, $result['trace']['document_ids']);
         $this->assertStringNotContainsString($extinguisherGuide->title, json_encode($result));
+    }
+
+    public function test_inspection_type_count_retrieves_the_authorized_catalogue_guide(): void
+    {
+        $user = $this->userWithPermissions(['reports.inspection.view']);
+        $typeGuide = $this->systemGuide('inspection-types');
+
+        $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
+            ['path' => '/leave'],
+            $user,
+            'How many types of inspections are there?',
+        );
+
+        $this->assertSame('capability_catalogue', $result['analysis']['intent']);
+        $this->assertSame(['inspection.types.list'], $result['analysis']['task_keys']);
+        $this->assertContains($typeGuide->id, $result['trace']['document_ids']);
+        $this->assertSame('inspection-types', $result['guidance'][0]['guide_key']);
+    }
+
+    public function test_inspection_type_catalogue_stream_is_deterministic_cited_and_persisted(): void
+    {
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'test-key',
+            'ai_helper.knowledge_strict_readiness' => false,
+        ]);
+        $this->actingAs($this->userWithPermissions(['reports.inspection.view']));
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('isAvailable')->andReturnTrue();
+            $mock->shouldNotReceive('streamResponse');
+            $mock->shouldNotReceive('structuredResponse');
+        });
+
+        $content = $this->postJson('/api/ai-helper/messages/stream', [
+            'message' => 'How many types of inspections are there?',
+            'page_context' => ['path' => '/leave'],
+            'response_language' => 'en',
+            'new_thread' => true,
+        ])->assertOk()->streamedContent();
+
+        $this->assertStringContainsString('There are 8 built-in inspection types', $content);
+        $this->assertStringContainsString('Fire Extinguisher', $content);
+        $this->assertStringContainsString('General Inspection', $content);
+        $this->assertStringContainsString('[S1]', $content);
+
+        $message = AiHelperMessage::query()
+            ->where('role', AiHelperMessage::ROLE_ASSISTANT)
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->assertSame('deterministic', $message->retrieval_metadata['verification']['status']);
+        $this->assertSame(['S1'], collect($message->sources)->pluck('source_id')->all());
+        $this->assertSame(
+            ['Inspection Types Available in VMECC'],
+            collect($message->sources)->pluck('title')->all(),
+        );
+    }
+
+    public function test_asset_registration_does_not_return_conduct_issue_or_cross_module_guides(): void
+    {
+        $user = $this->userWithPermissions([
+            'reports.inspection.conduct',
+            'reports.inspection.extinguishers.manage',
+            'reports.inspection.issues.verify',
+            'self.leave',
+        ]);
+        $assetGuide = $this->systemGuide('extinguisher-management');
+        $conductGuide = $this->systemGuide('inspection-fire-extinguisher-conduct');
+        $verificationGuide = $this->systemGuide('inspection-issue-verification');
+        $leaveGuide = $this->systemGuide('leave-self-service');
+
+        $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
+            ['path' => '/leave'],
+            $user,
+            'How do I register a fire extinguisher asset?',
+        );
+
+        $this->assertSame(['inspection.asset.manage'], $result['analysis']['task_keys']);
+        $this->assertSame($assetGuide->title, $result['guidance'][0]['title']);
+        $this->assertContains($assetGuide->id, $result['trace']['document_ids']);
+        $this->assertNotContains($conductGuide->id, $result['trace']['document_ids']);
+        $this->assertNotContains($verificationGuide->id, $result['trace']['document_ids']);
+        $this->assertNotContains($leaveGuide->id, $result['trace']['document_ids']);
+    }
+
+    public function test_defect_verification_does_not_return_issue_management_steps(): void
+    {
+        $user = $this->userWithPermissions([
+            'reports.inspection.issues.manage',
+            'reports.inspection.issues.verify',
+        ]);
+        $managementGuide = $this->systemGuide('inspection-issue-management');
+        $verificationGuide = $this->systemGuide('inspection-issue-verification');
+
+        $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
+            ['path' => '/inspection'],
+            $user,
+            'How do I verify a defect?',
+        );
+
+        $this->assertSame(['inspection.issue.verify'], $result['analysis']['task_keys']);
+        $this->assertSame($verificationGuide->title, $result['guidance'][0]['title']);
+        $this->assertContains($verificationGuide->id, $result['trace']['document_ids']);
+        $this->assertNotContains($managementGuide->id, $result['trace']['document_ids']);
     }
 
     private function userWithPermissions(array $permissionNames): User

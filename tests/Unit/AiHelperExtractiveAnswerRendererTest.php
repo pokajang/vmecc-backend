@@ -39,4 +39,21 @@ MD,
         $this->assertStringContainsString('1. Go to **Inspection**', $result['content']);
         $this->assertStringContainsString('[S1]', $result['content']);
     }
+
+    public function test_it_labels_an_english_verbatim_extract_when_bahasa_melayu_is_selected(): void
+    {
+        $result = app(AiHelperExtractiveAnswerRenderer::class)->render(
+            [[
+                'source_id' => 'S1',
+                'content' => 'Open Inspection and select New Inspection. Complete every required check and submit the report.',
+            ]],
+            [['source_id' => 'S1', 'title' => 'Inspection guide']],
+            'bm',
+            'validation_failed',
+        );
+
+        $this->assertNotNull($result);
+        $this->assertStringContainsString('tersedia dalam bahasa Inggeris', $result['content']);
+        $this->assertStringContainsString('[S1]', $result['content']);
+    }
 }

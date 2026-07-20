@@ -9,9 +9,7 @@ use Illuminate\Support\Facades\Password;
 
 class UserInvitationNotification extends Notification
 {
-    public function __construct(private readonly string $frontendUrl)
-    {
-    }
+    public function __construct(private readonly string $frontendUrl) {}
 
     public function via(object $notifiable): array
     {
@@ -21,7 +19,10 @@ class UserInvitationNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         $token = Password::createToken($notifiable);
-        $resetUrl = rtrim($this->frontendUrl, '/') . "/reset-password?token={$token}&email={$notifiable->email}";
+        $resetUrl = rtrim($this->frontendUrl, '/').'/reset-password?'.http_build_query([
+            'token' => $token,
+            'email' => $notifiable->email,
+        ]);
 
         // Resolve primary role name
         $roleName = null;
@@ -53,16 +54,16 @@ class UserInvitationNotification extends Notification
         // Password expiry — Laravel default is 60 minutes, but invitation tokens last longer
         $expiryMinutes = config('auth.passwords.users.expire', 60);
         $expiryHours = $expiryMinutes >= 60
-            ? round($expiryMinutes / 60) . ' hour' . (round($expiryMinutes / 60) !== 1.0 ? 's' : '')
+            ? round($expiryMinutes / 60).' hour'.(round($expiryMinutes / 60) !== 1.0 ? 's' : '')
             : "{$expiryMinutes} minutes";
 
         return (new MailMessage)
-            ->subject('Welcome to ' . config('app.name') . ' — Set your password')
+            ->subject('Welcome to '.config('app.name').' — Set your password')
             ->markdown('emails.user-invitation', [
-                'name'        => $notifiable->name,
-                'resetUrl'    => $resetUrl,
-                'roleName'    => $roleName,
-                'teamName'    => $teamName,
+                'name' => $notifiable->name,
+                'resetUrl' => $resetUrl,
+                'roleName' => $roleName,
+                'teamName' => $teamName,
                 'expiryHours' => $expiryHours,
             ]);
     }

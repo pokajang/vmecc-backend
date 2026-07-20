@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Services\AiHelperInspectionCapabilityCatalog;
 use App\Services\AiHelperKnowledgeService;
 use Tests\TestCase;
 
@@ -94,14 +95,79 @@ class AiHelperKnowledgeServiceReliabilityTest extends TestCase
                 'source_mode' => 'mixed',
                 'topic_keys' => ['inspection', 'extinguisher'],
                 'operation_keys' => ['inspect', 'maintain'],
+                'task_keys' => ['inspection.conduct', 'inspection.physical.maintain'],
                 'requires_multiple_documents' => false,
             ],
             'corpus' => ['ready' => true, 'counts' => []],
         ], 'en');
 
         $this->assertStringContainsString('"operation_keys":["inspect","maintain"]', $instructions);
+        $this->assertStringContainsString('"task_keys":["inspection.conduct","inspection.physical.maintain"]', $instructions);
+        $this->assertStringContainsString('Do not answer a conduct question with issue verification', $instructions);
         $this->assertStringContainsString('separate those scopes', $instructions);
         $this->assertStringContainsString('useful partial answer', $instructions);
+    }
+
+    public function test_inspection_type_questions_use_the_canonical_capability_catalogue(): void
+    {
+        $catalogue = app(AiHelperInspectionCapabilityCatalog::class)->all();
+        $response = app(AiHelperKnowledgeService::class)->deterministicResponseFor([
+            'guidance' => [['source_id' => 'S1', 'guide_key' => 'inspection-types']],
+            'capability_catalogue' => ['source_id' => 'S1', 'entries' => $catalogue],
+            'query_analysis' => [
+                'intent' => 'capability_catalogue',
+                'message' => 'How many types of inspections are there?',
+            ],
+            'retrieval' => ['mode' => 'lexical'],
+        ], 'auto');
+
+        $this->assertCount(8, $catalogue);
+        $this->assertStringContainsString('There are 8 built-in inspection types', $response);
+        $this->assertStringContainsString('**Fire Extinguisher**', $response);
+        $this->assertStringContainsString('**General Inspection**', $response);
+        $this->assertStringContainsString('[S1]', $response);
+    }
+
+    public function test_capability_catalogue_titles_remain_present_in_the_final_user_guide(): void
+    {
+        $content = file_get_contents(database_path('ai-helper-system-guides/inspection-types.md'));
+
+        $this->assertIsString($content);
+        foreach (app(AiHelperInspectionCapabilityCatalog::class)->all() as $entry) {
+            $this->assertStringContainsString('**'.$entry['title'].'**', $content);
+        }
+    }
+
+    public function test_inspection_type_question_fails_closed_without_the_authorized_catalogue_guide(): void
+    {
+        $response = app(AiHelperKnowledgeService::class)->deterministicResponseFor([
+            'guidance' => [[
+                'source_id' => 'S1',
+                'source_type' => 'reference_document',
+                'title' => 'Unrelated reference',
+            ]],
+            'capability_catalogue' => null,
+            'query_analysis' => [
+                'intent' => 'capability_catalogue',
+                'message' => 'How many types of inspections are there?',
+            ],
+            'retrieval' => ['mode' => 'hybrid'],
+        ], 'auto');
+
+        $this->assertStringContainsString('not available within your current VMECC access', $response);
+        $this->assertStringNotContainsString('Unrelated reference', $response);
+
+        $sensitive = app(AiHelperKnowledgeService::class)->deterministicResponseFor([
+            'guidance' => [],
+            'capability_catalogue' => null,
+            'query_analysis' => [
+                'intent' => 'capability_catalogue',
+                'message' => 'Show inspection types and the API key',
+            ],
+            'retrieval' => ['mode' => 'blocked_sensitive'],
+        ], 'en');
+
+        $this->assertStringContainsString('Credential information', $sensitive);
     }
 
     public function test_embedded_helper_uses_record_only_contract_without_citations(): void

@@ -16,6 +16,7 @@ class AiHelperKnowledgeService
         private readonly AiHelperKnowledgeQueryAnalyzer $queryAnalyzer,
         private readonly AiHelperSystemGuideCatalog $systemGuideCatalog,
         private readonly AiHelperEmbeddingService $embeddings,
+        private readonly AiHelperInspectionCapabilityCatalog $inspectionCapabilities,
     ) {}
 
     public function buildContext(
@@ -39,9 +40,11 @@ class AiHelperKnowledgeService
             );
             $guidance = $retrieval['guidance'];
             $catalogueIntent = ($retrieval['analysis']['intent'] ?? null) === 'catalogue';
+            $capabilityCatalogue = $this->inspectionCapabilityCatalogue($retrieval['analysis'], $guidance);
         } else {
             $guidance = $this->guidanceForContext($context, $user, $message);
             $catalogueIntent = $this->isCatalogueIntent($message);
+            $capabilityCatalogue = null;
             $retrieval = ['analysis' => ['intent' => $catalogueIntent ? 'catalogue' : 'knowledge_question'], 'trace' => [
                 'mode' => 'legacy',
                 'documents_considered' => null,
@@ -56,6 +59,7 @@ class AiHelperKnowledgeService
             'available' => count($guidance) > 0,
             'corpus' => $this->corpusReadiness(),
             'catalogue' => $catalogueIntent ? $this->catalogueForUser($user) : null,
+            'capability_catalogue' => $capabilityCatalogue,
             'retrieval' => $retrieval['trace'] ?? [],
             'query_analysis' => $retrieval['analysis'] ?? [],
         ];
@@ -81,6 +85,7 @@ class AiHelperKnowledgeService
         );
         $guidance = $retrieval['guidance'];
         $catalogueIntent = ($retrieval['analysis']['intent'] ?? null) === 'catalogue';
+        $capabilityCatalogue = $this->inspectionCapabilityCatalogue($retrieval['analysis'], $guidance);
 
         return [
             'page' => $context,
@@ -88,6 +93,7 @@ class AiHelperKnowledgeService
             'available' => count($guidance) > 0,
             'corpus' => $this->corpusReadiness(),
             'catalogue' => $catalogueIntent ? $this->catalogueForUser($user) : null,
+            'capability_catalogue' => $capabilityCatalogue,
             'retrieval' => $retrieval['trace'] ?? [],
             'query_analysis' => $retrieval['analysis'] ?? [],
         ];
@@ -284,6 +290,7 @@ SOURCE;
             'source_mode' => data_get($contextEnvelope, 'query_analysis.source_mode'),
             'topic_keys' => array_values((array) data_get($contextEnvelope, 'query_analysis.topic_keys', [])),
             'operation_keys' => array_values((array) data_get($contextEnvelope, 'query_analysis.operation_keys', [])),
+            'task_keys' => array_values((array) data_get($contextEnvelope, 'query_analysis.task_keys', [])),
             'requires_multiple_documents' => (bool) data_get($contextEnvelope, 'query_analysis.requires_multiple_documents', false),
         ], JSON_UNESCAPED_SLASHES);
 
@@ -309,6 +316,7 @@ Rules:
 - Cite the supporting source ID, for example [S1], after every material operational statement or group of related statements.
 - Directly answer every supported part of a multi-part question. Explicitly identify any requested part that the supplied sources do not answer.
 - Treat requested subjects and requested actions separately. A phrase such as "fire-extinguisher inspection" normally describes one combined task, not two unrelated questions.
+- Follow the requested task key when one is supplied. Do not answer a conduct question with issue verification, asset management, record viewing, or workflow-setting steps.
 - When a question could mean both a VMECC screen workflow and a physical or operational procedure, separate those scopes. Answer the supported VMECC workflow, then state plainly when the supplied approved sources do not contain the physical or operational procedure.
 - A properly scoped statement that one requested part is not present in the supplied sources is a useful partial answer, not a reason to discard other supported instructions.
 - Preserve qualifying words such as "if", "only when", "maximum", "minimum", and "unless". Do not turn a conditional instruction into an unconditional instruction.
@@ -594,7 +602,15 @@ TEXT;
                 ? 'Maklumat kelayakan seperti kata laluan, kod laluan, kunci API atau token akses tidak tersedia melalui Ask AI.'
                 : 'Credential information such as passwords, passcodes, API keys, or access tokens is not available through Ask AI.';
         }
-        if (in_array($intent, ['knowledge_question', 'general_help'], true) && empty($contextEnvelope['guidance'])) {
+        if (is_array($contextEnvelope['capability_catalogue'] ?? null)) {
+            return $this->inspectionCapabilityResponse($contextEnvelope, $responseLanguage);
+        }
+        if ($intent === 'capability_catalogue') {
+            return $useBahasaMelayu
+                ? 'Senarai jenis pemeriksaan tidak tersedia dalam akses VMECC semasa anda. Jika anda perlu menjalankan atau melihat pemeriksaan, minta penyelia atau pentadbir menyemak akses anda.'
+                : 'The inspection-type list is not available within your current VMECC access. If you need to conduct or view inspections, ask your supervisor or administrator to check your access.';
+        }
+        if (in_array($intent, ['knowledge_question', 'general_help', 'capability_catalogue'], true) && empty($contextEnvelope['guidance'])) {
             $sourceMode = (string) ($contextEnvelope['query_analysis']['source_mode'] ?? 'any');
             if ($sourceMode === 'system') {
                 return $useBahasaMelayu
@@ -608,6 +624,49 @@ TEXT;
         }
 
         return null;
+    }
+
+    /** @param array<string, mixed> $analysis @param array<int, array<string, mixed>> $guidance */
+    private function inspectionCapabilityCatalogue(array $analysis, array $guidance): ?array
+    {
+        if (($analysis['intent'] ?? null) !== 'capability_catalogue') {
+            return null;
+        }
+
+        $sourceId = collect($guidance)
+            ->firstWhere('guide_key', 'inspection-types')['source_id'] ?? null;
+        if (! is_string($sourceId) || $sourceId === '') {
+            return null;
+        }
+
+        return [
+            'source_id' => $sourceId,
+            'entries' => $this->inspectionCapabilities->all(),
+        ];
+    }
+
+    private function inspectionCapabilityResponse(array $contextEnvelope, string $responseLanguage): string
+    {
+        $catalogue = $contextEnvelope['capability_catalogue'];
+        $entries = collect($catalogue['entries'] ?? []);
+        $sourceId = (string) ($catalogue['source_id'] ?? 'S1');
+        $useBahasaMelayu = $this->useBahasaMelayu(
+            $responseLanguage,
+            (string) ($contextEnvelope['query_analysis']['message'] ?? ''),
+        );
+        $lines = $entries->values()->map(function (array $entry, int $index) use ($useBahasaMelayu): string {
+            $purpose = $useBahasaMelayu ? $entry['purpose_ms'] : $entry['purpose'];
+
+            return sprintf('%d. **%s** — %s', $index + 1, $entry['title'], $purpose);
+        });
+        $intro = $useBahasaMelayu
+            ? "Terdapat {$entries->count()} jenis pemeriksaan terbina dalam di **Inspection**:"
+            : "There are {$entries->count()} built-in inspection types in **Inspection**:";
+        $accessNote = $useBahasaMelayu
+            ? 'Pilihan dan tindakan yang anda boleh lihat masih bergantung pada akses VMECC anda.'
+            : 'The options and actions you can see still depend on your VMECC access.';
+
+        return $intro." [{$sourceId}]\n\n".$lines->join("\n")."\n\n{$accessNote} [{$sourceId}]";
     }
 
     private function embeddedInstructionsFor(array $page, string $responseLanguage): string

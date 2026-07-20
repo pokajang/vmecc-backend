@@ -24,3 +24,15 @@
         </div>
     </div>
 </div>
+@if (count($inspectionLocationPaths) > 1)
+    <div class="card inspected-locations-card">
+        <div class="card-head">Inspected Locations ({{ count($inspectionLocationPaths) }})</div>
+        <div class="card-body">
+            <div class="inspection-location-grid">
+                @foreach ($inspectionLocationPaths as $inspectionLocationPath)
+                    <div class="inspection-location-item">{{ $inspectionLocationPath }}</div>
+                @endforeach
+            </div>
+        </div>
+    </div>
+@endif

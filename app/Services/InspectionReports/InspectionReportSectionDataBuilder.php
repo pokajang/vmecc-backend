@@ -6,6 +6,7 @@ class InspectionReportSectionDataBuilder
 {
     public function __construct(
         private readonly InspectionReportTypeResolver $typeResolver,
+        private readonly InspectionReportLocationService $locationService,
     ) {}
 
     public function build(array $record, string $inspectionTypeKey): array
@@ -19,24 +20,24 @@ class InspectionReportSectionDataBuilder
 
         return [
             'checklist' => $checklist,
-            'erAuxChecks' => $this->filterByText($this->rows($record, 'erAuxChecks', 'er_aux_checks'), 'equipment'),
-            'fireExtinguisherChecks' => array_values(array_filter(
+            'erAuxChecks' => $this->withDisplayLocations($this->filterByText($this->rows($record, 'erAuxChecks', 'er_aux_checks'), 'equipment')),
+            'fireExtinguisherChecks' => $this->withDisplayLocations(array_values(array_filter(
                 $this->rows($record, 'fireExtinguisherChecks', 'fire_extinguisher_checks'),
                 fn (array $item): bool => $this->hasText($item, 'idLocNo', 'id_loc_no')
                     || $this->hasText($item, 'barcodeNo', 'barcode_no'),
-            )),
-            'hydraulicChecks' => $this->filterByText($this->rows($record, 'hydraulicChecks', 'hydraulic_checks'), 'equipment'),
+            ))),
+            'hydraulicChecks' => $this->withDisplayLocations($this->filterByText($this->rows($record, 'hydraulicChecks', 'hydraulic_checks'), 'equipment')),
             'frtDailyChecks' => $this->filterByText($this->rows($record, 'frtDailyChecks', 'frt_daily_checks'), 'equipment'),
             'frtOneOffChecks' => $this->filterByText($this->rows($record, 'frtOneOffChecks', 'frt_one_off_checks'), 'equipment'),
-            'highAngleChecks' => $this->filterByText($this->rows($record, 'highAngleChecks', 'high_angle_checks'), 'equipment'),
-            'scbaBackPlateChecks' => $this->filterByText($this->rows($record, 'scbaBackPlateChecks', 'scba_back_plate_checks'), 'serialNo', 'serial_no'),
-            'scbaCylinderChecks' => $this->filterByText($this->rows($record, 'scbaCylinderChecks', 'scba_cylinder_checks'), 'serialNo', 'serial_no'),
-            'scbaFaceMaskChecks' => $this->filterByText($this->rows($record, 'scbaFaceMaskChecks', 'scba_face_mask_checks'), 'serialNo', 'serial_no'),
-            'scbaCustomSections' => array_values(array_filter(
+            'highAngleChecks' => $this->withDisplayLocations($this->filterByText($this->rows($record, 'highAngleChecks', 'high_angle_checks'), 'equipment')),
+            'scbaBackPlateChecks' => $this->withDisplayLocations($this->filterByText($this->rows($record, 'scbaBackPlateChecks', 'scba_back_plate_checks'), 'serialNo', 'serial_no')),
+            'scbaCylinderChecks' => $this->withDisplayLocations($this->filterByText($this->rows($record, 'scbaCylinderChecks', 'scba_cylinder_checks'), 'serialNo', 'serial_no')),
+            'scbaFaceMaskChecks' => $this->withDisplayLocations($this->filterByText($this->rows($record, 'scbaFaceMaskChecks', 'scba_face_mask_checks'), 'serialNo', 'serial_no')),
+            'scbaCustomSections' => array_map($this->withCustomSectionDisplayLocations(...), array_values(array_filter(
                 $this->rows($record, 'scbaCustomSections', 'scba_custom_sections'),
                 fn (array $item): bool => ($item['removed'] ?? false) !== true
                     && trim((string) ($item['title'] ?? '')) !== '',
-            )),
+            ))),
             'hseSelections' => $this->values($record, 'hseSelections', 'hse_selections'),
         ];
     }
@@ -61,6 +62,25 @@ class InspectionReportSectionDataBuilder
             $rows,
             fn (array $item): bool => $this->hasText($item, $camel, $snake),
         ));
+    }
+
+    private function withDisplayLocations(array $rows): array
+    {
+        return array_map(function (array $row): array {
+            $row['displayLocation'] = $this->locationService->path($this->locationService->fromRow($row));
+
+            return $row;
+        }, $rows);
+    }
+
+    private function withCustomSectionDisplayLocations(array $section): array
+    {
+        $rows = $section['rows'] ?? [];
+        if (is_array($rows)) {
+            $section['rows'] = $this->withDisplayLocations(array_values(array_filter($rows, 'is_array')));
+        }
+
+        return $section;
     }
 
     private function hasText(array $item, string $camel, ?string $snake = null): bool

@@ -34,12 +34,13 @@ class AiHelperResponsePipeline
         $pipelineStartedAt = microtime(true);
         $deadline ??= AiHelperRequestDeadline::fromConfig();
         if ($deterministicContent !== null) {
-            return $this->results->deterministic($deterministicContent);
+            return $this->results->deterministic($deterministicContent, $sources);
         }
+        $fallbackLanguage = $this->fallbackLanguage($responseLanguage, $question);
         if ($evidenceRequired && ($guidance === [] || $sources === [])) {
             return $this->results->rejected(
                 $sources,
-                $responseLanguage,
+                $fallbackLanguage,
                 'AI_HELPER_NO_AUTHORIZED_EVIDENCE',
                 'retrieve_more_evidence',
                 0,
@@ -88,7 +89,7 @@ class AiHelperResponsePipeline
                     $failure,
                     $guidance,
                     $sources,
-                    $responseLanguage,
+                    $fallbackLanguage,
                     $attempt,
                     $responseIds,
                     $providerRequestIds,
@@ -151,7 +152,7 @@ class AiHelperResponsePipeline
                 return $this->results->extractiveFallback(
                     $guidance,
                     $sources,
-                    $responseLanguage,
+                    $fallbackLanguage,
                     'evidence_incomplete',
                     'AI_HELPER_EVIDENCE_INCOMPLETE',
                     'retrieve_more_evidence',
@@ -169,7 +170,7 @@ class AiHelperResponsePipeline
                 return $this->results->extractiveFallback(
                     $guidance,
                     $sources,
-                    $responseLanguage,
+                    $fallbackLanguage,
                     'verification_unavailable',
                     'AI_HELPER_VERIFICATION_TEMPORARY',
                     'retry_provider',
@@ -220,10 +221,14 @@ class AiHelperResponsePipeline
         return $this->results->extractiveFallback(
             $guidance,
             $sources,
-            $responseLanguage,
+            $fallbackLanguage,
             'validation_failed',
             'AI_HELPER_VALIDATION_FAILED',
-            $failureCategory === 'citation_format' ? 'repair_citations' : 'remove_unsupported_claims',
+            match ($failureCategory) {
+                'citation_format' => 'repair_citations',
+                'incomplete_answer' => 'retrieve_more_evidence',
+                default => 'remove_unsupported_claims',
+            },
             $attempt,
             $responseIds,
             $providerRequestIds,
@@ -276,5 +281,16 @@ class AiHelperResponsePipeline
     private function elapsedMilliseconds(float $startedAt): int
     {
         return (int) ((microtime(true) - $startedAt) * 1000);
+    }
+
+    private function fallbackLanguage(string $responseLanguage, string $question): string
+    {
+        if (in_array($responseLanguage, ['en', 'bm'], true)) {
+            return $responseLanguage;
+        }
+
+        return preg_match('/\b(?:apa|apakah|siapa|berapa|bagaimana|mengapa|bila|mana|untuk|dalam|saya|anda|ada|tak|nak|macam|pemeriksaan|panduan|langkah|dokumen|lampiran)\b/iu', $question) === 1
+            ? 'bm'
+            : 'en';
     }
 }

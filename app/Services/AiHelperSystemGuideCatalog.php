@@ -19,7 +19,7 @@ class AiHelperSystemGuideCatalog
 
     public const RELEASE_STATUSES = [self::RELEASE_DRAFT, self::RELEASE_FINAL];
 
-    /** @var array<string, array{module_key: string, route_key: string, module_gate: string, permissions: array<int, string>, permission_match?: string, roles?: array<int, string>, owner: string}> */
+    /** @var array<string, array{module_key: string, route_key: string, module_gate: string, permissions: array<int, string>, permission_match?: string, roles?: array<int, string>, owner: string, tasks?: array<int, string>, page_help_priority?: int}> */
     private const GUIDES = [
         'ask-ai-usage' => ['module_key' => 'profile', 'route_key' => 'global', 'module_gate' => 'profile', 'permissions' => [], 'owner' => 'System Administration'],
         'dashboard-basics' => ['module_key' => 'dashboard', 'route_key' => 'dashboard', 'module_gate' => 'dashboard', 'permissions' => ['self.dashboard'], 'owner' => 'System Administration'],
@@ -59,12 +59,14 @@ class AiHelperSystemGuideCatalog
         'drill-reports' => ['module_key' => 'reports', 'route_key' => 'drill', 'module_gate' => 'reports.drill', 'permissions' => ['reports.drill.view'], 'owner' => 'Operations'],
         'fitness-reports' => ['module_key' => 'reports', 'route_key' => 'fitness', 'module_gate' => 'reports.fitness_test', 'permissions' => ['reports.fitness.view'], 'owner' => 'Operations'],
         'report-management' => ['module_key' => 'reports', 'route_key' => 'reports', 'module_gate' => 'reports', 'permissions' => ['reports.manage'], 'owner' => 'Operations'],
-        'inspection-view' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.view'], 'owner' => 'Operations'],
-        'inspection-manage' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.manage', 'reports.inspection.conduct'], 'owner' => 'Operations'],
-        'extinguisher-management' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.extinguishers.manage'], 'owner' => 'Operations'],
-        'inspection-issue-management' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.issues.manage'], 'owner' => 'Operations'],
-        'inspection-issue-verification' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.issues.verify'], 'owner' => 'Operations'],
-        'inspection-workflow-settings' => ['module_key' => 'reports.inspection', 'route_key' => 'settings', 'module_gate' => 'reports.inspection', 'permissions' => ['settings.manage'], 'owner' => 'Operations'],
+        'inspection-view' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.view'], 'owner' => 'Operations', 'tasks' => ['inspection.records.view'], 'page_help_priority' => 1],
+        'inspection-manage' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.manage', 'reports.inspection.conduct'], 'owner' => 'Operations', 'tasks' => ['inspection.conduct']],
+        'inspection-fire-extinguisher-conduct' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.manage', 'reports.inspection.conduct'], 'owner' => 'Operations', 'tasks' => ['inspection.conduct']],
+        'inspection-types' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.view', 'reports.inspection.conduct', 'reports.manage'], 'owner' => 'Operations', 'tasks' => ['inspection.types.list']],
+        'extinguisher-management' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.extinguishers.manage'], 'owner' => 'Operations', 'tasks' => ['inspection.asset.manage']],
+        'inspection-issue-management' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.issues.manage'], 'owner' => 'Operations', 'tasks' => ['inspection.issue.manage']],
+        'inspection-issue-verification' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.issues.verify'], 'owner' => 'Operations', 'tasks' => ['inspection.issue.verify']],
+        'inspection-workflow-settings' => ['module_key' => 'reports.inspection', 'route_key' => 'settings', 'module_gate' => 'reports.inspection', 'permissions' => ['settings.manage'], 'owner' => 'Operations', 'tasks' => ['inspection.workflow.configure']],
         'module-activation' => ['module_key' => 'settings.module_activation', 'route_key' => 'settings', 'module_gate' => 'settings.module_activation', 'permissions' => ['settings.manage'], 'owner' => 'System Administration'],
         'role-permissions' => ['module_key' => 'settings.role_permissions', 'route_key' => 'settings', 'module_gate' => 'settings.role_permissions', 'permissions' => ['settings.manage'], 'owner' => 'System Administration'],
         'dashboard-visibility' => ['module_key' => 'settings.dashboard_visibility', 'route_key' => 'settings', 'module_gate' => 'settings.dashboard_visibility', 'permissions' => ['settings.manage'], 'owner' => 'System Administration'],
@@ -121,6 +123,17 @@ class AiHelperSystemGuideCatalog
     public function definition(string $key): ?array
     {
         return self::GUIDES[$key] ?? null;
+    }
+
+    /** @return array<int, string> */
+    public function tasksForGuideKey(string $key): array
+    {
+        return self::GUIDES[$key]['tasks'] ?? [];
+    }
+
+    public function pageHelpPriorityForGuideKey(string $key): int
+    {
+        return (int) (self::GUIDES[$key]['page_help_priority'] ?? 0);
     }
 
     public function all(): array

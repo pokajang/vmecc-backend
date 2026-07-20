@@ -12,9 +12,9 @@ class AiHelperSystemGuideEvaluationCasesTest extends TestCase
     {
         $cases = collect(app(AiHelperSystemGuideEvaluationCases::class)->coverage());
 
-        $this->assertCount(204, $cases);
-        $this->assertCount(204, $cases->pluck('id')->unique());
-        $this->assertCount(51, $cases->pluck('guide_key')->unique());
+        $this->assertCount(212, $cases);
+        $this->assertCount(212, $cases->pluck('id')->unique());
+        $this->assertCount(53, $cases->pluck('guide_key')->unique());
 
         foreach ($cases->groupBy('guide_key') as $guideCases) {
             $this->assertCount(4, $guideCases);
@@ -56,11 +56,11 @@ class AiHelperSystemGuideEvaluationCasesTest extends TestCase
         $cases = collect(app(AiHelperSystemGuideEvaluationCases::class)->global());
         $catalog = app(AiHelperSystemGuideCatalog::class);
 
-        $this->assertCount(110, $cases);
-        $this->assertCount(110, $cases->pluck('id')->unique());
-        $this->assertCount(51, $cases->pluck('guide_key')->unique());
-        $this->assertCount(51, $cases->filter(fn (array $case) => str_contains($case['id'], '-global-en-')));
-        $this->assertCount(51, $cases->filter(fn (array $case) => str_contains($case['id'], '-global-bm-')));
+        $this->assertCount(114, $cases);
+        $this->assertCount(114, $cases->pluck('id')->unique());
+        $this->assertCount(53, $cases->pluck('guide_key')->unique());
+        $this->assertCount(53, $cases->filter(fn (array $case) => str_contains($case['id'], '-global-en-')));
+        $this->assertCount(53, $cases->filter(fn (array $case) => str_contains($case['id'], '-global-bm-')));
         $this->assertCount(8, $cases->filter(fn (array $case) => str_contains($case['id'], '-global-alias-')));
         $this->assertTrue($cases->every(fn (array $case) => $case['expected_pipeline_version'] === 4));
         $this->assertTrue($cases->every(fn (array $case) => $case['retrieval_only'] === true));

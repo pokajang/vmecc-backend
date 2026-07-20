@@ -9,12 +9,45 @@ use App\Services\RoleCatalog;
 use App\Services\WorkflowNotifications\WorkflowNotificationChannelPolicy;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class WorkflowNotificationServiceTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_emit_persists_notification_when_email_queue_dispatch_fails(): void
+    {
+        config([
+            'mail.workflow_notifications.enabled' => true,
+            'mail.workflow_notifications.modules.report' => true,
+            'queue.default' => 'missing-email-queue-connection',
+        ]);
+        Log::spy();
+
+        $owner = User::factory()->create(['status' => 'active']);
+
+        $notification = app(WorkflowNotificationService::class)->emit(
+            module: 'report',
+            eventType: 'submitted',
+            recordType: 'report',
+            recordId: 7001,
+            recordDisplayId: 'RPT-7001',
+            ownerUserId: (int) $owner->id,
+            actor: ['userId' => $owner->id, 'name' => $owner->name, 'email' => $owner->email],
+            targetUserIds: [$owner->id],
+            actionRequired: true,
+            metadata: ['nextActionRole' => 'Contract Manager', 'status' => 'Submitted'],
+        );
+
+        $this->assertDatabaseHas('workflow_notifications', ['id' => $notification->id]);
+        Log::shouldHaveReceived('warning')
+            ->once()
+            ->withArgs(fn (string $message, array $context) => $message === 'Workflow notification persisted, but email dispatch could not be queued.'
+                && $context['notification_id'] === $notification->id
+            );
+    }
 
     public function test_emit_normalizes_role_recipient_and_detail_route_key_for_overtime(): void
     {

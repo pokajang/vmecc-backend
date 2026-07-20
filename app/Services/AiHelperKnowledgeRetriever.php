@@ -18,6 +18,7 @@ class AiHelperKnowledgeRetriever
         private readonly AiHelperKnowledgeAudienceResolver $audienceResolver,
         private readonly AiHelperDocumentCandidateSelector $candidateSelector,
         private readonly AiHelperTopicAliasRegistry $topicAliases,
+        private readonly AiHelperSystemGuideCatalog $systemGuides,
     ) {}
 
     /** @return array{analysis: array<string, mixed>, guidance: array<int, array<string, mixed>>, trace: array<string, mixed>} */
@@ -104,6 +105,8 @@ class AiHelperKnowledgeRetriever
                 )
                 : [];
             $operationScore = $retrievalV4 ? $this->documentOperationScore($entry, $analysis) : 0;
+            $taskScore = $retrievalV4 ? $this->documentTaskScore($entry, $analysis) : 0;
+            $taskConflict = $retrievalV4 && $this->documentTaskConflict($entry, $analysis);
             $exactMatch = $this->isExactDocumentMatch($entry, $analysis);
             $pageMatch = $this->isPageMatch($entry, $rankingContext);
             $semanticCompatible = $semanticCompatibleIds->has((int) $entry->id);
@@ -118,13 +121,17 @@ class AiHelperKnowledgeRetriever
                 'matched_topic_keys' => $matchedTopicKeys,
                 'topic_coverage' => $this->topicCoverage($matchedTopicKeys, $analysis),
                 'operation_score' => $operationScore,
+                'task_score' => $taskScore,
+                'task_conflict' => $taskConflict,
                 'page_match' => $pageMatch,
                 'semantic_compatible' => $semanticCompatible,
-                'protected_match' => $exactMatch || ($topicScore > 0
+                'protected_match' => $exactMatch || $taskScore > 0 || ($topicScore > 0
+                    && ($analysis['task_keys'] ?? []) === []
                     && in_array($analysis['context_dependency'] ?? null, ['explicit_topic', 'mixed'], true))
                     || ($pageMatch && ($analysis['context_dependency'] ?? null) === 'page_deictic'),
             ];
-        })->sortByDesc('score')->values();
+        })->filter(fn (array $document) => ! ($document['task_conflict'] ?? false) || ($document['exact_match'] ?? false))
+            ->sortByDesc('score')->values();
         $documentLimit = max(1, (int) config('ai_helper.knowledge_document_candidate_limit', 12));
         $exactDocuments = $rankedDocuments->where('exact_match', true)->values();
         $candidateLanes = ['exact' => $exactDocuments->count(), 'topic' => 0, 'global' => 0, 'page' => 0];
@@ -304,6 +311,7 @@ class AiHelperKnowledgeRetriever
                 'language' => $analysis['language'] ?? null,
                 'topic_keys' => $analysis['topic_keys'] ?? [],
                 'operation_keys' => $analysis['operation_keys'] ?? [],
+                'task_keys' => $analysis['task_keys'] ?? [],
                 'requires_multiple_documents' => (bool) ($analysis['requires_multiple_documents'] ?? false),
                 'follow_up' => (bool) ($analysis['follow_up'] ?? false),
             ],
@@ -410,6 +418,7 @@ class AiHelperKnowledgeRetriever
         }
         if ($retrievalV4) {
             $score += $this->documentOperationScore($entry, $analysis) * 180;
+            $score += $this->documentTaskScore($entry, $analysis) * 1500;
         }
         foreach ($analysis['annex_numbers'] ?? [] as $number) {
             if (preg_match('/\bannex(?:e)?\s*0*'.preg_quote((string) $number, '/').'\b/i', $title)) {
@@ -443,6 +452,9 @@ class AiHelperKnowledgeRetriever
             $score += $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE ? $routeBoost : min(80, $routeBoost);
         } elseif ($entry->module_key && $entry->module_key === ($context['module_key'] ?? null)) {
             $score += $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE ? $moduleBoost : min(50, $moduleBoost);
+        }
+        if ($contextDependency === 'page_deictic') {
+            $score += $this->systemGuides->pageHelpPriorityForGuideKey($this->guideKey($entry)) * 1200;
         }
         if ($entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
             && in_array($analysis['source_mode'] ?? null, ['system', 'mixed'], true)) {
@@ -512,6 +524,50 @@ class AiHelperKnowledgeRetriever
                 ) === 1)
                 ->take(2)
                 ->count());
+    }
+
+    private function documentTaskScore(AiHelperKnowledgeEntry $entry, array $analysis): int
+    {
+        $requested = collect($analysis['task_keys'] ?? [])->filter()->unique();
+        if ($requested->isEmpty()) {
+            return 0;
+        }
+
+        return $requested->intersect($this->entryTaskKeys($entry))->count();
+    }
+
+    private function documentTaskConflict(AiHelperKnowledgeEntry $entry, array $analysis): bool
+    {
+        if ($entry->knowledge_type !== AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE) {
+            return false;
+        }
+
+        $requested = collect($analysis['task_keys'] ?? [])->filter()->unique();
+        $documentTasks = collect($this->entryTaskKeys($entry));
+
+        if ($requested->contains(fn (string $task) => str_starts_with($task, 'inspection.'))
+            && $entry->module_key !== 'reports.inspection') {
+            return true;
+        }
+
+        return $requested->isNotEmpty()
+            && $documentTasks->isNotEmpty()
+            && $requested->intersect($documentTasks)->isEmpty();
+    }
+
+    /** @return array<int, string> */
+    private function entryTaskKeys(AiHelperKnowledgeEntry $entry): array
+    {
+        return $this->systemGuides->tasksForGuideKey($this->guideKey($entry));
+    }
+
+    private function guideKey(AiHelperKnowledgeEntry $entry): string
+    {
+        $prefix = 'seed:system-guide:';
+
+        return str_starts_with((string) $entry->source_path, $prefix)
+            ? Str::after((string) $entry->source_path, $prefix)
+            : '';
     }
 
     private function isPageMatch(AiHelperKnowledgeEntry $entry, array $context): bool
@@ -925,6 +981,10 @@ class AiHelperKnowledgeRetriever
             'display_label' => $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
                 ? AiHelperSystemGuideCatalog::DISPLAY_LABEL
                 : null,
+            'guide_key' => $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
+                ? $this->guideKey($entry)
+                : null,
+            'task_keys' => $this->entryTaskKeys($entry),
         ];
     }
 

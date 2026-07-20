@@ -1180,7 +1180,7 @@ class AiHelperController extends Controller
             $this->recordRunRetrieval($run, $pageContext);
             $evidenceRequired = $conversationPurpose === self::CONVERSATION_PURPOSE_CHAT
                 && ($pageContext['query_analysis']['intent'] ?? null) !== 'casual';
-            $responseLanguage = (string) ($validated['response_language'] ?? 'bm');
+            $responseLanguage = (string) ($validated['response_language'] ?? 'auto');
             $instructions = $embeddedTask !== null
                 ? ''
                 : $this->knowledge->instructionsFor($pageContext, $responseLanguage);

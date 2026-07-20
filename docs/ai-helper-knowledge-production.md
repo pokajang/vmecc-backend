@@ -112,7 +112,7 @@ php artisan ai-helper:evaluate-knowledge --suite=core --live
 
 Use `--suite=all` to run all 150 cases together and `--case=<case-id>` one or more times to isolate a failed case. Coverage cases are retrieval-only even when `--live` is supplied so the live gate does not make 136 unnecessary response-model calls. The maintained core benchmark includes English, Bahasa Melayu, mixed-language, exact revision, revision-conflict, cross-document, visual-reference, follow-up, and safe credential-request coverage.
 
-Role-aware guide release gates require a server-only actor map. In addition to same-page access coverage, Retrieval V4 has a 110-case global suite: every one of the 51 guides is requested in English and BM from unrelated routes, followed by curated layman alias/noise cases for leave, overtime, inspection, payslips, password help, rosters, extinguisher records, and role permissions.
+Role-aware guide release gates require a server-only actor map. In addition to same-page access coverage, Retrieval V4 has a 114-case global suite: every one of the 53 guides is requested in English and BM from unrelated routes, followed by curated layman alias/noise cases for leave, overtime, inspection, payslips, password help, rosters, extinguisher records, and role permissions.
 
 ```bash
 php artisan ai-helper:evaluate-knowledge --suite=system-guide-core --actor-map=/secure/path/ai-helper-uat-actors.json --json
