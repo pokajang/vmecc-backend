@@ -44,6 +44,13 @@ class AiHelperKnowledgeQueryAnalyzer
             $sourceMode = 'mixed';
         }
         $contextDependency = $this->contextDependency($normalized, $currentTopics);
+        $queryScope = $this->queryScope(
+            $normalizedQuery,
+            $currentTopics,
+            $intent,
+            $contextDependency,
+            $taskKeys,
+        );
         $subqueries = $this->subqueries($retrievalQuery);
 
         preg_match_all('/\b(?:annex(?:e)?|lampiran)\s*0*(\d{1,3})\b/i', $retrievalQuery, $annexMatches);
@@ -54,6 +61,7 @@ class AiHelperKnowledgeQueryAnalyzer
             intent: $intent,
             sourceMode: $sourceMode,
             contextDependency: $contextDependency,
+            queryScope: $queryScope,
             language: $this->language($normalized),
             message: $message,
             query: trim($retrievalQuery),
@@ -192,6 +200,52 @@ class AiHelperKnowledgeQueryAnalyzer
         }
 
         return $currentTopics !== [] ? 'explicit_topic' : 'neutral';
+    }
+
+    private function queryScope(
+        string $normalizedQuery,
+        array $currentTopics,
+        string $intent,
+        string $contextDependency,
+        array $taskKeys,
+    ): string {
+        if ($contextDependency === 'page_deictic') {
+            return 'page';
+        }
+
+        if ($intent === 'catalogue' || $intent === 'capability_catalogue') {
+            return 'global';
+        }
+
+        if ($this->isSystemOverviewQuery($normalizedQuery)) {
+            return 'global';
+        }
+
+        if (count(array_unique($currentTopics)) >= 2 || $contextDependency === 'mixed') {
+            return 'global';
+        }
+
+        if (count($currentTopics) === 1 && in_array('system_overview', $currentTopics, true)) {
+            return 'global';
+        }
+
+        if (! empty($taskKeys) && in_array('inspection.types.list', $taskKeys, true)) {
+            return 'global';
+        }
+
+        return 'local';
+    }
+
+    private function isSystemOverviewQuery(string $normalizedQuery): bool
+    {
+        return preg_match(
+            '/\b(?:what (?:is|are)|apa (?:yang|yang jadi)|how (?:do|does)|bila|bilakah|where can i|what can i)\b.+\b(?:system|platform|system overview|overview|module|modules|features?|flow|workflow|menu|menus)\b|'
+            .'\b(?:apakah|apa) (?:sistem|platform|fungsi|ciri-ciri|menu) .*(?:vmecc|sistem ini|sistem yang|mempunyai)\b|'
+            .'\b(?:senarai|list|apa|berapa) (?:modul|menu|ciri|fungsi|features) (?:yang|yang ada)\b|'
+            .'\b(?:gambaran|overview) keseluruhan\b|'
+            .'\b(?:system guide|application guide|panduan sistem|panduan penggunaan)\b/u',
+            $normalizedQuery,
+        ) === 1;
     }
 
     private function sourceMode(string $message): string

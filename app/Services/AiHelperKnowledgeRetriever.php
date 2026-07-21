@@ -150,7 +150,7 @@ class AiHelperKnowledgeRetriever
         if ($exactDocuments->isEmpty()) {
             $rankedChunks = $rankedChunks
                 ->filter(fn (array $candidate) => ($retrievalV4 && ($candidate['protected_match'] ?? false))
-                    || $this->isRelevantCandidate($candidate))
+                    || $this->isRelevantCandidate($candidate, $analysis))
                 ->values();
         }
         $recoveryAttempted = false;
@@ -173,7 +173,7 @@ class AiHelperKnowledgeRetriever
             $recoveryDocuments = $this->hydrateSelectedDocuments($recoveryDocuments);
             $recoveryChunks = $this->chunkCandidates($recoveryDocuments, $recoveryAnalysis, $queryEmbedding)
                 ->filter(fn (array $candidate) => ($candidate['protected_match'] ?? false)
-                    || $this->isRelevantCandidate($candidate))
+                    || $this->isRelevantCandidate($candidate, $recoveryAnalysis))
                 ->values();
             if ($recoveryChunks->isNotEmpty()) {
                 $rankedChunks = $recoveryChunks;
@@ -312,6 +312,7 @@ class AiHelperKnowledgeRetriever
                 'topic_keys' => $analysis['topic_keys'] ?? [],
                 'operation_keys' => $analysis['operation_keys'] ?? [],
                 'task_keys' => $analysis['task_keys'] ?? [],
+                'query_scope' => $analysis['query_scope'] ?? null,
                 'requires_multiple_documents' => (bool) ($analysis['requires_multiple_documents'] ?? false),
                 'follow_up' => (bool) ($analysis['follow_up'] ?? false),
             ],
@@ -436,6 +437,7 @@ class AiHelperKnowledgeRetriever
             }
         }
         $contextDependency = (string) ($analysis['context_dependency'] ?? 'neutral');
+        $queryScope = (string) ($analysis['query_scope'] ?? 'local');
         $routeBoost = ! $retrievalV4 ? 900 : match ($contextDependency) {
             'page_deictic' => 900,
             'mixed' => 260,
@@ -448,12 +450,16 @@ class AiHelperKnowledgeRetriever
             'explicit_topic' => 0,
             default => 50,
         };
+        if ($queryScope === 'global') {
+            $routeBoost = min(260, $routeBoost);
+            $moduleBoost = min(120, $moduleBoost);
+        }
         if ($entry->route_key && $entry->route_key === ($context['route_key'] ?? null)) {
             $score += $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE ? $routeBoost : min(80, $routeBoost);
         } elseif ($entry->module_key && $entry->module_key === ($context['module_key'] ?? null)) {
             $score += $entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE ? $moduleBoost : min(50, $moduleBoost);
         }
-        if ($contextDependency === 'page_deictic') {
+        if ($queryScope !== 'global' && $contextDependency === 'page_deictic') {
             $score += $this->systemGuides->pageHelpPriorityForGuideKey($this->guideKey($entry)) * 1200;
         }
         if ($entry->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
@@ -700,7 +706,7 @@ class AiHelperKnowledgeRetriever
         ];
     }
 
-    private function isRelevantCandidate(array $candidate): bool
+    private function isRelevantCandidate(array $candidate, array $analysis): bool
     {
         $minimumLexicalCoverage = max(
             0.0,
@@ -710,6 +716,10 @@ class AiHelperKnowledgeRetriever
             0.0,
             min(1.0, (float) config('ai_helper.retrieval_min_semantic_similarity', 0.42)),
         );
+        if (($analysis['query_scope'] ?? 'local') === 'global') {
+            $minimumLexicalCoverage = 0.0;
+            $minimumSemanticSimilarity = max(0.32, min(1.0, $minimumSemanticSimilarity));
+        }
 
         return (float) ($candidate['lexical_coverage'] ?? 0)
                 >= $minimumLexicalCoverage

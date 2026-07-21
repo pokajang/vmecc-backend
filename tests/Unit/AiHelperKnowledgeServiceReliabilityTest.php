@@ -93,6 +93,7 @@ class AiHelperKnowledgeServiceReliabilityTest extends TestCase
             'query_analysis' => [
                 'intent' => 'knowledge_question',
                 'source_mode' => 'mixed',
+                'query_scope' => 'global',
                 'topic_keys' => ['inspection', 'extinguisher'],
                 'operation_keys' => ['inspect', 'maintain'],
                 'task_keys' => ['inspection.conduct', 'inspection.physical.maintain'],
@@ -101,6 +102,7 @@ class AiHelperKnowledgeServiceReliabilityTest extends TestCase
             'corpus' => ['ready' => true, 'counts' => []],
         ], 'en');
 
+        $this->assertStringContainsString('"query_scope":"global"', $instructions);
         $this->assertStringContainsString('"operation_keys":["inspect","maintain"]', $instructions);
         $this->assertStringContainsString('"task_keys":["inspection.conduct","inspection.physical.maintain"]', $instructions);
         $this->assertStringContainsString('Do not answer a conduct question with issue verification', $instructions);

@@ -55,6 +55,28 @@ class AiHelperTopicAliasRegistry
         'system_maintenance' => ['system maintenance', 'maintenance mode', 'penyelenggaraan sistem'],
         'audit_log' => ['audit log', 'audit logs', 'activity log', 'log audit', 'rekod aktiviti'],
         'ask_ai' => ['ask ai', 'ai helper', 'pembantu ai'],
+        'system_overview' => [
+            'system',
+            'system overview',
+            'system scope',
+            'application overview',
+            'vmecc overview',
+            'what can i do in vmecc',
+            'what can i do in the system',
+            'overall system',
+            'system flow',
+            'system modules',
+            'system features',
+            'vmecc features',
+            'system guide',
+            'application guide',
+            'bagaimana guna sistem ini',
+            'gambaran keseluruhan',
+            'ciri-ciri sistem',
+            'ciri sistem',
+            'modul dalam sistem',
+            'menu sistem',
+        ],
     ];
 
     /** @return array<int, string> */

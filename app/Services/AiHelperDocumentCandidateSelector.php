@@ -22,6 +22,8 @@ class AiHelperDocumentCandidateSelector
         $pageLimit = max(1, (int) config('ai_helper.retrieval_v4_page_candidate_limit', 4));
         $globalLimit = max($baseLimit, (int) config('ai_helper.retrieval_v4_global_candidate_limit', 12));
         $contextDependency = (string) ($analysis['context_dependency'] ?? 'neutral');
+        $queryScope = (string) ($analysis['query_scope'] ?? 'local');
+        $isGlobalScope = $queryScope === 'global';
 
         $eligible = $ranked->reject(fn (array $item) => (bool) ($item['task_conflict'] ?? false))->values();
         $exact = $ranked->where('exact_match', true)->values();
@@ -39,6 +41,11 @@ class AiHelperDocumentCandidateSelector
             ->take($topicLimit)
             ->values();
         $global = $eligible->take($globalLimit)->values();
+        if ($isGlobalScope) {
+            $global = $eligible->sortByDesc('global_score')
+                ->take($globalLimit)
+                ->values();
+        }
         $page = in_array($contextDependency, ['page_deictic', 'mixed'], true)
             ? $eligible->where('page_match', true)->take($pageLimit)->values()
             : collect();

@@ -288,6 +288,7 @@ SOURCE;
         $queryPlanSummary = json_encode([
             'intent' => data_get($contextEnvelope, 'query_analysis.intent'),
             'source_mode' => data_get($contextEnvelope, 'query_analysis.source_mode'),
+            'query_scope' => data_get($contextEnvelope, 'query_analysis.query_scope'),
             'topic_keys' => array_values((array) data_get($contextEnvelope, 'query_analysis.topic_keys', [])),
             'operation_keys' => array_values((array) data_get($contextEnvelope, 'query_analysis.operation_keys', [])),
             'task_keys' => array_values((array) data_get($contextEnvelope, 'query_analysis.task_keys', [])),

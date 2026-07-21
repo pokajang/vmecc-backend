@@ -100,7 +100,20 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
         $analyzer = new AiHelperKnowledgeQueryAnalyzer;
 
         $this->assertSame('page_deictic', $analyzer->analyze('What can I do here?')['context_dependency']);
+        $this->assertSame('page', $analyzer->analyze('What can I do here?')['query_scope']);
         $this->assertSame('explicit_topic', $analyzer->analyze('How do I apply for leave?')['context_dependency']);
+        $this->assertSame('local', $analyzer->analyze('How do I apply for leave?')['query_scope']);
+    }
+
+    public function test_overview_and_cross_module_questions_are_marked_global_scope(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $this->assertSame('global', $analyzer->analyze('Give me an overview of the system and its modules.')['query_scope']);
+        $this->assertContains('system_overview', $analyzer->analyze('Give me an overview of the system and its modules.')['topic_keys']);
+        $this->assertSame('global', $analyzer->analyze('How do I apply for leave and manage overtime?')['query_scope']);
+        $this->assertSame('global', $analyzer->analyze('Apa gambaran keseluruhan VMECC?')['query_scope']);
+        $this->assertSame('global', $analyzer->analyze('Apakah sistem ini mempunyai modul?')['query_scope']);
     }
 
     public function test_an_explicit_new_topic_does_not_inherit_the_previous_topic(): void
