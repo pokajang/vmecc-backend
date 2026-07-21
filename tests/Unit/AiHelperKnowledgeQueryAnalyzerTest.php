@@ -186,6 +186,29 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
         $this->assertContains('height_rescue', $analyzer->analyze('Panduan untuk mangsa tersangkut di tempat tinggi?')['topic_keys']);
     }
 
+    public function test_follow_up_analysis_tracks_confidence_and_scope_hint(): void
+    {
+        $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze(
+            'What about that?',
+            ['How do I apply for leave?'],
+        );
+
+        $this->assertTrue($analysis['follow_up']);
+        $this->assertSame('medium', $analysis['follow_up_confidence']);
+        $this->assertSame('none', $analysis['scope_adjustment_hint']);
+    }
+
+    public function test_cross_module_followup_does_not_inherit_context_but_flags_scope_hint(): void
+    {
+        $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze(
+            'How do I process salary claims?',
+            ['How do I apply for leave?'],
+        );
+
+        $this->assertFalse($analysis['follow_up']);
+        $this->assertSame('cross_module_candidate', $analysis['scope_adjustment_hint']);
+    }
+
     public function test_it_recognizes_uploaded_guide_catalogue_phrasing(): void
     {
         $analyzer = new AiHelperKnowledgeQueryAnalyzer;

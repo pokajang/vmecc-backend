@@ -287,6 +287,42 @@ class InspectionHseInspectionTest extends TestCase
         ]);
     }
 
+    public function test_hse_submission_consumes_resumed_draft_after_relinking_its_media(): void
+    {
+        $user = $this->actingAsInspectionUser();
+        [$media, $photo] = $this->managedPhoto($user, 'hse-resumed-draft-submit');
+        $payload = $this->version2Payload();
+        $payload['photos'] = [$photo];
+
+        $draft = $this->postJson('/api/reports/drafts', [
+            'report_type' => 'inspection',
+            'create_new' => true,
+            'payload' => $payload,
+        ])->assertCreated();
+        $draftId = (string) $draft->json('data.draft_id');
+
+        $submitted = $this->postJson('/api/reports', [
+            'display_id' => 'INS-HSE-RESUMED-001',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'source_draft_id' => $draftId,
+            'payload' => $payload,
+        ])->assertCreated();
+        $reportUid = (string) $submitted->json('data.id');
+
+        $this->assertDatabaseMissing('report_drafts', ['draft_id' => $draftId]);
+        $this->assertDatabaseMissing('report_media_links', [
+            'report_media_id' => $media->id,
+            'parent_type' => 'report_draft',
+            'parent_key' => $draftId,
+        ]);
+        $this->assertDatabaseHas('report_media_links', [
+            'report_media_id' => $media->id,
+            'parent_type' => 'report',
+            'parent_key' => $reportUid,
+        ]);
+    }
+
     public function test_hse_v2_report_can_be_read_updated_and_soft_deleted_with_analytics(): void
     {
         $user = $this->actingAsInspectionUser();

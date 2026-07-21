@@ -34,7 +34,9 @@ final readonly class AiHelperQueryPlan
         public array $revisions,
         public array $documentCodes,
         public bool $followUp,
+        public string $followUpConfidence,
         public bool $requiresMultipleDocuments,
+        public string $scopeAdjustmentHint,
         public bool $sensitiveRequest,
     ) {}
 
@@ -61,7 +63,9 @@ final readonly class AiHelperQueryPlan
             'revisions' => $this->revisions,
             'document_codes' => $this->documentCodes,
             'follow_up' => $this->followUp,
+            'follow_up_confidence' => $this->followUpConfidence,
             'requires_multiple_documents' => $this->requiresMultipleDocuments,
+            'scope_adjustment_hint' => $this->scopeAdjustmentHint,
             'sensitive_request' => $this->sensitiveRequest,
         ];
     }

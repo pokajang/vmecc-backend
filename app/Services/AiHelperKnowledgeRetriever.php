@@ -155,9 +155,22 @@ class AiHelperKnowledgeRetriever
         }
         $recoveryAttempted = false;
         $recoverySucceeded = false;
-        if ($retrievalV4 && ($forceRecovery || $rankedChunks->isEmpty()) && $rankedDocuments->isNotEmpty()) {
+        $scopeRecoveryReason = null;
+        $shouldAttemptScopeRecovery = $retrievalV4
+            && ! $forceRecovery
+            && ($analysis['query_scope'] ?? null) === 'local'
+            && ($analysis['context_dependency'] ?? null) !== 'page_deictic'
+            && $rankedDocuments->isNotEmpty()
+            && $rankedChunks->isNotEmpty()
+            && $this->isScopeRecoveryHelpful($analysis, $rankedChunks, $exactDocuments, $selectedDocuments);
+        if ($retrievalV4 && ($forceRecovery || $rankedChunks->isEmpty() || $shouldAttemptScopeRecovery) && $rankedDocuments->isNotEmpty()) {
             $recoveryAttempted = true;
             $recoveryAnalysis = $analysis;
+            if ($shouldAttemptScopeRecovery) {
+                $scopeRecoveryReason = $this->scopeRecoveryReason($analysis, $rankedChunks);
+                $recoveryAnalysis['query_scope'] = 'global';
+                $recoveryAnalysis['scope_adjustment_hint'] = 'global_recovery';
+            }
             $recoveryAnalysis['terms'] = collect([
                 ...(array) ($analysis['terms'] ?? []),
                 ...(array) ($analysis['expanded_terms'] ?? []),
@@ -171,6 +184,11 @@ class AiHelperKnowledgeRetriever
                 ->take($recoveryLimit)
                 ->values();
             $recoveryDocuments = $this->hydrateSelectedDocuments($recoveryDocuments);
+            if ($recoveryAttempted && $forceRecovery) {
+                $scopeRecoveryReason = 'forced_recovery';
+            } elseif (! $scopeRecoveryReason) {
+                $scopeRecoveryReason = $rankedChunks->isEmpty() ? 'empty_local_evidence' : $scopeRecoveryReason;
+            }
             $recoveryChunks = $this->chunkCandidates($recoveryDocuments, $recoveryAnalysis, $queryEmbedding)
                 ->filter(fn (array $candidate) => ($candidate['protected_match'] ?? false)
                     || $this->isRelevantCandidate($candidate, $recoveryAnalysis))
@@ -313,13 +331,17 @@ class AiHelperKnowledgeRetriever
                 'operation_keys' => $analysis['operation_keys'] ?? [],
                 'task_keys' => $analysis['task_keys'] ?? [],
                 'query_scope' => $analysis['query_scope'] ?? null,
+                'scope_adjustment_hint' => $analysis['scope_adjustment_hint'] ?? 'none',
                 'requires_multiple_documents' => (bool) ($analysis['requires_multiple_documents'] ?? false),
                 'follow_up' => (bool) ($analysis['follow_up'] ?? false),
+                'follow_up_confidence' => $analysis['follow_up_confidence'] ?? 'none',
             ],
             'candidate_lanes' => $candidateLanes,
             'recovery_attempted' => $recoveryAttempted,
             'recovery_succeeded' => $recoverySucceeded,
+            'scope_recovery' => $scopeRecoveryReason !== null,
             'recovery_forced' => $forceRecovery,
+            'scope_recovery_reason' => $scopeRecoveryReason,
             'recovery_expansion_terms' => $recoveryAttempted
                 ? array_values((array) ($analysis['expanded_terms'] ?? []))
                 : [],
@@ -725,6 +747,51 @@ class AiHelperKnowledgeRetriever
                 >= $minimumLexicalCoverage
             || (float) ($candidate['semantic_score'] ?? 0)
                 >= $minimumSemanticSimilarity;
+    }
+
+    private function isScopeRecoveryHelpful(
+        array $analysis,
+        Collection $rankedChunks,
+        Collection $exactDocuments,
+        Collection $selectedDocuments,
+    ): bool {
+        if ($exactDocuments->isNotEmpty()) {
+            return false;
+        }
+        if ($selectedDocuments->isEmpty()) {
+            return false;
+        }
+        $topLexical = (float) ($rankedChunks->max('lexical_coverage') ?? 0);
+        $topSemantic = (float) ($rankedChunks->max('semantic_score') ?? 0);
+        $scopeHint = (string) ($analysis['scope_adjustment_hint'] ?? 'none');
+
+        return $topLexical <= 0.09
+            || $topSemantic <= 0.24
+            || in_array($scopeHint, ['global', 'cross_module_candidate'], true);
+    }
+
+    private function scopeRecoveryReason(
+        array $analysis,
+        Collection $rankedChunks,
+    ): string {
+        $scopeHint = (string) ($analysis['scope_adjustment_hint'] ?? 'none');
+        if ($scopeHint === 'cross_module_candidate') {
+            return 'cross_module_query';
+        }
+        if ($scopeHint === 'global') {
+            return 'global_query_hint';
+        }
+
+        $topLexical = (float) ($rankedChunks->max('lexical_coverage') ?? 0);
+        $topSemantic = (float) ($rankedChunks->max('semantic_score') ?? 0);
+        if ($topLexical < 0.06) {
+            return 'low_local_coverage_lexical';
+        }
+        if ($topSemantic < 0.16) {
+            return 'low_local_coverage_semantic';
+        }
+
+        return 'scope_broadening';
     }
 
     /**

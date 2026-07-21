@@ -20,6 +20,7 @@ use App\Services\InspectionPolicy;
 use App\Services\InspectionSessionReportPayloadBuilder;
 use App\Services\InspectionSessionResolverService;
 use App\Services\InspectionWorkflowService;
+use App\Services\ReportDraftConsumptionService;
 use App\Services\ReportMediaService;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Database\QueryException;
@@ -68,6 +69,7 @@ class InspectionSessionController extends Controller
         private readonly InspectionWorkflowService $inspectionWorkflowService,
         private readonly WorkflowNotificationService $workflowNotificationService,
         private readonly ReportMediaService $reportMediaService,
+        private readonly ReportDraftConsumptionService $reportDraftConsumptionService,
         private readonly InspectionDutyConfirmationService $dutyConfirmations,
         private readonly InspectionDutyContextResolver $dutyContextResolver,
         private readonly InspectionPolicy $inspectionPolicy,
@@ -692,12 +694,14 @@ class InspectionSessionController extends Controller
             'report_remarks' => ['nullable', 'string', 'max:5000'],
             'reportRemarks' => ['nullable', 'string', 'max:5000'],
             'photos' => ['nullable', 'array', 'max:10'],
+            'source_draft_id' => ['nullable', 'string', 'max:80'],
         ]);
         $expectedSessionVersion = (int) ($data['session_version'] ?? $data['sessionVersion'] ?? 0);
         $submissionKey = $this->text($request->input('submission_key', ''));
         $submittedAt = $this->submittedAtFromRequest($request);
         $reportRemarks = $this->text($data['report_remarks'] ?? $data['reportRemarks'] ?? '');
         $reportPhotos = is_array($data['photos'] ?? null) ? $data['photos'] : [];
+        $sourceDraftId = $this->text($data['source_draft_id'] ?? '');
 
         if ($submissionKey !== '') {
             $existing = Report::query()
@@ -705,6 +709,11 @@ class InspectionSessionController extends Controller
                 ->where('submission_key', $submissionKey)
                 ->first();
             if ($existing) {
+                DB::transaction(fn () => $this->reportDraftConsumptionService->consumeOwnedDraft(
+                    (int) $user->id,
+                    $sourceDraftId,
+                    'inspection',
+                ));
                 $this->reportMediaService->syncPayloadLinks(
                     is_array($existing->payload) ? $existing->payload : [],
                     'report',
@@ -736,7 +745,7 @@ class InspectionSessionController extends Controller
             self::FIRE_EXTINGUISHER_TYPE_KEY,
         );
 
-        $submission = DB::transaction(function () use ($session, $expectedSessionVersion, $submissionKey, $request, $user, $submittedAt, $dutyContext, $reportRemarks, $reportPhotos): array {
+        $submission = DB::transaction(function () use ($session, $expectedSessionVersion, $submissionKey, $sourceDraftId, $request, $user, $submittedAt, $dutyContext, $reportRemarks, $reportPhotos): array {
             $lockedSession = InspectionSession::query()->lockForUpdate()->findOrFail($session->id);
             $lockedSession->fill([
                 'duty_context_status' => $dutyContext['status'] ?? null,
@@ -750,6 +759,12 @@ class InspectionSessionController extends Controller
                     ->where('submission_key', $submissionKey)
                     ->first();
                 if ($existing) {
+                    $this->reportDraftConsumptionService->consumeOwnedDraft(
+                        (int) $user->id,
+                        $sourceDraftId,
+                        'inspection',
+                    );
+
                     return ['report' => $existing, 'replayed' => true];
                 }
             }
@@ -851,6 +866,11 @@ class InspectionSessionController extends Controller
 
             $this->inspectionCheckRowSyncService->syncForReport($report->refresh(), (int) $user->id);
             $this->reportMediaService->syncPayloadLinks($payload, 'report', (string) $report->report_uid, (int) $user->id, 'inspection');
+            $this->reportDraftConsumptionService->consumeOwnedDraft(
+                (int) $user->id,
+                $sourceDraftId,
+                'inspection',
+            );
 
             return ['report' => $report->load('timelineEntries'), 'replayed' => false];
         });

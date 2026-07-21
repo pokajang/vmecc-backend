@@ -245,7 +245,13 @@ class ErcoReportPdfTest extends TestCase
                 'attendance' => [['memberId' => 'member-1', 'name' => 'Responder One']],
             ],
             'chronology' => [['time' => '09:00', 'action' => 'Response started.']],
-            'postIncidentAnalysis' => ['strengths' => ['Prompt mobilisation'], 'photos' => []],
+            'postIncidentAnalysis' => [
+                'strengths' => ['Prompt mobilisation'],
+                'photos' => [[
+                    'id' => 'required-photo-1',
+                    'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                ]],
+            ],
         ];
     }
 

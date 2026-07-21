@@ -48,6 +48,8 @@ class AiHelperRetrievalV4Test extends TestCase
         $this->assertSame($leaveGuide->title, $result['guidance'][0]['title']);
         $this->assertNotSame($inspectionGuide->title, $result['guidance'][0]['title']);
         $this->assertGreaterThanOrEqual(1, $result['trace']['candidate_lanes']['topic']);
+        $this->assertSame('none', $result['trace']['query_plan']['follow_up_confidence']);
+        $this->assertSame('none', $result['trace']['query_plan']['scope_adjustment_hint']);
     }
 
     public function test_bahasa_melayu_alias_retrieves_the_same_leave_guide(): void

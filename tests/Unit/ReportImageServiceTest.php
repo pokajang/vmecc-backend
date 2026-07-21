@@ -69,6 +69,49 @@ class ReportImageServiceTest extends TestCase
         }
     }
 
+    public function test_it_applies_phone_exif_orientation_before_storing_the_photo(): void
+    {
+        $image = imagecreatetruecolor(80, 40);
+        $red = imagecolorallocate($image, 220, 20, 20);
+        $green = imagecolorallocate($image, 20, 180, 20);
+        $blue = imagecolorallocate($image, 20, 20, 220);
+        $yellow = imagecolorallocate($image, 220, 200, 20);
+        imagefilledrectangle($image, 0, 0, 39, 19, $red);
+        imagefilledrectangle($image, 40, 0, 79, 19, $green);
+        imagefilledrectangle($image, 0, 20, 39, 39, $blue);
+        imagefilledrectangle($image, 40, 20, 79, 39, $yellow);
+
+        $basePath = tempnam(sys_get_temp_dir(), 'report-image-exif-');
+        $path = $basePath.'.jpg';
+        imagejpeg($image, $path, 95);
+        imagedestroy($image);
+
+        $jpeg = file_get_contents($path);
+        $exif = "Exif\0\0II\x2A\x00\x08\x00\x00\x00\x01\x00"
+            ."\x12\x01\x03\x00\x01\x00\x00\x00\x06\x00\x00\x00\x00\x00\x00\x00";
+        file_put_contents(
+            $path,
+            substr($jpeg, 0, 2)."\xFF\xE1".pack('n', strlen($exif) + 2).$exif.substr($jpeg, 2),
+        );
+
+        try {
+            $result = app(ReportImageService::class)->normalize(
+                new UploadedFile($path, 'phone-photo.jpg', 'image/jpeg', null, true),
+            );
+
+            $this->assertSame(40, $result['width']);
+            $this->assertSame(80, $result['height']);
+
+            $normalized = imagecreatefromstring($result['bytes']);
+            $topLeft = imagecolorsforindex($normalized, imagecolorat($normalized, 5, 5));
+            imagedestroy($normalized);
+            $this->assertGreaterThan($topLeft['red'], $topLeft['blue']);
+        } finally {
+            @unlink($basePath);
+            @unlink($path);
+        }
+    }
+
     public function test_it_rejects_a_file_that_claims_to_be_an_image_but_has_invalid_content(): void
     {
         $file = UploadedFile::fake()->createWithContent('spoofed.jpg', 'not an image');

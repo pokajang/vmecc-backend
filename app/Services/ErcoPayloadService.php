@@ -84,7 +84,7 @@ final class ErcoPayloadService
 
         if ($forSubmit) {
             $rules = array_replace($rules, [
-                'incidentDate' => ['required', 'date_format:Y-m-d'],
+                'incidentDate' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
                 'incidentTime' => ['required', 'date_format:H:i'],
                 'weather' => ['required', 'string', 'max:190'],
                 'incidentType' => ['required', 'string', 'max:190'],
@@ -99,12 +99,26 @@ final class ErcoPayloadService
                 'postIncidentAnalysis' => ['required', 'array'],
                 'postIncidentAnalysis.strengths' => ['required', 'array', 'min:1', 'max:50'],
                 'postIncidentAnalysis.strengths.*' => ['required', 'string', 'max:2000'],
+                'postIncidentAnalysis.photos' => ['required', 'array', 'min:1', 'max:10'],
             ]);
         }
 
         $validator = Validator::make($payload, $rules);
         $validator->after(function ($validator) use ($payload, $forSubmit): void {
             if ($forSubmit) {
+                $incidentDate = trim((string) ($payload['incidentDate'] ?? ''));
+                $incidentTime = trim((string) ($payload['incidentTime'] ?? ''));
+                if (
+                    $incidentDate === now()->format('Y-m-d')
+                    && preg_match('/^\d{2}:\d{2}$/', $incidentTime)
+                    && $incidentTime > now()->format('H:i')
+                ) {
+                    $validator->errors()->add(
+                        'incidentTime',
+                        'The incident time cannot be in the future.',
+                    );
+                }
+
                 $attendance = data_get($payload, 'respondingTeam.attendance', []);
                 $hasResponder = is_array($attendance) && collect($attendance)->contains(
                     fn ($row) => is_array($row)

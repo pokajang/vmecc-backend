@@ -289,6 +289,8 @@ SOURCE;
             'intent' => data_get($contextEnvelope, 'query_analysis.intent'),
             'source_mode' => data_get($contextEnvelope, 'query_analysis.source_mode'),
             'query_scope' => data_get($contextEnvelope, 'query_analysis.query_scope'),
+            'scope_adjustment_hint' => data_get($contextEnvelope, 'query_analysis.scope_adjustment_hint'),
+            'follow_up_confidence' => data_get($contextEnvelope, 'query_analysis.follow_up_confidence'),
             'topic_keys' => array_values((array) data_get($contextEnvelope, 'query_analysis.topic_keys', [])),
             'operation_keys' => array_values((array) data_get($contextEnvelope, 'query_analysis.operation_keys', [])),
             'task_keys' => array_values((array) data_get($contextEnvelope, 'query_analysis.task_keys', [])),

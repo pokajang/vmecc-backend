@@ -28,7 +28,8 @@ class AiHelperKnowledgeQueryAnalyzer
             : [];
         $followUp = is_string($previous)
             && $this->looksLikeFollowUp($normalized)
-            && $this->topicsAreCompatible($currentTopics, $previousTopics);
+            && $this->topicsAreCompatible($currentTopics, $previousTopics, $normalized);
+        $followUpConfidence = $this->followUpConfidence($normalized, $currentTopics, $previousTopics, $followUp);
         $retrievalQuery = $followUp && is_string($previous)
             ? $previous."\n".$message
             : $message;
@@ -52,6 +53,7 @@ class AiHelperKnowledgeQueryAnalyzer
             $taskKeys,
         );
         $subqueries = $this->subqueries($retrievalQuery);
+        $scopeAdjustmentTopics = $followUp ? $currentTopics : $topicKeys;
 
         preg_match_all('/\b(?:annex(?:e)?|lampiran)\s*0*(\d{1,3})\b/i', $retrievalQuery, $annexMatches);
         preg_match_all('/\b(?:rev(?:ision)?[.\s:-]*)0*(\d{1,4})\b/i', $retrievalQuery, $revisionMatches);
@@ -76,7 +78,9 @@ class AiHelperKnowledgeQueryAnalyzer
             revisions: collect($revisionMatches[1] ?? [])->map(fn ($value) => ltrim((string) $value, '0') ?: '0')->unique()->values()->all(),
             documentCodes: collect($codeMatches[0] ?? [])->map(fn ($value) => Str::upper($value))->unique()->values()->all(),
             followUp: $followUp && is_string($previous),
+            followUpConfidence: $followUpConfidence,
             requiresMultipleDocuments: $this->requiresMultipleDocuments($normalized) || count($subqueries) > 1,
+            scopeAdjustmentHint: $this->scopeAdjustmentHint($normalized, $scopeAdjustmentTopics, $contextDependency, $currentTopics),
             sensitiveRequest: $this->isSensitiveRequest($normalized),
         );
 
@@ -154,7 +158,7 @@ class AiHelperKnowledgeQueryAnalyzer
 
     private function looksLikeFollowUp(string $message): bool
     {
-        if (Str::length($message) <= 55 && preg_match('/\b(it|that|those|them|this|next|previous|above|itu|tersebut|seterusnya|tadi)\b/u', $message)) {
+        if (Str::length($message) <= 64 && preg_match('/\b(it|that|those|them|this|next|previous|above|itu|tersebut|seterusnya|tadi)\b/u', $message)) {
             return true;
         }
 
@@ -162,10 +166,10 @@ class AiHelperKnowledgeQueryAnalyzer
     }
 
     /** @param array<int, string> $currentTopics @param array<int, string> $previousTopics */
-    private function topicsAreCompatible(array $currentTopics, array $previousTopics): bool
+    private function topicsAreCompatible(array $currentTopics, array $previousTopics, string $message): bool
     {
         if ($currentTopics === [] || $previousTopics === []) {
-            return true;
+            return $this->containsFollowUpPronoun($message);
         }
 
         if (array_intersect($currentTopics, $previousTopics) !== []) {
@@ -176,6 +180,67 @@ class AiHelperKnowledgeQueryAnalyzer
 
         return array_intersect($currentTopics, $inspectionFamily) !== []
             && array_intersect($previousTopics, $inspectionFamily) !== [];
+    }
+
+    private function containsFollowUpPronoun(string $message): bool
+    {
+        return preg_match('/\b(it|that|those|them|this|next|previous|above|here|there|itu|tersebut|seterusnya|tadi)\b/u', $message) === 1;
+    }
+
+    private function followUpConfidence(
+        string $message,
+        array $currentTopics,
+        array $previousTopics,
+        bool $followUp,
+    ): string {
+        if (! $followUp || $previousTopics === []) {
+            return 'none';
+        }
+        if ($currentTopics === []) {
+            return $this->containsFollowUpPronoun($message) ? 'medium' : 'low';
+        }
+        if (array_intersect($currentTopics, $previousTopics) !== []) {
+            return 'high';
+        }
+        if (count($previousTopics) > 1) {
+            return 'medium';
+        }
+
+        return 'low';
+    }
+
+    private function scopeAdjustmentHint(
+        string $message,
+        array $topicKeys,
+        string $contextDependency,
+        array $currentTopics,
+    ): string {
+        if ($contextDependency === 'page_deictic') {
+            return 'none';
+        }
+        if (count($currentTopics) >= 2) {
+            return 'global';
+        }
+        if ($this->containsCrossModuleTopic($topicKeys)) {
+            return 'cross_module_candidate';
+        }
+        if ($contextDependency === 'explicit_topic'
+            && preg_match('/\b(?:overview|module|modules|roles|permissions|all)\b/u', $message) === 1) {
+            return 'global';
+        }
+
+        return 'none';
+    }
+
+    private function containsCrossModuleTopic(array $topicKeys): bool
+    {
+        $crossModuleKeys = [
+            'salary_claim', 'salary_assignment', 'payroll', 'payment', 'staff', 'team',
+            'role_permission', 'module_activation', 'user_administration', 'workflow_setting', 'workflow_rule',
+            'roster', 'dashboard', 'holiday',
+        ];
+
+        return collect($topicKeys)->intersect($crossModuleKeys)->isNotEmpty();
     }
 
     private function isInspectionCapabilityCatalogueIntent(string $message): bool

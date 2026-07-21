@@ -15,6 +15,7 @@ use App\Services\InspectionDutyContextResolver;
 use App\Services\InspectionPayloadService;
 use App\Services\InspectionPolicy;
 use App\Services\InspectionSessionReportPayloadBuilder;
+use App\Services\ReportDraftConsumptionService;
 use App\Services\ReportingWorkflowService;
 use App\Services\ReportMediaService;
 use App\Services\ReportReadAuthorizationService;
@@ -39,6 +40,7 @@ class ReportController extends Controller
         private readonly InspectionPayloadService $inspectionPayloadService,
         private readonly InspectionSessionReportPayloadBuilder $inspectionSessionReportPayloadBuilder,
         private readonly ReportMediaService $reportMediaService,
+        private readonly ReportDraftConsumptionService $reportDraftConsumptionService,
         private readonly ReportReadAuthorizationService $reportReadAuthorizationService,
         private readonly DrillPayloadService $drillPayloadService,
         private readonly ErcoPayloadService $ercoPayloadService,
@@ -244,6 +246,7 @@ class ReportController extends Controller
         $data = $request->validate([
             'report_uid' => ['nullable', 'string', 'max:190'],
             'submission_key' => ['nullable', 'string', 'max:190'],
+            'source_draft_id' => ['nullable', 'string', 'max:80'],
             'display_id' => ['required', 'string', 'max:190'],
             'report_type' => ['required', 'string', 'max:64'],
             'payload' => ['required', 'array'],
@@ -297,6 +300,7 @@ class ReportController extends Controller
         }
         $action = $status === self::STATUS_DRAFT ? 'DraftSaved' : 'Submitted';
         $submissionKey = trim((string) ($data['submission_key'] ?? ''));
+        $sourceDraftId = trim((string) ($data['source_draft_id'] ?? ''));
         $checklistIndex = $isInspection
             ? $this->extractInspectionChecklistIndex((array) $data['payload'])
             : ['ids' => [], 'labels' => [], 'hasChecklist' => false];
@@ -328,6 +332,13 @@ class ReportController extends Controller
                 ->with('timelineEntries')
                 ->first();
             if ($existing instanceof Report) {
+                $shouldConsumeSourceDraft = $status === self::STATUS_SUBMITTED;
+                DB::transaction(fn () => $this->reportDraftConsumptionService->consumeOwnedDraft(
+                    (int) $user->id,
+                    $shouldConsumeSourceDraft ? $sourceDraftId : '',
+                    $reportType,
+                ));
+
                 return response()->json([
                     'data' => array_merge($this->formatReport($existing), [
                         'idempotent_replay' => true,
@@ -348,7 +359,7 @@ class ReportController extends Controller
             : null;
 
         try {
-            $report = DB::transaction(function () use ($data, $status, $action, $submissionKey, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType, $reportUid, $dutyContext) {
+            $report = DB::transaction(function () use ($data, $status, $action, $submissionKey, $sourceDraftId, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType, $reportUid, $dutyContext) {
                 $report = Report::create([
                     'report_uid' => $reportUid,
                     'display_id' => trim((string) $data['display_id']),
@@ -382,6 +393,13 @@ class ReportController extends Controller
                     $this->inspectionCheckRowSyncService->syncForReport($report, (int) $user->id);
                 }
                 $this->reportMediaService->syncPayloadLinks((array) $report->payload, 'report', (string) $report->report_uid, (int) $user->id, $reportType);
+                if ($status === self::STATUS_SUBMITTED) {
+                    $this->reportDraftConsumptionService->consumeOwnedDraft(
+                        (int) $user->id,
+                        $sourceDraftId,
+                        $reportType,
+                    );
+                }
 
                 return $report->load('timelineEntries');
             });
@@ -393,6 +411,13 @@ class ReportController extends Controller
                     ->with('timelineEntries')
                     ->first();
                 if ($existing instanceof Report) {
+                    $shouldConsumeSourceDraft = $status === self::STATUS_SUBMITTED;
+                    DB::transaction(fn () => $this->reportDraftConsumptionService->consumeOwnedDraft(
+                        (int) $user->id,
+                        $shouldConsumeSourceDraft ? $sourceDraftId : '',
+                        $reportType,
+                    ));
+
                     return response()->json([
                         'data' => array_merge($this->formatReport($existing), [
                             'idempotent_replay' => true,
@@ -431,6 +456,7 @@ class ReportController extends Controller
         $report = $this->findEditableReport($request, $reportUid);
         $data = $request->validate([
             'payload' => ['required', 'array'],
+            'source_draft_id' => ['nullable', 'string', 'max:80'],
             'remarks' => ['nullable', 'string', 'max:2000'],
             'version' => ['required', 'integer', 'min:1'],
             'status' => ['nullable', 'string', 'in:Submitted,Draft'],
@@ -558,7 +584,8 @@ class ReportController extends Controller
                 : $this->dutyContextResolver->resolve($user))
             : null;
 
-        DB::transaction(function () use ($report, $data, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType, $dutyContext) {
+        $sourceDraftId = trim((string) ($data['source_draft_id'] ?? ''));
+        DB::transaction(function () use ($report, $data, $sourceDraftId, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType, $dutyContext) {
             $fromStatus = $report->status;
             $report->update([
                 'payload' => $data['payload'],
@@ -593,6 +620,13 @@ class ReportController extends Controller
                 $this->inspectionCheckRowSyncService->syncForReport($report, (int) $user->id);
             }
             $this->reportMediaService->syncPayloadLinks((array) $report->payload, 'report', (string) $report->report_uid, (int) $user->id, $reportType);
+            if ($targetStatus === self::STATUS_SUBMITTED) {
+                $this->reportDraftConsumptionService->consumeOwnedDraft(
+                    (int) $user->id,
+                    $sourceDraftId,
+                    $reportType,
+                );
+            }
         });
 
         $report->load('timelineEntries');

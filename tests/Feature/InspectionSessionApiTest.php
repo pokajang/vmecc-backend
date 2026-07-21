@@ -8,6 +8,7 @@ use App\Models\InspectionFireExtinguisher;
 use App\Models\InspectionSession;
 use App\Models\InspectionSessionLocationProgress;
 use App\Models\Report;
+use App\Models\ReportDraft;
 use App\Models\ReportMedia;
 use App\Models\Roster;
 use App\Models\Team;
@@ -912,6 +913,14 @@ class InspectionSessionApiTest extends TestCase
     public function test_submitting_session_creates_one_compiled_inspection_report(): void
     {
         $user = $this->inspectionUser('Inspector Submitter');
+        $draft = ReportDraft::query()->create([
+            'user_id' => $user->id,
+            'draft_id' => 'drf_inspection_session_submit',
+            'report_type' => 'inspection',
+            'payload' => [],
+            'saved_at' => now(),
+            'version' => 1,
+        ]);
         $first = $this->extinguisher(['id_loc_no' => 'ADO-001', 'barcode_no' => 'BAR-001']);
         $second = $this->extinguisher(['id_loc_no' => 'ADO-002', 'barcode_no' => 'BAR-002']);
         $sessionUid = $this->createSession($user);
@@ -930,6 +939,7 @@ class InspectionSessionApiTest extends TestCase
         $clientSubmittedAt = Carbon::parse('2026-07-08T21:07:00+08:00');
         $submit = $this->actingAs($user)->postJson("/api/inspection/sessions/{$sessionUid}/submit", [
             'display_id' => 'INS-FE-SESSION-001',
+            'source_draft_id' => $draft->draft_id,
             'submitted_at' => $clientSubmittedAt->toIso8601String(),
             'report_remarks' => 'General extinguisher room evidence.',
             'photos' => [[
@@ -940,6 +950,7 @@ class InspectionSessionApiTest extends TestCase
         ]);
 
         $submit->assertCreated();
+        $this->assertDatabaseMissing('report_drafts', ['id' => $draft->id]);
         $this->assertSame(1, Report::query()->where('report_type', 'inspection')->count());
         $report = Report::query()->where('display_id', 'INS-FE-SESSION-001')->firstOrFail();
         $this->assertSame($sessionUid, $report->payload['inspectionSessionUid']);

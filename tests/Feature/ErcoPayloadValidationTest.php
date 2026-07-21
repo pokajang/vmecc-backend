@@ -68,6 +68,36 @@ class ErcoPayloadValidationTest extends TestCase
         $this->assertDatabaseMissing('reports', ['display_id' => 'ERCO-INVALID-001']);
     }
 
+    public function test_erco_final_submission_requires_incident_evidence_and_rejects_future_dates(): void
+    {
+        $this->travelTo(now()->setDate(2026, 7, 21)->setTime(10, 30));
+        $user = $this->reporter();
+        $payload = $this->validPayload();
+        $payload['incidentDate'] = now()->addDay()->format('Y-m-d');
+        $payload['postIncidentAnalysis']['photos'] = [];
+
+        $this->actingAs($user)->postJson('/api/reports', [
+            'display_id' => 'ERCO-EVIDENCE-REQUIRED-001',
+            'report_type' => 'erco',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ])->assertUnprocessable()->assertJsonValidationErrors([
+            'incidentDate',
+            'postIncidentAnalysis.photos',
+        ]);
+
+        $payload = $this->validPayload();
+        $payload['incidentDate'] = '2026-07-21';
+        $payload['incidentTime'] = '10:31';
+
+        $this->postJson('/api/reports', [
+            'display_id' => 'ERCO-FUTURE-TIME-001',
+            'report_type' => 'erco',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ])->assertUnprocessable()->assertJsonValidationErrors(['incidentTime']);
+    }
+
     public function test_erco_draft_accepts_incomplete_progress_but_rejects_malformed_rows(): void
     {
         $user = $this->reporter();
@@ -169,7 +199,10 @@ class ErcoPayloadValidationTest extends TestCase
                 'strengths' => ['Prompt mobilisation'],
                 'resourcesMobilised' => ['Fire appliance'],
                 'improvementOpportunities' => ['Improve radio checks'],
-                'photos' => [],
+                'photos' => [[
+                    'id' => 'required-photo-1',
+                    'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                ]],
             ],
         ];
     }

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Report;
+use App\Models\ReportDraft;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -160,13 +161,117 @@ class ReportApiWorkflowTest extends TestCase
         $first->assertJsonPath('data.recordActions.download.allowed', true);
         $first->assertJsonPath('data.recordActions.download.format', 'json');
         $reportUid = (string) $first->json('data.id');
+        $draft = ReportDraft::query()->create([
+            'user_id' => $user->id,
+            'draft_id' => 'drf_fitness_replay_cleanup',
+            'report_type' => 'fitness-test',
+            'payload' => $payload['payload'],
+            'saved_at' => now(),
+            'version' => 1,
+        ]);
 
-        $second = $this->postJson('/api/reports', $payload);
+        $second = $this->postJson('/api/reports', [
+            ...$payload,
+            'source_draft_id' => $draft->draft_id,
+        ]);
         $second->assertOk();
         $second->assertJsonPath('data.id', $reportUid);
         $second->assertJsonPath('data.idempotent_replay', true);
 
         $this->assertDatabaseCount('reports', 1);
+        $this->assertDatabaseMissing('report_drafts', ['id' => $draft->id]);
+    }
+
+    public function test_submitting_a_resumed_draft_consumes_it_for_each_standard_report_module(): void
+    {
+        $modules = [
+            ['erco', 'ERCO Reporter', 'reports.erco.view', 'ERCO-DRAFT-001', $this->ercoPayload('Zone E')],
+            ['drill', 'Drill Reporter', 'reports.drill.view', 'DRILL-DRAFT-001', $this->drillPayload('Zone D')],
+            ['fitness-test', 'Fitness Reporter', 'reports.fitness.view', 'FIT-DRAFT-001', $this->fitnessPayload('Zone F')],
+        ];
+
+        foreach ($modules as [$reportType, $role, $permission, $displayId, $payload]) {
+            $user = User::factory()->create(['status' => 'active']);
+            $this->assignWorkflowRole($user, $role, $permission);
+            $draft = ReportDraft::query()->create([
+                'user_id' => $user->id,
+                'draft_id' => 'drf_'.str_replace('-', '_', $reportType),
+                'report_type' => $reportType,
+                'payload' => $payload,
+                'saved_at' => now(),
+                'version' => 1,
+            ]);
+
+            $this->actingAs($user)->postJson('/api/reports', [
+                'display_id' => $displayId,
+                'report_type' => $reportType,
+                'status' => 'Submitted',
+                'source_draft_id' => $draft->draft_id,
+                'payload' => $payload,
+            ])->assertCreated();
+
+            $this->assertDatabaseMissing('report_drafts', ['id' => $draft->id]);
+        }
+    }
+
+    public function test_draft_save_does_not_consume_its_source_draft(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($user, 'Drill Reporter', 'reports.drill.view');
+        $draft = ReportDraft::query()->create([
+            'user_id' => $user->id,
+            'draft_id' => 'drf_drill_still_editing',
+            'report_type' => 'drill',
+            'payload' => $this->drillPayload('Zone Draft'),
+            'saved_at' => now(),
+            'version' => 1,
+        ]);
+
+        $this->actingAs($user)->postJson('/api/reports', [
+            'display_id' => 'DRILL-DRAFT-SAVE-001',
+            'report_type' => 'drill',
+            'status' => 'Draft',
+            'source_draft_id' => $draft->draft_id,
+            'payload' => $this->drillPayload('Zone Draft'),
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('report_drafts', ['id' => $draft->id]);
+    }
+
+    public function test_submission_cannot_consume_another_users_or_another_modules_draft(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $otherUser = User::factory()->create(['status' => 'active']);
+        $this->assignWorkflowRole($user, 'Drill Reporter', 'reports.drill.view');
+        $foreignDraft = ReportDraft::query()->create([
+            'user_id' => $otherUser->id,
+            'draft_id' => 'drf_foreign_drill',
+            'report_type' => 'drill',
+            'payload' => [],
+            'saved_at' => now(),
+            'version' => 1,
+        ]);
+        $otherModuleDraft = ReportDraft::query()->create([
+            'user_id' => $user->id,
+            'draft_id' => 'drf_owned_fitness',
+            'report_type' => 'fitness-test',
+            'payload' => [],
+            'saved_at' => now(),
+            'version' => 1,
+        ]);
+
+        foreach ([$foreignDraft, $otherModuleDraft] as $index => $sourceDraft) {
+            $this->actingAs($user)->postJson('/api/reports', [
+                'display_id' => 'DRILL-SCOPED-00'.($index + 1),
+                'report_type' => 'drill',
+                'status' => 'Submitted',
+                'source_draft_id' => $sourceDraft->draft_id,
+                'payload' => $this->drillPayload('Zone Scoped'),
+            ])->assertCreated();
+        }
+
+        $this->assertDatabaseHas('report_drafts', ['id' => $foreignDraft->id]);
+        $this->assertDatabaseHas('report_drafts', ['id' => $otherModuleDraft->id]);
     }
 
     private function assignWorkflowRole(User $user, string $roleName, string $permissionName): void
@@ -213,7 +318,10 @@ class ReportApiWorkflowTest extends TestCase
                 'strengths' => ['Rapid mobilisation'],
                 'resourcesMobilised' => [],
                 'improvementOpportunities' => [],
-                'photos' => [],
+                'photos' => [[
+                    'id' => 'required-photo-1',
+                    'url' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                ]],
             ],
         ];
     }
