@@ -80,6 +80,16 @@ class AiHelperKnowledgeQueryAnalyzer
             followUp: $followUp && is_string($previous),
             followUpConfidence: $followUpConfidence,
             requiresMultipleDocuments: $this->requiresMultipleDocuments($normalized) || count($subqueries) > 1,
+            intentScope: $this->intentScope($normalized, $topicKeys, $intent, $contextDependency, $queryScope),
+            crossModuleRequired: $this->crossModuleRequired($topicKeys, $contextDependency, $retrievalQuery),
+            entitiesExplicit: $this->entitiesExplicit($topicKeys, $operationKeys, $taskKeys, $retrievalQuery),
+            requiresGlobalContext: $this->requiresGlobalContext(
+                $queryScope,
+                $contextDependency,
+                $topicKeys,
+                $intent,
+                $normalized,
+            ),
             scopeAdjustmentHint: $this->scopeAdjustmentHint($normalized, $scopeAdjustmentTopics, $contextDependency, $currentTopics),
             sensitiveRequest: $this->isSensitiveRequest($normalized),
         );
@@ -299,6 +309,75 @@ class AiHelperKnowledgeQueryAnalyzer
         }
 
         return 'local';
+    }
+
+    private function intentScope(
+        string $normalizedQuery,
+        array $topicKeys,
+        string $intent,
+        string $contextDependency,
+        string $queryScope,
+    ): string {
+        if ($intent === 'catalogue' || $intent === 'capability_catalogue') {
+            return 'global';
+        }
+        if ($contextDependency === 'page_deictic' && count($topicKeys) <= 1) {
+            return 'page';
+        }
+        if ($queryScope === 'global' || count($topicKeys) >= 2 || $contextDependency === 'mixed') {
+            return 'global';
+        }
+        if (str_contains($normalizedQuery, 'overview') || $contextDependency === 'explicit_topic') {
+            return $this->isSystemOverviewQuery($normalizedQuery) ? 'global' : 'local';
+        }
+
+        return 'local';
+    }
+
+    private function crossModuleRequired(array $topicKeys, string $contextDependency, string $message): bool
+    {
+        if ($contextDependency === 'page_deictic') {
+            return false;
+        }
+        if (count($topicKeys) >= 2) {
+            return true;
+        }
+        if (count($topicKeys) === 1) {
+            return $this->containsCrossModuleTopic($topicKeys) && ! str_contains($message, 'this page');
+        }
+
+        return $this->containsCrossModuleTopic($topicKeys);
+    }
+
+    private function entitiesExplicit(array $topicKeys, array $operationKeys, array $taskKeys, string $query): bool
+    {
+        if ($topicKeys !== [] || $operationKeys !== [] || $taskKeys !== []) {
+            return true;
+        }
+
+        return preg_match('/\b(?:leave|salary|payroll|attendance|teams?|overtime|staff|roster|inspection|annex|policy|procedure|module)\b/u', $query) === 1;
+    }
+
+    private function requiresGlobalContext(
+        string $queryScope,
+        string $contextDependency,
+        array $topicKeys,
+        string $intent,
+        string $normalizedQuery,
+    ): bool {
+        if ($intent === 'catalogue' || $intent === 'capability_catalogue') {
+            return true;
+        }
+        if ($queryScope === 'global' || $contextDependency === 'mixed') {
+            return true;
+        }
+        if ($contextDependency === 'page_deictic') {
+            return false;
+        }
+
+        return count($topicKeys) >= 2
+            || $this->containsCrossModuleTopic($topicKeys)
+            || preg_match('/\b(?:overview|global|across|all modules|all module|entire system)\b/u', $normalizedQuery) === 1;
     }
 
     private function isSystemOverviewQuery(string $normalizedQuery): bool

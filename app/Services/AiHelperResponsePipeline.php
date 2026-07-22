@@ -7,7 +7,7 @@ class AiHelperResponsePipeline
     public function __construct(
         private readonly AiHelperOpenAiService $openAi,
         private readonly AiHelperResponseValidationService $validator,
-        private readonly AiHelperResponseResultFactory $results,
+        private readonly AiHelperResponseResultFactory $results
     ) {}
 
     /**
@@ -30,15 +30,27 @@ class AiHelperResponsePipeline
         ?AiHelperRequestDeadline $deadline = null,
         bool $evidenceRequired = true,
         ?string $safetyIdentifier = null,
+        ?array $queryPlan = null,
+        array $retrievalMetadata = []
     ): array {
         $pipelineStartedAt = microtime(true);
         $deadline ??= AiHelperRequestDeadline::fromConfig();
+        $queryPlan = (array) ($queryPlan ?? []);
+        $retrievalMetadata = (array) $retrievalMetadata;
+        $qualitySignals = $this->baseQualitySignals($queryPlan, $retrievalMetadata);
         if ($deterministicContent !== null) {
-            return $this->results->deterministic($deterministicContent, $sources);
+            return $this->withPolicyMetadata(
+                $this->results->deterministic($deterministicContent, $sources),
+                $qualitySignals,
+                $this->qualityProfile('', ['valid' => true], $sources, $queryPlan, $retrievalMetadata, 0),
+                true,
+                'normal',
+                [],
+            );
         }
         $fallbackLanguage = $this->fallbackLanguage($responseLanguage, $question);
         if ($evidenceRequired && ($guidance === [] || $sources === [])) {
-            return $this->results->rejected(
+            $result = $this->results->rejected(
                 $sources,
                 $fallbackLanguage,
                 'AI_HELPER_NO_AUTHORIZED_EVIDENCE',
@@ -50,6 +62,15 @@ class AiHelperResponsePipeline
                 0,
                 $pipelineStartedAt,
                 ['valid' => false, 'status' => 'not_run', 'reason' => 'no_authorized_evidence'],
+            );
+
+            return $this->withPolicyMetadata(
+                $result,
+                $qualitySignals,
+                $this->qualityProfile('', ['valid' => false], $sources, $queryPlan, $retrievalMetadata, 0),
+                false,
+                'refuse',
+                ['no_authorized_evidence'],
             );
         }
 
@@ -85,18 +106,25 @@ class AiHelperResponsePipeline
             } catch (AiHelperProviderException $failure) {
                 $generationDuration += $this->elapsedMilliseconds($generationStartedAt);
 
-                return $this->results->providerFallback(
-                    $failure,
-                    $guidance,
-                    $sources,
-                    $fallbackLanguage,
-                    $attempt,
-                    $responseIds,
-                    $providerRequestIds,
-                    $usage,
-                    $generationDuration,
-                    $verificationDuration,
-                    $pipelineStartedAt,
+                return $this->withPolicyMetadata(
+                    $this->results->providerFallback(
+                        $failure,
+                        $guidance,
+                        $sources,
+                        $fallbackLanguage,
+                        $attempt,
+                        $responseIds,
+                        $providerRequestIds,
+                        $usage,
+                        $generationDuration,
+                        $verificationDuration,
+                        $pipelineStartedAt,
+                    ),
+                    $qualitySignals,
+                    $this->qualityProfile('', ['valid' => false, 'grounding_verification' => ['status' => 'provider_unavailable']], $sources, $queryPlan, $retrievalMetadata, $attempt),
+                    false,
+                    'partial',
+                    ['provider_unavailable'],
                 );
             }
             $generationDuration += $this->elapsedMilliseconds($generationStartedAt);
@@ -133,23 +161,59 @@ class AiHelperResponsePipeline
             $verificationDuration += $this->elapsedMilliseconds($verificationStartedAt);
 
             if ($validation['valid']) {
-                return $this->results->verified(
+                $quality = $this->qualityProfile(
                     $draft,
-                    $sources,
-                    $responseIds,
-                    $providerRequestIds,
-                    $usage,
-                    $generationDuration,
-                    $verificationDuration,
-                    $pipelineStartedAt,
-                    $attempt,
                     $validation,
+                    $sources,
+                    $queryPlan,
+                    $retrievalMetadata,
+                    $attempt,
+                );
+                $policy = $this->policyDecision($quality, $queryPlan, $retrievalMetadata, $failureCategory ?? 'validated');
+                if ($policy['decision'] !== 'normal') {
+                    return $this->withPolicyMetadata(
+                        $this->lowConfidenceResponse(
+                            $question,
+                            $guidance,
+                            $sources,
+                            $policy,
+                            $fallbackLanguage,
+                            $validation,
+                            $queryPlan,
+                            $quality,
+                        ),
+                        $qualitySignals,
+                        $quality,
+                        $this->requestedFactPresent($validation),
+                        $policy['decision'],
+                        $policy['evidence_gaps'],
+                    );
+                }
+
+                return $this->withPolicyMetadata(
+                    $this->results->verified(
+                        $draft,
+                        $sources,
+                        $responseIds,
+                        $providerRequestIds,
+                        $usage,
+                        $generationDuration,
+                        $verificationDuration,
+                        $pipelineStartedAt,
+                        $attempt,
+                        $validation,
+                    ),
+                    $qualitySignals,
+                    $quality,
+                    $this->requestedFactPresent($validation),
+                    $policy['decision'],
+                    $policy['evidence_gaps'],
                 );
             }
 
             $failureCategory = $this->validator->failureCategory($validation);
             if ($failureCategory === 'evidence_incomplete') {
-                return $this->results->extractiveFallback(
+                $result = $this->results->extractiveFallback(
                     $guidance,
                     $sources,
                     $fallbackLanguage,
@@ -165,9 +229,18 @@ class AiHelperResponsePipeline
                     $pipelineStartedAt,
                     $validation,
                 );
+
+                return $this->withPolicyMetadata(
+                    $result,
+                    $qualitySignals,
+                    $this->qualityProfile((string) ($result['content'] ?? ''), $validation, $sources, $queryPlan, $retrievalMetadata, $attempt),
+                    $this->requestedFactPresent($validation),
+                    'partial',
+                    ['evidence_incomplete'],
+                );
             }
             if ($failureCategory === 'verification_unavailable') {
-                return $this->results->extractiveFallback(
+                $result = $this->results->extractiveFallback(
                     $guidance,
                     $sources,
                     $fallbackLanguage,
@@ -182,6 +255,15 @@ class AiHelperResponsePipeline
                     $verificationDuration,
                     $pipelineStartedAt,
                     $validation,
+                );
+
+                return $this->withPolicyMetadata(
+                    $result,
+                    $qualitySignals,
+                    $this->qualityProfile((string) ($result['content'] ?? ''), $validation, $sources, $queryPlan, $retrievalMetadata, $attempt),
+                    $this->requestedFactPresent($validation),
+                    'partial',
+                    ['verification_unavailable'],
                 );
             }
 
@@ -202,23 +284,30 @@ class AiHelperResponsePipeline
             && (bool) ($validation['citation_validation']['valid'] ?? false)
             && (bool) ($validation['critical_fact_validation']['valid'] ?? false)
             && (bool) ($shadowGrounding['valid'] ?? false)) {
-            return $this->results->verified(
-                $draft,
-                $sources,
-                $responseIds,
-                $providerRequestIds,
-                $usage,
-                $generationDuration,
-                $verificationDuration,
-                $pipelineStartedAt,
-                $attempt,
-                $validation,
-                'shadow_failed',
-                'AI_HELPER_VERIFICATION_SHADOW_FAILED',
+            return $this->withPolicyMetadata(
+                $this->results->verified(
+                    $draft,
+                    $sources,
+                    $responseIds,
+                    $providerRequestIds,
+                    $usage,
+                    $generationDuration,
+                    $verificationDuration,
+                    $pipelineStartedAt,
+                    $attempt,
+                    $validation,
+                    'shadow_failed',
+                    'AI_HELPER_VERIFICATION_SHADOW_FAILED',
+                ),
+                $qualitySignals,
+                $this->qualityProfile($draft, $validation, $sources, $queryPlan, $retrievalMetadata, $attempt),
+                $this->requestedFactPresent($validation),
+                'partial',
+                ['shadow_verification_uncertain'],
             );
         }
 
-        return $this->results->extractiveFallback(
+        $result = $this->results->extractiveFallback(
             $guidance,
             $sources,
             $fallbackLanguage,
@@ -238,6 +327,286 @@ class AiHelperResponsePipeline
             $pipelineStartedAt,
             $validation,
         );
+        $quality = $this->qualityProfile((string) ($result['content'] ?? ''), $validation, $sources, $queryPlan, $retrievalMetadata, $attempt);
+        $policy = $this->policyDecision($quality, $queryPlan, $retrievalMetadata, (string) $failureCategory);
+        if ($policy['decision'] === 'refuse') {
+            return $this->withPolicyMetadata(
+                $this->withRefusalFallback(
+                    $result,
+                    $fallbackLanguage,
+                    $validation,
+                    $policy,
+                    $quality,
+                ),
+                $qualitySignals,
+                $quality,
+                $this->requestedFactPresent($validation),
+                $policy['decision'],
+                $policy['evidence_gaps'],
+            );
+        }
+
+        return $this->withPolicyMetadata(
+            $result,
+            $qualitySignals,
+            $quality,
+            $this->requestedFactPresent($validation),
+            $policy['decision'],
+            $policy['evidence_gaps'],
+        );
+    }
+
+    private function withPolicyMetadata(
+        array $result,
+        array $qualitySignals,
+        array $quality,
+        bool $requestedFactPresent,
+        string $decision,
+        array $evidenceGaps
+    ): array {
+        $policyMode = (string) config('ai_helper.policy_mode', 'progressive');
+
+        return array_merge($result, [
+            'policy' => [
+                'mode' => $policyMode,
+                'decision' => $decision,
+                'coverage_score' => $qualitySignals['coverage'] ?? null,
+                'evidence_gaps' => array_values(array_unique($evidenceGaps)),
+                'fallback_reason' => $this->fallbackReasonForDecision($decision, $evidenceGaps),
+                'scope_adjusted' => (bool) ($qualitySignals['scope_adjusted'] ?? false),
+                'scope_recovery_applied' => (bool) ($qualitySignals['scope_recovery'] ?? false),
+            ],
+            'response_quality' => [
+                'retrieval_coverage_score' => $quality['retrieval_coverage'] ?? 1.0,
+                'evidence_density' => $quality['evidence_density'] ?? 0.0,
+                'validation_success_score' => $quality['validation_success'] ?? 0.0,
+                'follow_up_confidence' => $quality['follow_up_confidence'] ?? null,
+                'scope_adjusted' => (bool) ($qualitySignals['scope_adjusted'] ?? false),
+            ],
+            'fallback' => [
+                'decision' => $decision,
+                'reason' => $this->fallbackReasonForDecision($decision, $evidenceGaps),
+                'evidence_gaps' => $evidenceGaps,
+            ],
+            'coverage_score' => $qualitySignals['coverage'] ?? null,
+            'requested_fact_present' => $requestedFactPresent,
+        ]);
+    }
+
+    private function baseQualitySignals(array $queryPlan, array $retrievalMetadata): array
+    {
+        return [
+            'query_plan' => $queryPlan,
+            'coverage' => $this->resolveCoverage($queryPlan, $retrievalMetadata),
+            'scope_adjusted' => ($queryPlan['scope_adjustment_hint'] ?? '') === 'global_recovery'
+                || ($queryPlan['query_scope'] ?? '') === 'global'
+                || ((bool) (($queryPlan['cross_module_required'] ?? false) && ($queryPlan['intent_scope'] ?? '') === 'global')),
+            'scope_recovery' => (bool) ($retrievalMetadata['scope_recovery'] ?? false),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function qualityProfile(
+        string $draft,
+        array $validation,
+        array $sources,
+        array $queryPlan,
+        array $retrievalMetadata,
+        int $attempt
+    ): array {
+        $sentenceFragments = preg_split('/[.!?]\s+/u', trim((string) $draft));
+        $sentenceCount = max(1, count($sentenceFragments ?: []));
+        preg_match_all('/\[(S\d+)\]/u', $draft, $matches);
+        $citationCount = count($matches[0] ?? []);
+        $evidenceDensity = min(1.0, $citationCount / max(1, $sentenceCount));
+        $validationSuccess = (bool) ($validation['valid'] ?? false)
+            ? 1.0
+            : $this->validationFailureScore($validation);
+
+        return [
+            'attempt' => $attempt,
+            'retrieval_coverage' => $this->resolveCoverage($queryPlan, $retrievalMetadata),
+            'evidence_density' => round($evidenceDensity, 3),
+            'validation_success' => round($validationSuccess, 3),
+            'source_coverage' => min(1.0, collect($sources)->count() / 3),
+            'follow_up_confidence' => $queryPlan['follow_up_confidence'] ?? 'none',
+        ];
+    }
+
+    private function policyDecision(
+        array $quality,
+        array $queryPlan,
+        array $retrievalMetadata,
+        string $failureCategory
+    ): array {
+        $mode = strtolower((string) config('ai_helper.policy_mode', 'progressive'));
+        $strictAction = strtolower((string) config('ai_helper.strict_ungrounded_action', 'refuse'));
+        $minCoverage = (float) config('ai_helper.response_min_coverage', 0.55);
+        $fallbackThreshold = (float) config('ai_helper.fallback_confidence_threshold', 0.35);
+        $coverageScore = (
+            (($quality['retrieval_coverage'] ?? 0) * 0.45)
+            + (($quality['evidence_density'] ?? 0) * 0.25)
+            + (($quality['validation_success'] ?? 0) * 0.3)
+        );
+
+        $evidenceGaps = [];
+        if (($quality['validation_success'] ?? 0) < 1.0) {
+            $evidenceGaps[] = 'validation_limit';
+        }
+        if (($quality['retrieval_coverage'] ?? 0) < 0.45) {
+            $evidenceGaps[] = 'limited_retrieval';
+        }
+        if (($retrievalMetadata['scope_recovery'] ?? false) || ($queryPlan['scope_adjustment_hint'] ?? '') === 'global_recovery') {
+            $evidenceGaps[] = 'scope_recovery_applied';
+        }
+        if (collect((array) ($retrievalMetadata['missing_requested_facts'] ?? []))->isNotEmpty()) {
+            $evidenceGaps[] = 'missing_requested_fact';
+        }
+
+        if ($coverageScore >= $minCoverage && empty($evidenceGaps)) {
+            return ['decision' => 'normal', 'evidence_gaps' => []];
+        }
+        if ($coverageScore < $fallbackThreshold
+            || in_array($failureCategory, ['unsupported_critical_fact', 'unsupported_claim', 'evidence_incomplete'], true)) {
+            return ['decision' => $mode === 'strict' && $strictAction === 'ask_clarify' ? 'ask_clarify' : 'refuse', 'evidence_gaps' => $evidenceGaps];
+        }
+
+        return ['decision' => $mode === 'strict' ? 'refuse' : 'partial', 'evidence_gaps' => $evidenceGaps];
+    }
+
+    private function fallbackReasonForDecision(string $decision, array $evidenceGaps): string
+    {
+        return match ($decision) {
+            'normal' => 'none',
+            'partial' => $evidenceGaps === [] ? 'scope_not_fully_covered' : 'limited_context',
+            'ask_clarify', 'refuse' => 'low_confidence',
+            default => 'unknown',
+        };
+    }
+
+    private function requestedFactPresent(array $validation): bool
+    {
+        return collect((array) data_get($validation, 'grounding_verification.missing_requested_facts', []))->filter()->isEmpty();
+    }
+
+    private function validationFailureScore(array $validation): float
+    {
+        if (($validation['citation_validation']['valid'] ?? false) === false) {
+            return 0.1;
+        }
+        if (($validation['critical_fact_validation']['valid'] ?? false) === false) {
+            return 0.4;
+        }
+        if (($validation['grounding_verification']['status'] ?? '') === 'verification_unavailable') {
+            return 0.35;
+        }
+        if (($validation['grounding_verification']['status'] ?? '') === 'shadow_failed') {
+            return 0.55;
+        }
+
+        return 0.6;
+    }
+
+    private function resolveCoverage(array $queryPlan, array $retrievalMetadata): float
+    {
+        if ($retrievalMetadata === []) {
+            return 1.0;
+        }
+        $chunkCoverage = min(1.0, ((int) ($retrievalMetadata['chunks_selected'] ?? 0)) / 8);
+        $lexicalCoverage = min(1.0, (float) ($retrievalMetadata['max_lexical_coverage'] ?? 0));
+        $semanticSimilarity = min(1.0, (float) ($retrievalMetadata['max_semantic_similarity'] ?? 0) / 1.1);
+        $requested = max(1, (int) ($retrievalMetadata['subqueries_requested'] ?? 1));
+        $covered = min($requested, (int) ($retrievalMetadata['subqueries_covered'] ?? 0));
+        $subqueryCoverage = min(1.0, $covered / $requested);
+        $score = round(($chunkCoverage * 0.35) + ($lexicalCoverage * 0.25) + ($semanticSimilarity * 0.2) + ($subqueryCoverage * 0.2), 3);
+        if (($queryPlan['query_scope'] ?? 'local') === 'local') {
+            $score += 0.08;
+        }
+
+        return max(0.0, min(1.0, $score));
+    }
+
+    private function lowConfidenceResponse(
+        string $question,
+        array $guidance,
+        array $sources,
+        array $policy,
+        string $fallbackLanguage,
+        array $validation,
+        array $queryPlan,
+        array $quality
+    ): array {
+        $qualityText = match ($fallbackLanguage) {
+            'bm' => 'Berdasarkan data yang ditemui, saya perlukan konteks tambahan untuk jawab dengan tepat.',
+            default => 'Based on available evidence, I need additional context before I can answer safely.',
+        };
+        $topics = collect($queryPlan['topic_keys'] ?? [])->map(fn (string $topic) => str_replace('_', ' ', $topic))->implode(', ');
+        $prefix = $topics === '' ? $qualityText : "{$qualityText} Topik berkaitan: {$topics}.";
+        $evidenceDensity = (int) round(($quality['evidence_density'] ?? 0) * 100);
+
+        $extractive = $this->results->extractiveFallback(
+            $guidance,
+            $sources,
+            $fallbackLanguage,
+            'evidence_insufficient_for_full_answer',
+            'AI_HELPER_LOW_CONFIDENCE',
+            'ask_for_more_context',
+            1,
+            [],
+            [],
+            [],
+            0,
+            0,
+            microtime(true),
+            $validation,
+        );
+
+        $fallbackAction = $policy['evidence_gaps'] === [] ? 'ask_for_more_context' : 'ask_for_additional_scope';
+        $hintItems = [
+            '- module/page involved',
+            '- specific action',
+            '- related reference ID or value',
+        ];
+        $extractive['content'] = $prefix
+            ."\n\nConfidence: {$evidenceDensity}%\n\n"
+            .implode("\n", $hintItems)
+            ."\n\n".str_replace('AI_HELPER_LOW_CONFIDENCE', 'AI_HELPER_LOW_CONFIDENCE', $extractive['content']);
+        $extractive['outcome_code'] = 'AI_HELPER_LOW_CONFIDENCE';
+        $extractive['recovery_action'] = $fallbackAction;
+
+        return $extractive;
+    }
+
+    private function withRefusalFallback(
+        array $result,
+        string $fallbackLanguage,
+        array $validation,
+        array $policy,
+        array $quality
+    ): array {
+        $isBm = $fallbackLanguage === 'bm';
+        $reason = $policy['fallback_reason'] ?? 'low_confidence';
+        if ($isBm) {
+            $result['content'] = 'Saya tidak boleh beri jawapan terperinci buat masa ini kerana keyakinan sokongan tidak mencukupi ('.$reason.').'."\n"
+                .'Sila beri konteks tambahan: modul/halaman semasa, tindakan, dan nilai rujukan.';
+        } else {
+            $result['content'] = "I cannot provide a reliable complete answer right now because confidence is insufficient ({$reason}).\n"
+                .'Please provide additional context: current module/page, action, and any reference values.';
+        }
+        if (collect((array) data_get($validation, 'grounding_verification.failures', []))->isNotEmpty()) {
+            $result['content'] .= "\n\n".implode("\n", array_map(
+                fn ($failure) => '- '.(string) ($failure['reason'] ?? 'validation_issue'),
+                array_slice((array) data_get($validation, 'grounding_verification.failures', []), 0, 3),
+            ));
+        }
+        if (($quality['validation_success'] ?? 0) >= 0.55) {
+            $result['fallback_action'] = 'ask_for_more_context';
+        }
+        $result['outcome_code'] = 'AI_HELPER_REFUSED_LOW_CONFIDENCE';
+        $result['recovery_action'] = 'ask_for_more_context';
+        $result['verification']['status'] = 'rejected';
+
+        return $result;
     }
 
     /** @param array<int, string> $responseIds @param array<int, string> $providerRequestIds @param array<string, int> $usage */
@@ -245,7 +614,7 @@ class AiHelperResponsePipeline
         array $result,
         array &$responseIds,
         array &$providerRequestIds,
-        array &$usage,
+        array &$usage
     ): void {
         if (! empty($result['response_id'])) {
             $responseIds[] = (string) $result['response_id'];

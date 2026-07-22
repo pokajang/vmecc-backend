@@ -1267,8 +1267,29 @@ class AiHelperController extends Controller
 
         $question = (string) $validated['message'];
         $guidance = $pageContext['guidance'] ?? [];
+        $queryPlan = $this->queryPlanFromContext($pageContext);
 
-        return response()->stream(function () use ($thread, $assistantMessage, $history, $instructions, $requestId, $requestUuid, $sources, $guidance, $question, $deterministicContent, $responseLanguage, $concurrencyLease, $actor, $run, $deadline, $evidenceRequired, $pageContext, $previousUserMessages) {
+        return response()->stream(function () use (
+            $thread,
+            $assistantMessage,
+            $history,
+            $instructions,
+            $requestId,
+            $requestUuid,
+            $sources,
+            $guidance,
+            $question,
+            $deterministicContent,
+            $responseLanguage,
+            $concurrencyLease,
+            $actor,
+            $run,
+            $deadline,
+            $evidenceRequired,
+            $pageContext,
+            $previousUserMessages,
+            $queryPlan
+        ) {
             $content = '';
             $responseCompleted = false;
             try {
@@ -1304,6 +1325,8 @@ class AiHelperController extends Controller
                     $deadline,
                     $evidenceRequired,
                     'vmecc-user-'.$actor->id,
+                    $queryPlan,
+                    $effectiveRetrieval,
                 );
                 if (($result['recovery_action'] ?? null) === 'retrieve_more_evidence'
                     && $deadline->hasTimeFor(12.0)) {
@@ -1321,6 +1344,7 @@ class AiHelperController extends Controller
                     $expandedChunkIds = collect(data_get($expandedContext, 'retrieval.chunk_ids', []));
                     if ($expandedGuidance !== [] && $expandedChunkIds->diff($initialChunkIds)->isNotEmpty()) {
                         $this->recordRunRetrieval($run, $expandedContext);
+                        $recoveryQueryPlan = $this->queryPlanFromContext($expandedContext);
                         $recoveredResult = $this->responsePipeline->respond(
                             $question,
                             $this->knowledge->instructionsFor($expandedContext, $responseLanguage),
@@ -1342,6 +1366,8 @@ class AiHelperController extends Controller
                             $deadline,
                             true,
                             'vmecc-user-'.$actor->id,
+                            $recoveryQueryPlan,
+                            (array) ($expandedContext['retrieval'] ?? []),
                         );
                         $result = $this->mergePipelineAttempts($result, $recoveredResult);
                         $effectiveRetrieval = (array) ($expandedContext['retrieval'] ?? []);
@@ -2147,6 +2173,14 @@ class AiHelperController extends Controller
             'AI_HELPER_ADMIN_FORBIDDEN',
             403,
         );
+    }
+
+    private function queryPlanFromContext(array $context): array
+    {
+        $queryAnalysis = (array) data_get($context, 'query_analysis', []);
+        $retrievalPlan = (array) data_get($context, 'retrieval.query_plan', []);
+
+        return array_merge($queryAnalysis, $retrievalPlan);
     }
 
     private function formatReportSummary(AiHelperResponseReport $report): array
