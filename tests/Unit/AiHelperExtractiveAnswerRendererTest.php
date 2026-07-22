@@ -54,6 +54,8 @@ MD,
 
         $this->assertNotNull($result);
         $this->assertStringContainsString('tersedia dalam bahasa Inggeris', $result['content']);
+        $this->assertStringNotContainsString('Ringkasan yang dijana', $result['content']);
+        $this->assertStringNotContainsString('disahkan', $result['content']);
         $this->assertStringContainsString('[S1]', $result['content']);
     }
 }

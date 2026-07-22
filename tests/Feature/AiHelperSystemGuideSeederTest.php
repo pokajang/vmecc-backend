@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\AiHelperKnowledgeEntry;
+use App\Services\AiHelperSystemGuideCatalog;
 use Database\Seeders\AiHelperSystemGuideSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -32,7 +33,7 @@ class AiHelperSystemGuideSeederTest extends TestCase
             ->where('knowledge_type', AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE)
             ->orderBy('source_path')
             ->get();
-        $this->assertCount(53, $guides);
+        $this->assertCount(app(AiHelperSystemGuideCatalog::class)->expectedCount(), $guides);
         $this->assertTrue($guides->every(fn (AiHelperKnowledgeEntry $entry) => $entry->active
             && $entry->status === AiHelperKnowledgeEntry::STATUS_ACTIVE
             && $entry->review_status === AiHelperKnowledgeEntry::REVIEW_APPROVED

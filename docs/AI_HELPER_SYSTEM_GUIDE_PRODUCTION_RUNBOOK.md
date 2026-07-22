@@ -1,6 +1,6 @@
 # AI Helper final system-guide production runbook
 
-This runbook deploys the complete 34-reference and 53-system-guide corpus. It must not be used while `php artisan ai-helper:system-guides:audit` reports any draft, inactive, non-v3, missing, invalid, maintainer-oriented, or unverified guide.
+This runbook deploys the complete 34-reference and 54-system-guide corpus. It must not be used while `php artisan ai-helper:system-guides:audit` reports any draft, inactive, non-v3, missing, invalid, maintainer-oriented, or unverified guide.
 
 ## Release record
 
@@ -17,26 +17,17 @@ Production `.env` must contain:
 ```dotenv
 QUEUE_CONNECTION=database
 QUEUE_RETRY_AFTER=960
-AI_HELPER_SYSTEM_GUIDES_ENABLED=true
-AI_HELPER_SYSTEM_GUIDE_FINAL_CORPUS_ENFORCED=true
-AI_HELPER_SYSTEM_GUIDE_APPROVAL_ENFORCED=true
-AI_HELPER_RETRIEVAL_V2=true
-AI_HELPER_RETRIEVAL_V3=true
-AI_HELPER_RETRIEVAL_V4=true
-AI_HELPER_PIPELINE_VERSION=4
-AI_HELPER_INDEX_PROFILE_VERSION=4
-AI_HELPER_KNOWLEDGE_STRICT_READINESS=true
-AI_HELPER_EMBEDDING_ENABLED=true
-AI_HELPER_RERANK_ENABLED=true
-AI_HELPER_CITATION_VALIDATION_ENABLED=true
-AI_HELPER_CRITICAL_FACT_VALIDATION_ENABLED=true
-AI_HELPER_GROUNDING_VERIFICATION_MODE=enforce
-AI_HELPER_REQUEST_DEADLINE_SECONDS=50
-AI_HELPER_MAX_PROVIDER_CALLS_PER_REQUEST=8
-AI_HELPER_CONCURRENCY_LOCK_SECONDS=90
+AI_HELPER_ENABLED=true
+OPENAI_API_KEY=<server-secret>
+OPENAI_HELPER_MODEL=gpt-5.4-mini
+AI_HELPER_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
 `QUEUE_RETRY_AFTER` must remain greater than the longest `--timeout=900` indexing worker/job timeout so a slow shared-host job cannot be reserved twice.
+
+Retrieval V4, system guides, product workflows, reranking, enforced verification, limits, and retention policy are version-controlled in `config/ai_helper.php`. Changing `OPENAI_HELPER_MODEL` changes generation, reranking, and verification together. Changing `AI_HELPER_EMBEDDING_MODEL` invalidates the semantic fingerprint and requires a complete reindex before readiness can pass.
+
+The primary model must support streamed Responses API output and strict JSON-schema structured responses. The embedding model must accept the code-controlled 512-dimension profile. Treat either model change as a reviewed deployment and run the complete readiness and evaluation gates before reopening traffic.
 
 Do not print the `.env` or provider key in terminal logs.
 
@@ -54,10 +45,15 @@ git merge --ff-only origin/main
 test "$(git rev-parse HEAD)" = "$EXPECTED_BACKEND_COMMIT"
 php -v
 php ~/composer.phar --version
+CORPUS_PATH="storage/app/private/ai_knowledge"
+test -d "$CORPUS_PATH/pdf"
+test -d "$CORPUS_PATH/md"
+test "$(find "$CORPUS_PATH/pdf" -maxdepth 1 -type f -iname '*.pdf' | wc -l)" -eq 34
+test "$(find "$CORPUS_PATH/md" -maxdepth 1 -type f -iname '*.md' | wc -l)" -eq 34
 php artisan ai-helper:system-guides:audit --json
 ```
 
-The final audit command must exit successfully before maintenance begins. A disabled candidate corpus is expected to fail this audit and must not be deployed.
+The corpus path may be a deployment-managed symlink to the existing private source directory. Resolve and verify its target before deployment; it must remain outside the public web root. The directory/count checks and final audit command must exit successfully before maintenance begins. A disabled candidate corpus is expected to fail this audit and must not be deployed.
 
 ## Backup
 
@@ -184,12 +180,16 @@ Use existing UAT/production accounts; do not create users in the deployment:
 
 Record results against the exact backend SHA, frontend SHA, seeded content hashes, and UAT reference.
 
+Deploy workflow-registry support, seed and index the matching system guides, and confirm `ai-helper:knowledge-readiness --production` before opening traffic. Product workflows are part of the code-controlled production profile rather than an independent environment switch.
+
+After enabling it, confirm recent `ai_helper_runs` rows contain `answer_mode` and, for deterministic workflow answers, `workflow_key`. These are bounded category keys for aggregate quality monitoring; raw `ui_state` and form values must never be copied into run telemetry or stored route context.
+
 ## Rollback and failed gate
 
 If any gate or smoke check fails:
 
 1. leave the application in maintenance mode;
-2. set `AI_HELPER_SYSTEM_GUIDES_ENABLED=false` in the server-only `.env`;
+2. set `AI_HELPER_ENABLED=false` in the server-only `.env`;
 3. run `php artisan optimize:clear`, `php artisan config:cache`, and `php artisan queue:restart`;
 4. investigate the failing migration, seed, embedding, authorization, evaluator, content, or readiness evidence;
 5. restore the verified database backup when database rollback is required;
@@ -197,4 +197,4 @@ If any gate or smoke check fails:
 
 Never use `git reset --hard`, migration reset, or repository rollback as a substitute for a verified database restore.
 
-For a Retrieval V4-only runtime rollback, set `AI_HELPER_RETRIEVAL_V4=false` while retaining `AI_HELPER_RETRIEVAL_V3=true` and both final system-guide flags. Rebuild the configuration cache and restart workers. This preserves the final guide corpus under V3, but production readiness intentionally remains false until V4 is restored and revalidated.
+Subsystem rollback now requires a reviewed code/config deployment. Do not reintroduce hidden environment switches for workflows, retrieval generations, or verification. `AI_HELPER_ENABLED=false` remains the immediate recoverable whole-feature shutdown while a code rollback is prepared.

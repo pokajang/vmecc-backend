@@ -73,6 +73,13 @@ SSE;
         $this->assertFalse($payload['store']);
     }
 
+    public function test_provider_is_unavailable_when_the_primary_model_is_blank(): void
+    {
+        config(['ai_helper.model' => '  ']);
+
+        $this->assertFalse((new AiHelperOpenAiService)->isAvailable());
+    }
+
     public function test_structured_response_throws_a_typed_non_retryable_provider_failure(): void
     {
         $mock = new MockHandler([

@@ -157,7 +157,7 @@ class AiHelperResponsePipelineTest extends TestCase
 
         $this->assertSame('fallback_extractive', $result['verification']['status']);
         $this->assertSame(['S1'], collect($result['sources'])->pluck('source_id')->all());
-        $this->assertStringContainsString('supporting guidance directly', $result['content']);
+        $this->assertStringContainsString('The relevant guidance states', $result['content']);
         $this->assertStringContainsString('official Malaysian Emergency Service Centre', $result['content']);
         $this->assertStringNotContainsString('Call 999 immediately', $result['content']);
     }
@@ -461,5 +461,78 @@ class AiHelperResponsePipelineTest extends TestCase
         $this->assertSame('verified', $result['verification']['status']);
         $this->assertTrue($result['verification']['citation_rendered']);
         $this->assertStringEndsWith('[S1]', $result['content']);
+    }
+
+    public function test_casual_answers_bypass_evidence_and_confidence_policy(): void
+    {
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('streamResponse')->once()->andReturnUsing(function ($instructions, $input, $onDelta) {
+                $onDelta('Hello! How can I help?');
+
+                return ['response_id' => 'casual-response'];
+            });
+        });
+
+        $result = app(AiHelperResponsePipeline::class)->respond(
+            'hello',
+            'Reply naturally.',
+            [['role' => 'user', 'content' => 'hello']],
+            [],
+            [],
+            null,
+            'en',
+            fn () => null,
+            fn () => null,
+            null,
+            false,
+            null,
+            ['answer_mode' => 'casual'],
+            ['chunks_selected' => 0],
+        );
+
+        $this->assertSame('AI_HELPER_CONVERSATIONAL', $result['outcome_code']);
+        $this->assertSame('Hello! How can I help?', $result['content']);
+        $this->assertSame('not_required', $result['verification']['status']);
+        $this->assertStringNotContainsString('Confidence:', $result['content']);
+    }
+
+    public function test_low_confidence_fallback_does_not_expose_internal_diagnostics(): void
+    {
+        config(['ai_helper.response_min_coverage' => 0.95]);
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('streamResponse')->once()->andReturnUsing(function ($instructions, $input, $onDelta) {
+                $onDelta('999 is the official Malaysian Emergency Service Centre telephone number. [S1]');
+
+                return ['response_id' => 'low-confidence-response'];
+            });
+        });
+
+        $result = app(AiHelperResponsePipeline::class)->respond(
+            'What is 999?',
+            'Use the evidence.',
+            [['role' => 'user', 'content' => 'What is 999?']],
+            $this->guidance,
+            $this->sources,
+            null,
+            'en',
+            fn () => null,
+            fn () => null,
+            null,
+            true,
+            null,
+            ['answer_mode' => 'operational_knowledge', 'query_scope' => 'local'],
+            [
+                'chunks_selected' => 0,
+                'max_lexical_coverage' => 0,
+                'max_semantic_similarity' => 0,
+                'subqueries_requested' => 1,
+                'subqueries_covered' => 0,
+            ],
+        );
+
+        $this->assertSame('AI_HELPER_LOW_CONFIDENCE', $result['outcome_code']);
+        $this->assertStringNotContainsString('Confidence:', $result['content']);
+        $this->assertStringNotContainsString('module/page involved', $result['content']);
+        $this->assertStringContainsString('task you want to complete', $result['content']);
     }
 }

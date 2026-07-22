@@ -91,27 +91,25 @@ final class AiHelperExtractiveAnswerRenderer
         $lineEnd = (int) mb_strrpos($bounded, "\n");
         $safeEnd = max($sentenceEnd >= 160 ? $sentenceEnd + 1 : 0, $lineEnd >= 160 ? $lineEnd : 0);
 
-        return trim($safeEnd > 0 ? mb_substr($bounded, 0, $safeEnd) : $bounded).'…';
+        return trim($safeEnd > 0 ? mb_substr($bounded, 0, $safeEnd) : $bounded).'...';
     }
 
     private function lead(string $language, string $reason, string $extractLanguage): string
     {
         if ($language === 'bm') {
             if ($extractLanguage === 'en') {
-                return 'Ringkasan yang dijana tidak dapat disahkan dengan selamat. Petikan panduan diluluskan berikut tersedia dalam bahasa Inggeris:';
+                return 'Panduan berkaitan tersedia dalam bahasa Inggeris:';
             }
 
             return match ($reason) {
-                'evidence_incomplete' => 'Saya tidak dapat mengesahkan jawapan yang lengkap. Berikut ialah petikan terus daripada panduan diluluskan yang ditemui:',
-                'validation_failed' => 'Saya menemui panduan diluluskan yang berkaitan, tetapi ringkasan yang dijana tidak dapat disahkan dengan selamat. Berikut ialah panduan sokongan secara terus:',
-                default => 'Pengesahan tambahan tidak dapat diselesaikan. Berikut ialah petikan terus daripada panduan diluluskan yang ditemui:',
+                'evidence_incomplete' => 'Maklumat yang tersedia menjawab sebahagian daripada permintaan anda:',
+                default => 'Panduan berkaitan yang tersedia menyatakan:',
             };
         }
 
         return match ($reason) {
-            'evidence_incomplete' => 'I could not verify a complete answer. Here is a direct extract from the approved guidance that was found:',
-            'validation_failed' => 'I found relevant approved guidance, but could not safely deliver the generated summary. Here is the supporting guidance directly:',
-            default => 'Additional verification could not be completed. Here is a direct extract from the approved guidance that was found:',
+            'evidence_incomplete' => 'The available guidance covers part of your request:',
+            default => 'The relevant guidance states:',
         };
     }
 

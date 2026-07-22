@@ -23,7 +23,9 @@ class AiHelperOpenAiService
 
     public function isAvailable(): bool
     {
-        return (bool) config('ai_helper.enabled') && trim((string) config('ai_helper.api_key')) !== '';
+        return (bool) config('ai_helper.enabled')
+            && trim((string) config('ai_helper.api_key')) !== ''
+            && trim((string) config('ai_helper.model')) !== '';
     }
 
     /**

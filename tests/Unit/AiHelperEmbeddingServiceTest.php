@@ -26,6 +26,31 @@ class AiHelperEmbeddingServiceTest extends TestCase
         );
     }
 
+    public function test_primary_response_model_does_not_change_the_semantic_fingerprint(): void
+    {
+        config([
+            'ai_helper.embedding_model' => 'embedding-test',
+            'ai_helper.model' => 'primary-a',
+        ]);
+        $service = new AiHelperEmbeddingService;
+        $before = $service->indexFingerprint();
+
+        config(['ai_helper.model' => 'primary-b']);
+
+        $this->assertSame($before, $service->indexFingerprint());
+    }
+
+    public function test_embedding_model_changes_the_semantic_fingerprint(): void
+    {
+        config(['ai_helper.embedding_model' => 'embedding-a']);
+        $service = new AiHelperEmbeddingService;
+        $before = $service->indexFingerprint();
+
+        config(['ai_helper.embedding_model' => 'embedding-b']);
+
+        $this->assertNotSame($before, $service->indexFingerprint());
+    }
+
     public function test_it_batches_embedding_inputs_by_count_and_conservative_token_budget(): void
     {
         config([

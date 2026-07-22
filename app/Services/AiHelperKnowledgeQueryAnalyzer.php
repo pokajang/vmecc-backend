@@ -38,6 +38,8 @@ class AiHelperKnowledgeQueryAnalyzer
         $operationKeys = $this->operationKeys($normalizedQuery);
         $intent = $this->intent($normalized);
         $taskKeys = $this->taskKeys($normalizedQuery, $topicKeys, $operationKeys, $intent);
+        $entityKeys = $this->entityKeys($topicKeys);
+        $answerMode = $this->answerMode($intent, $taskKeys, $topicKeys, $normalized);
         $sourceMode = $this->sourceMode($followUp ? $normalizedQuery : $normalized);
         if ($sourceMode === 'system'
             && array_intersect($topicKeys, ['extinguisher', 'height_rescue']) !== []
@@ -92,6 +94,9 @@ class AiHelperKnowledgeQueryAnalyzer
             ),
             scopeAdjustmentHint: $this->scopeAdjustmentHint($normalized, $scopeAdjustmentTopics, $contextDependency, $currentTopics),
             sensitiveRequest: $this->isSensitiveRequest($normalized),
+            answerMode: $answerMode,
+            entityKeys: $entityKeys,
+            evidenceRequired: $answerMode !== 'casual',
         );
 
         return $plan->toArray();
@@ -123,14 +128,70 @@ class AiHelperKnowledgeQueryAnalyzer
         if ($this->isCatalogueIntent($message)) {
             return 'catalogue';
         }
-        if (preg_match('/^(?:hi|hello|hey|thanks|thank you|terima kasih|hai)[.!?\s]*$/u', $message) === 1) {
+        if ($this->isCasualMessage($message)) {
             return 'casual';
         }
-        if (preg_match('/\b(?:what can i do (?:here|on (?:this|the) (?:\w+ )?page)|help (?:me )?(?:with|on) this page|how do i use this page|apa (?:yang )?boleh (?:saya )?buat (?:di sini|pada halaman ini)|cara guna halaman ini)\b/u', $message) === 1) {
+        if (preg_match('/\b(?:what can i do (?:here|on (?:this|the) (?:\w+ )?page)|what (?:should|do) i do next|what(?:\x{2019}|\x{0027})s next|help (?:me )?(?:with|on) this page|how do i use this page|apa (?:yang )?boleh (?:saya )?buat (?:di sini|pada halaman ini)|apa langkah seterusnya|lepas ni buat apa|cara guna halaman ini)\b/u', $message) === 1) {
             return 'general_help';
         }
 
         return 'knowledge_question';
+    }
+
+    private function isCasualMessage(string $message): bool
+    {
+        return preg_match(
+            '/^(?:(?:hi|hello|hey|hai|yo|salam|assalamualaikum|as-salamu alaykum|morning|afternoon|evening|good (?:morning|afternoon|evening|day)|selamat (?:pagi|tengah hari|petang|malam))'
+            .'(?:[,.!\s]+(?:there|ask ai|everyone))?'
+            .'(?:[,.!\s]+(?:how are you|how(?:\x{2019}|\x{0027})s it going|apa khabar))?'
+            .'|(?:how are you|how(?:\x{2019}|\x{0027})s it going|apa khabar)'
+            .'|(?:who are you|what are you|siapa (?:awak|anda)|awak siapa|anda siapa)'
+            .'|(?:can you help me|could you help me|boleh bantu saya|boleh tolong saya)'
+            .'|(?:thanks|thank you|terima kasih))(?:[.!?\s]*)$/u',
+            $message,
+        ) === 1;
+    }
+
+    /** @param array<int, string> $topicKeys @return array<int, string> */
+    private function entityKeys(array $topicKeys): array
+    {
+        return collect($topicKeys)
+            ->intersect([
+                'extinguisher',
+                'fire_truck',
+                'hse_inspection',
+                'scba_inspection',
+                'hydraulic_rescue_inspection',
+                'height_rescue',
+            ])
+            ->values()
+            ->all();
+    }
+
+    /** @param array<int, string> $taskKeys @param array<int, string> $topicKeys */
+    private function answerMode(string $intent, array $taskKeys, array $topicKeys, string $message): string
+    {
+        if ($this->isSensitiveRequest($message)) {
+            return 'sensitive';
+        }
+        if ($intent === 'casual') {
+            return 'casual';
+        }
+        if ($intent === 'capability_catalogue' || in_array('system_overview', $topicKeys, true)) {
+            return 'product_capability';
+        }
+        if ($intent === 'general_help') {
+            return 'product_navigation';
+        }
+        if (in_array('dashboard', $topicKeys, true)
+            && preg_match('/\b(?:what does|what is|show|shows|papar|dipaparkan|apa (?:yang )?ada)\b/u', $message) === 1) {
+            return 'product_navigation';
+        }
+        if ($taskKeys !== []) {
+            return 'product_workflow';
+        }
+
+        return 'operational_knowledge';
     }
 
     /** @return array<int, string> */
@@ -186,7 +247,10 @@ class AiHelperKnowledgeQueryAnalyzer
             return true;
         }
 
-        $inspectionFamily = ['inspection', 'inspection_issue', 'inspection_verification', 'extinguisher'];
+        $inspectionFamily = [
+            'inspection', 'inspection_issue', 'inspection_verification', 'extinguisher',
+            'fire_truck', 'hse_inspection', 'scba_inspection', 'hydraulic_rescue_inspection',
+        ];
 
         return array_intersect($currentTopics, $inspectionFamily) !== []
             && array_intersect($previousTopics, $inspectionFamily) !== [];
@@ -432,7 +496,7 @@ class AiHelperKnowledgeQueryAnalyzer
     {
         $patterns = [
             'view' => '/\b(?:view|find|search|read|check status|lihat|cari|semak|papar)\b/u',
-            'create' => '/\b(?:create|add|new|register|record|buat|tambah|baharu|daftar|rekod)\b/u',
+            'create' => '/\b(?:create|add|new|register|record|apply|buat|tambah|baharu|daftar|rekod|mohon)\b/u',
             'inspect' => '/\b(?:inspect|inspection|checklist|check|conduct|pemeriksaan|periksa)\b/u',
             'maintain' => '/\b(?:maintain|maintenance|service|servicing|lifecycle|selenggara|penyelenggaraan|servis)\b/u',
             'submit' => '/\b(?:submit|send|hantar)\b/u',
@@ -466,10 +530,13 @@ class AiHelperKnowledgeQueryAnalyzer
 
         $inspectionDomain = array_intersect(
             $topicKeys,
-            ['inspection', 'inspection_issue', 'inspection_verification', 'extinguisher'],
+            [
+                'inspection', 'inspection_issue', 'inspection_verification', 'extinguisher',
+                'fire_truck', 'hse_inspection', 'scba_inspection', 'hydraulic_rescue_inspection',
+            ],
         ) !== [];
         if (! $inspectionDomain) {
-            return [];
+            return $this->productTaskKeys($message, $topicKeys);
         }
 
         if (preg_match('/\b(?:verify|verification|approve|reject|pending verification|sahkan|pengesahan|lulus|tolak)\b/u', $message) === 1) {
@@ -498,8 +565,57 @@ class AiHelperKnowledgeQueryAnalyzer
         }
 
         if (in_array('inspect', $operationKeys, true)
-            || preg_match('/\b(?:onsite|on-site|new inspection|buat pemeriksaan|jalankan pemeriksaan)\b/u', $message) === 1) {
+            || preg_match('/\b(?:onsite|on-site|new inspection|daily readiness|buat pemeriksaan|jalankan pemeriksaan|cara.*(?:frt|hse))\b/u', $message) === 1) {
             return ['inspection.conduct'];
+        }
+
+        return [];
+    }
+
+    /** @param array<int, string> $topicKeys @return array<int, string> */
+    private function productTaskKeys(string $message, array $topicKeys): array
+    {
+        $hasTopic = fn (string $topic): bool => in_array($topic, $topicKeys, true);
+
+        if (($hasTopic('leave') || $hasTopic('leave_entitlement'))
+            && preg_match('/\b(?:apply|mohon|submit|hantar|save draft|edit|cancel|batal|view balance|check balance|semak baki)\b/u', $message) === 1) {
+            return ['leave.self_service'];
+        }
+        if ($hasTopic('overtime')
+            && preg_match('/\b(?:apply|mohon|submit|hantar|save draft|edit|cancel|batal)\b/u', $message) === 1) {
+            return ['overtime.self_service'];
+        }
+        if ($hasTopic('payroll') && preg_match('/\b(?:payslip|pay slip|slip gaji)\b/u', $message) === 1
+            && preg_match('/\b(?:view|open|download|lihat|buka|muat turun|cara|how)\b/u', $message) === 1) {
+            return ['payroll.payslip.view'];
+        }
+        if ($hasTopic('salary_claim')
+            && preg_match('/\b(?:create|new|submit|save|edit|cancel|buat|baharu|hantar|simpan|kemas kini|batal|how|cara)\b/u', $message) === 1) {
+            return ['payroll.claim.submit'];
+        }
+        if ($hasTopic('roster')
+            && preg_match('/\b(?:create|publish|change|assign|save|buat|terbit|ubah|tetapkan|simpan)\b/u', $message) === 1) {
+            return ['roster.manage'];
+        }
+        if ($hasTopic('team')
+            && preg_match('/\b(?:create|add|edit|manage|buat|tambah|kemas kini|urus)\b/u', $message) === 1) {
+            return ['teams.manage'];
+        }
+        if ($hasTopic('user_administration')
+            && preg_match('/\b(?:create|activate|deactivate|lock|unlock|delete|restore|manage|buat|aktifkan|nyahaktif|kunci|padam|pulihkan|urus)\b/u', $message) === 1) {
+            return ['users.manage'];
+        }
+        if ($hasTopic('role_permission')
+            && preg_match('/\b(?:edit|assign|change|save|manage|configure|kemas kini|tetapkan|ubah|simpan|urus|konfigurasi)\b/u', $message) === 1) {
+            return ['roles.permissions.manage'];
+        }
+        if ($hasTopic('report')
+            && preg_match('/\b(?:open|view|find|create|new report|buka|lihat|cari|buat|laporan baharu)\b/u', $message) === 1) {
+            return ['reports.navigate'];
+        }
+        if ($hasTopic('module_activation')
+            && preg_match('/\b(?:toggle|enable|disable|activate|save|aktifkan|nyahaktif|simpan)\b/u', $message) === 1) {
+            return ['settings.module_activation'];
         }
 
         return [];

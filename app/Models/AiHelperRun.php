@@ -28,6 +28,8 @@ class AiHelperRun extends Model
         'intent',
         'language',
         'source_mode',
+        'answer_mode',
+        'workflow_key',
         'topic_keys',
         'operation_keys',
         'candidate_documents',

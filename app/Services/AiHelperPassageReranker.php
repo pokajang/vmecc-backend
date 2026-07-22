@@ -48,7 +48,7 @@ class AiHelperPassageReranker
 
         try {
             $result = $this->openAi->structuredResponse(
-                (string) config('ai_helper.rerank_model', config('ai_helper.model')),
+                (string) config('ai_helper.model'),
                 'Rank only the supplied evidence passages for the question. Do not answer the question. Preserve chunk IDs exactly. Rank direct, complete evidence above merely related text. Respect explicit document and revision constraints.',
                 [[
                     'role' => 'user',

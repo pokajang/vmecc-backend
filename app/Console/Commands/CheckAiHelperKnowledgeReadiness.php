@@ -8,6 +8,7 @@ use App\Services\AiHelperEmbeddingService;
 use App\Services\AiHelperKnowledgeProcessingService;
 use App\Services\AiHelperMarkdownKnowledgeParser;
 use App\Services\AiHelperSystemGuideCatalog;
+use App\Services\AiHelperWorkflowRegistry;
 use App\Services\ModuleCatalog;
 use App\Services\RoleCatalog;
 use Illuminate\Console\Command;
@@ -28,6 +29,7 @@ class CheckAiHelperKnowledgeReadiness extends Command
         AiHelperSystemGuideCatalog $catalog,
         AiHelperMarkdownKnowledgeParser $parser,
         AiHelperEmbeddingService $embeddings,
+        AiHelperWorkflowRegistry $workflows,
     ): int {
         $productionGate = (bool) $this->option('production');
         $schemaReady = collect([
@@ -131,6 +133,9 @@ class CheckAiHelperKnowledgeReadiness extends Command
                 ->orWhere('status', '!=', AiHelperKnowledgeEntry::STATUS_DISABLED))
             ->count();
         $catalogErrors = $catalog->validateRegistry();
+        if ((bool) config('ai_helper.product_workflows_enabled', false)) {
+            $catalogErrors = array_merge($catalogErrors, $workflows->validationErrors());
+        }
         $sourceFinal = 0;
         $sourceActive = 0;
         $verificationDossiers = 0;
@@ -210,16 +215,20 @@ class CheckAiHelperKnowledgeReadiness extends Command
         $verificationValid = in_array($groundingMode, ['disabled', 'shadow', 'enforce'], true)
             && $verificationAttempts >= 1 && $verificationAttempts <= 2;
         $retrievalConfigurationValid = $this->retrievalConfigurationValid();
+        $primaryModel = trim((string) config('ai_helper.model'));
+        $embeddingModel = trim((string) config('ai_helper.embedding_model'));
         $providerConfigured = (bool) config('ai_helper.enabled', false)
-            && trim((string) config('ai_helper.api_key')) !== '';
+            && trim((string) config('ai_helper.api_key')) !== ''
+            && $primaryModel !== '';
         $systemGuidesEnabled = (bool) config('ai_helper.system_guides_enabled', false);
+        $productWorkflowsEnabled = (bool) config('ai_helper.product_workflows_enabled', false);
         $finalCorpusEnforced = (bool) config('ai_helper.system_guide_final_corpus_enforced', true);
         $approvalEnforced = (bool) config('ai_helper.system_guide_approval_enforced', true);
         $productionConfigurationValid = $providerConfigured
-            && (bool) config('ai_helper.retrieval_v2', true)
-            && (bool) config('ai_helper.retrieval_v3', false)
-            && (bool) config('ai_helper.retrieval_v4', false)
+            && $embeddingModel !== ''
+            && (int) config('ai_helper.pipeline_version', 4) === 4
             && $systemGuidesEnabled
+            && $productWorkflowsEnabled
             && $finalCorpusEnforced
             && $approvalEnforced
             && (bool) config('ai_helper.embedding_enabled', true)
@@ -250,21 +259,22 @@ class CheckAiHelperKnowledgeReadiness extends Command
             'system_guides_ready' => $systemReady,
             'role_aware_retrieval_ready' => $roleAwareReady,
             'system_guides_runtime_enabled' => $systemGuidesEnabled,
+            'product_workflows_runtime_enabled' => $productWorkflowsEnabled,
             'final_corpus_enforced' => $finalCorpusEnforced,
             'system_guide_approval_enforced' => $approvalEnforced,
             'deployment_state' => $deploymentState,
             'reference_knowledge' => $referencePayload,
             'system_guides' => $systemPayload,
             'retrieval' => [
-                'pipeline_version' => (bool) config('ai_helper.retrieval_v4', false)
-                    ? 4
-                    : ((bool) config('ai_helper.retrieval_v3', false) ? 3 : 2),
+                'pipeline_version' => (int) config('ai_helper.pipeline_version', 4),
                 'index_fingerprint' => $embeddings->indexFingerprint(),
                 'schema_ready' => true,
                 'verification_configuration_valid' => $verificationValid,
                 'retrieval_configuration_valid' => $retrievalConfigurationValid,
                 'production_configuration_valid' => $productionConfigurationValid,
                 'provider_configured' => $providerConfigured,
+                'primary_model' => $primaryModel,
+                'embedding_model' => $embeddingModel,
             ],
         ]);
     }
@@ -298,7 +308,7 @@ class CheckAiHelperKnowledgeReadiness extends Command
         $lexical = (float) config('ai_helper.retrieval_min_lexical_coverage', 0.6);
         $semantic = (float) config('ai_helper.retrieval_min_semantic_similarity', 0.42);
         $rerank = (int) config('ai_helper.rerank_min_relevance', 1);
-        $retrievalV4 = (bool) config('ai_helper.retrieval_v4', false);
+        $pipelineVersion = (int) config('ai_helper.pipeline_version', 4);
 
         return $lexical >= 0.0 && $lexical <= 1.0
             && $semantic >= 0.0 && $semantic <= 1.0
@@ -306,15 +316,13 @@ class CheckAiHelperKnowledgeReadiness extends Command
             && (int) config('ai_helper.knowledge_document_candidate_limit', 12) > 0
             && (int) config('ai_helper.retrieval_candidate_chunks', 40) > 0
             && (int) config('ai_helper.knowledge_context_token_budget', 12000) > 0
-            && (! $retrievalV4 || (
-                (int) config('ai_helper.pipeline_version', 4) === 4
-                && (int) config('ai_helper.index_profile_version', 4) > 0
-                && (int) config('ai_helper.retrieval_v4_document_candidate_limit', 18) > 0
-                && (int) config('ai_helper.retrieval_v4_topic_candidate_limit', 6) > 0
-                && (int) config('ai_helper.retrieval_v4_page_candidate_limit', 4) > 0
-                && (int) config('ai_helper.retrieval_v4_global_candidate_limit', 12) > 0
-                && (int) config('ai_helper.retrieval_v4_recovery_document_limit', 32) > 0
-            ));
+            && $pipelineVersion === 4
+            && (int) config('ai_helper.index_profile_version', 4) > 0
+            && (int) config('ai_helper.retrieval_v4_document_candidate_limit', 18) > 0
+            && (int) config('ai_helper.retrieval_v4_topic_candidate_limit', 6) > 0
+            && (int) config('ai_helper.retrieval_v4_page_candidate_limit', 4) > 0
+            && (int) config('ai_helper.retrieval_v4_global_candidate_limit', 12) > 0
+            && (int) config('ai_helper.retrieval_v4_recovery_document_limit', 32) > 0;
     }
 
     private function render(array $payload): int

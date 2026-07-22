@@ -35,13 +35,13 @@ Use `--json` in automated deployment checks and require:
 - `reference_knowledge.missing_embeddings: 0` and `system_guides.missing_embeddings: 0`
 - `reference_knowledge.incompatible_embeddings: 0` and `system_guides.incompatible_embeddings: 0`
 
-The production gate additionally requires a configured AI provider, Retrieval V4, compatible semantic coverage, final enabled system guides, reranking, citation and critical-fact validation, and `AI_HELPER_GROUNDING_VERIFICATION_MODE=enforce`. An empty, unapproved, inactive, unlinked, processing, failed, or fingerprint-incompatible corpus fails both gates.
+The production gate additionally requires a configured AI provider and model IDs, the code-controlled Retrieval V4 profile, compatible semantic coverage, final enabled system guides and product workflows, reranking, citation and critical-fact validation, and enforced grounding verification. An empty, unapproved, inactive, unlinked, processing, failed, or fingerprint-incompatible corpus fails both gates.
 
 ## Runtime prerequisites
 
 - No Poppler or Tesseract installation is required.
 - PDFs and Markdown must remain on Laravel's private `local` filesystem disk.
-- Provision the approved `ai_knowledge/` source directory outside the web root and set `AI_HELPER_REFERENCE_CORPUS_PATH` to its absolute path. The source corpus is intentionally not committed to this repository.
+- Provision the approved corpus at `storage/app/private/ai_knowledge`, or place a deployment-managed symlink there that targets the existing private corpus. The source corpus is intentionally not committed to this repository.
 - The corpus layout must contain PDFs under `ai_knowledge/pdf/` and their exact-basename Markdown counterparts under `ai_knowledge/md/`. Audit and image assets may remain under `md/`; the seeder reads only the 34 top-level Markdown files.
 - A database queue worker is required during queued Markdown uploads and re-indexing; the small bundled corpus can also be rebuilt synchronously during controlled maintenance.
 - The worker user needs read/write access to `storage/app/ai-helper`.
@@ -124,7 +124,7 @@ All three commands must exit successfully. The global suite additionally require
 
 ## Grounded response gate
 
-`AI_HELPER_CITATION_VALIDATION_ENABLED=true` buffers each generated answer until its Markdown blocks and list groups have been checked against the retrieved source IDs. Operational answers with missing citations or unknown source IDs are not emitted. They are replaced with a safe insufficient-evidence response, their visible source list is cleared, and the validation result is recorded under the message retrieval metadata.
+The code-controlled `ai_helper.citation_validation_enabled` policy buffers each generated answer until its Markdown blocks and list groups have been checked against the retrieved source IDs. Operational answers with missing citations or unknown source IDs are not emitted. They are replaced with a safe insufficient-evidence response, their visible source list is cleared, and the validation result is recorded under the message retrieval metadata.
 
 Deterministic catalogue responses and responses for which no knowledge passage was retrieved do not require citations. Because validation occurs before the first answer delta, the UI continues to show its loading state until the complete grounded answer is ready.
 
@@ -138,40 +138,20 @@ All provider work for one user request shares one wall-clock deadline and one ca
 
 The Inspection and ERCO in-form helpers accept only named, server-validated tasks. They use strict structured output and deterministic number/date/time/identifier checks; they do not enter the global knowledge-answer pipeline and do not claim corpus grounding. Legacy free-form `embedded_helper` requests are rejected.
 
-Recommended staged configuration:
+Environment-controlled AI configuration:
 
-```ini
-AI_HELPER_RETRIEVAL_V3=true
-AI_HELPER_RETRIEVAL_V4=true
-AI_HELPER_PIPELINE_VERSION=4
-AI_HELPER_INDEX_PROFILE_VERSION=4
-AI_HELPER_REQUEST_DEADLINE_SECONDS=50
-AI_HELPER_MAX_PROVIDER_CALLS_PER_REQUEST=8
-AI_HELPER_CONCURRENCY_LOCK_SECONDS=90
-AI_HELPER_KNOWLEDGE_DOCUMENT_CANDIDATE_LIMIT=12
-AI_HELPER_RETRIEVAL_V4_DOCUMENT_CANDIDATE_LIMIT=18
-AI_HELPER_RETRIEVAL_V4_TOPIC_CANDIDATE_LIMIT=6
-AI_HELPER_RETRIEVAL_V4_PAGE_CANDIDATE_LIMIT=4
-AI_HELPER_RETRIEVAL_V4_GLOBAL_CANDIDATE_LIMIT=12
-AI_HELPER_RETRIEVAL_V4_RECOVERY_DOCUMENT_LIMIT=32
-AI_HELPER_RETRIEVAL_CANDIDATE_CHUNKS=40
-AI_HELPER_RETRIEVAL_MIN_LEXICAL_COVERAGE=0.6
-AI_HELPER_RETRIEVAL_MIN_SEMANTIC_SIMILARITY=0.42
-AI_HELPER_RERANK_ENABLED=true
-AI_HELPER_RERANK_CANDIDATE_LIMIT=32
-AI_HELPER_RERANK_MIN_RELEVANCE=1
-AI_HELPER_CRITICAL_FACT_VALIDATION_ENABLED=true
-AI_HELPER_GROUNDING_VERIFICATION_MODE=shadow
-AI_HELPER_VERIFICATION_MAX_ATTEMPTS=2
-AI_HELPER_EMBEDDING_ROUTING_PROFILE_VERSION=routing-v1
-AI_HELPER_EMBEDDING_CHUNK_PROFILE_VERSION=contextual-v2
+```dotenv
+AI_HELPER_ENABLED=true
+OPENAI_API_KEY=<server-secret>
+OPENAI_HELPER_MODEL=gpt-5.4-mini
+AI_HELPER_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
-Use `shadow` during initial UAT. The verifier records failures without blocking responses. After the core live suite and reviewed UAT conversations pass, change the mode to `enforce`, run `php artisan config:cache`, and restart queue workers. In enforce mode the verifier fails closed.
+All other retrieval, reliability, validation, quota, storage, and retention values are version-controlled in `config/ai_helper.php`. Rebuild Laravel's configuration cache and restart queue workers after changing any of the four values.
 
-After switching to `enforce`, run `php artisan ai-helper:knowledge-readiness --production --json` and require `ready: true`, `release_gate: production`, and `retrieval.production_configuration_valid: true` before opening production traffic.
+A primary-model change affects generation, reranking, and verification together and does not change the semantic fingerprint. An embedding-model change is an index migration: keep traffic closed or Ask AI disabled, rebuild every active knowledge embedding, and require `php artisan ai-helper:knowledge-readiness --production --json` to return `ready: true` before reopening traffic.
 
-To roll back only Retrieval V4 behaviour, set `AI_HELPER_RETRIEVAL_V4=false`, keep `AI_HELPER_RETRIEVAL_V3=true`, and keep both `AI_HELPER_SYSTEM_GUIDES_ENABLED=true` and `AI_HELPER_SYSTEM_GUIDE_FINAL_CORPUS_ENFORCED=true`. Rebuild cached configuration and restart queue workers. This retains the final role-aware guides and returns retrieval to V3; it is an emergency runtime rollback and the strict production readiness gate will remain red until V4 is restored and revalidated.
+Granular workflow, retrieval-generation, or verifier rollback requires a reviewed code/config deployment. Use `AI_HELPER_ENABLED=false` as the immediate whole-feature shutdown while that rollback is prepared.
 
 ## Administration and privacy
 

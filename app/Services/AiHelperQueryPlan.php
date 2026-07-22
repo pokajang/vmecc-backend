@@ -14,6 +14,7 @@ final readonly class AiHelperQueryPlan
      * @param  array<int, int>  $annexNumbers
      * @param  array<int, string>  $revisions
      * @param  array<int, string>  $documentCodes
+     * @param  array<int, string>  $entityKeys
      */
     public function __construct(
         public string $intent,
@@ -42,6 +43,9 @@ final readonly class AiHelperQueryPlan
         public bool $requiresMultipleDocuments,
         public string $scopeAdjustmentHint,
         public bool $sensitiveRequest,
+        public string $answerMode,
+        public array $entityKeys,
+        public bool $evidenceRequired,
     ) {}
 
     /** @return array<string, mixed> */
@@ -75,6 +79,9 @@ final readonly class AiHelperQueryPlan
             'requires_global_context' => $this->requiresGlobalContext,
             'scope_adjustment_hint' => $this->scopeAdjustmentHint,
             'sensitive_request' => $this->sensitiveRequest,
+            'answer_mode' => $this->answerMode,
+            'entity_keys' => $this->entityKeys,
+            'evidence_required' => $this->evidenceRequired,
         ];
     }
 }

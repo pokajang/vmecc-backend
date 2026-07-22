@@ -75,6 +75,35 @@ final class AiHelperResponseResultFactory
     }
 
     /** @return array<string, mixed> */
+    public function conversational(
+        string $content,
+        array $responseIds,
+        array $providerRequestIds,
+        array $usage,
+        int $generationDuration,
+        float $pipelineStartedAt,
+    ): array {
+        return [
+            'content' => $content,
+            'sources' => [],
+            'response_id' => $responseIds === [] ? null : end($responseIds),
+            'provider_response_ids' => array_values(array_unique($responseIds)),
+            'provider_request_ids' => array_values(array_unique($providerRequestIds)),
+            'usage' => $usage,
+            'outcome_code' => 'AI_HELPER_CONVERSATIONAL',
+            'recovery_action' => null,
+            'timings_ms' => $this->timings($generationDuration, 0, $pipelineStartedAt),
+            'verification' => [
+                'status' => 'not_required',
+                'attempts' => 1,
+                'citation_validation' => ['valid' => true, 'status' => 'not_required'],
+                'critical_fact_validation' => ['valid' => true, 'status' => 'not_required', 'failures' => []],
+                'grounding_verification' => ['valid' => true, 'status' => 'not_required', 'failures' => []],
+            ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
     public function providerFallback(
         AiHelperProviderException $failure,
         array $guidance,

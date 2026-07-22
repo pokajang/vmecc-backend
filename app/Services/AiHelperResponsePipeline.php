@@ -130,6 +130,33 @@ class AiHelperResponsePipeline
             $generationDuration += $this->elapsedMilliseconds($generationStartedAt);
             $this->captureProviderMetadata($providerResult, $responseIds, $providerRequestIds, $usage);
 
+            if (! $evidenceRequired) {
+                $quality = $this->qualityProfile(
+                    $draft,
+                    ['valid' => true],
+                    [],
+                    $queryPlan,
+                    $retrievalMetadata,
+                    $attempt,
+                );
+
+                return $this->withPolicyMetadata(
+                    $this->results->conversational(
+                        $draft,
+                        $responseIds,
+                        $providerRequestIds,
+                        $usage,
+                        $generationDuration,
+                        $pipelineStartedAt,
+                    ),
+                    $qualitySignals,
+                    $quality,
+                    true,
+                    'normal',
+                    [],
+                );
+            }
+
             $onStatus('verifying');
             $verificationStartedAt = microtime(true);
             $validation = $this->validator->validate($question, $draft, $guidance, $sources, $deadline, $safetyIdentifier);
@@ -173,14 +200,11 @@ class AiHelperResponsePipeline
                 if ($policy['decision'] !== 'normal') {
                     return $this->withPolicyMetadata(
                         $this->lowConfidenceResponse(
-                            $question,
                             $guidance,
                             $sources,
                             $policy,
                             $fallbackLanguage,
                             $validation,
-                            $queryPlan,
-                            $quality,
                         ),
                         $qualitySignals,
                         $quality,
@@ -334,8 +358,6 @@ class AiHelperResponsePipeline
                 $this->withRefusalFallback(
                     $result,
                     $fallbackLanguage,
-                    $validation,
-                    $policy,
                     $quality,
                 ),
                 $qualitySignals,
@@ -449,6 +471,13 @@ class AiHelperResponsePipeline
             + (($quality['validation_success'] ?? 0) * 0.3)
         );
 
+        $answerMode = (string) ($queryPlan['answer_mode'] ?? 'operational_knowledge');
+        if (in_array($answerMode, ['product_capability', 'product_navigation', 'product_workflow'], true)
+            && ($quality['validation_success'] ?? 0) >= 1.0
+            && collect((array) ($retrievalMetadata['missing_requested_facts'] ?? []))->filter()->isEmpty()) {
+            return ['decision' => 'normal', 'evidence_gaps' => []];
+        }
+
         $evidenceGaps = [];
         if (($quality['validation_success'] ?? 0) < 1.0) {
             $evidenceGaps[] = 'validation_limit';
@@ -527,23 +556,12 @@ class AiHelperResponsePipeline
     }
 
     private function lowConfidenceResponse(
-        string $question,
         array $guidance,
         array $sources,
         array $policy,
         string $fallbackLanguage,
-        array $validation,
-        array $queryPlan,
-        array $quality
+        array $validation
     ): array {
-        $qualityText = match ($fallbackLanguage) {
-            'bm' => 'Berdasarkan data yang ditemui, saya perlukan konteks tambahan untuk jawab dengan tepat.',
-            default => 'Based on available evidence, I need additional context before I can answer safely.',
-        };
-        $topics = collect($queryPlan['topic_keys'] ?? [])->map(fn (string $topic) => str_replace('_', ' ', $topic))->implode(', ');
-        $prefix = $topics === '' ? $qualityText : "{$qualityText} Topik berkaitan: {$topics}.";
-        $evidenceDensity = (int) round(($quality['evidence_density'] ?? 0) * 100);
-
         $extractive = $this->results->extractiveFallback(
             $guidance,
             $sources,
@@ -562,15 +580,9 @@ class AiHelperResponsePipeline
         );
 
         $fallbackAction = $policy['evidence_gaps'] === [] ? 'ask_for_more_context' : 'ask_for_additional_scope';
-        $hintItems = [
-            '- module/page involved',
-            '- specific action',
-            '- related reference ID or value',
-        ];
-        $extractive['content'] = $prefix
-            ."\n\nConfidence: {$evidenceDensity}%\n\n"
-            .implode("\n", $hintItems)
-            ."\n\n".str_replace('AI_HELPER_LOW_CONFIDENCE', 'AI_HELPER_LOW_CONFIDENCE', $extractive['content']);
+        $extractive['content'] = $fallbackLanguage === 'bm'
+            ? 'Saya belum mempunyai maklumat yang cukup untuk menjawab dengan tepat. Nyatakan tugas yang anda mahu lakukan dan nama rekod, peralatan atau dokumen jika berkaitan.'
+            : 'I do not yet have enough information to answer accurately. Tell me the task you want to complete and the relevant record, equipment, or document if applicable.';
         $extractive['outcome_code'] = 'AI_HELPER_LOW_CONFIDENCE';
         $extractive['recovery_action'] = $fallbackAction;
 
@@ -580,24 +592,13 @@ class AiHelperResponsePipeline
     private function withRefusalFallback(
         array $result,
         string $fallbackLanguage,
-        array $validation,
-        array $policy,
         array $quality
     ): array {
         $isBm = $fallbackLanguage === 'bm';
-        $reason = $policy['fallback_reason'] ?? 'low_confidence';
         if ($isBm) {
-            $result['content'] = 'Saya tidak boleh beri jawapan terperinci buat masa ini kerana keyakinan sokongan tidak mencukupi ('.$reason.').'."\n"
-                .'Sila beri konteks tambahan: modul/halaman semasa, tindakan, dan nilai rujukan.';
+            $result['content'] = 'Saya belum dapat mengesahkan jawapan terperinci untuk permintaan ini. Nyatakan tugas atau butiran khusus yang anda perlukan.';
         } else {
-            $result['content'] = "I cannot provide a reliable complete answer right now because confidence is insufficient ({$reason}).\n"
-                .'Please provide additional context: current module/page, action, and any reference values.';
-        }
-        if (collect((array) data_get($validation, 'grounding_verification.failures', []))->isNotEmpty()) {
-            $result['content'] .= "\n\n".implode("\n", array_map(
-                fn ($failure) => '- '.(string) ($failure['reason'] ?? 'validation_issue'),
-                array_slice((array) data_get($validation, 'grounding_verification.failures', []), 0, 3),
-            ));
+            $result['content'] = 'I could not verify a detailed answer for this request. Tell me the specific task or detail you need.';
         }
         if (($quality['validation_success'] ?? 0) >= 0.55) {
             $result['fallback_action'] = 'ask_for_more_context';

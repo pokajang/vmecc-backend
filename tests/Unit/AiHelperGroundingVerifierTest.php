@@ -17,24 +17,30 @@ class AiHelperGroundingVerifierTest extends TestCase
 
     public function test_enforce_mode_accepts_only_a_passing_supported_verdict(): void
     {
-        config(['ai_helper.grounding_verification_mode' => 'enforce']);
+        config([
+            'ai_helper.grounding_verification_mode' => 'enforce',
+            'ai_helper.model' => 'shared-primary-model',
+        ]);
         $this->mock(AiHelperOpenAiService::class, function ($mock) {
-            $mock->shouldReceive('structuredResponse')->once()->andReturn([
-                'response_id' => 'verify-1',
-                'data' => [
-                    'verdict' => 'pass',
-                    'question_answered' => true,
-                    'claims' => [[
-                        'claim' => '999 is the official emergency number.',
-                        'source_ids' => ['S1'],
-                        'supported' => true,
-                        'contradicted' => false,
-                        'missing_qualifier' => false,
-                        'reason' => null,
-                    ]],
-                    'missing_requested_facts' => [],
-                ],
-            ]);
+            $mock->shouldReceive('structuredResponse')
+                ->once()
+                ->withArgs(fn (...$arguments) => $arguments[0] === 'shared-primary-model')
+                ->andReturn([
+                    'response_id' => 'verify-1',
+                    'data' => [
+                        'verdict' => 'pass',
+                        'question_answered' => true,
+                        'claims' => [[
+                            'claim' => '999 is the official emergency number.',
+                            'source_ids' => ['S1'],
+                            'supported' => true,
+                            'contradicted' => false,
+                            'missing_qualifier' => false,
+                            'reason' => null,
+                        ]],
+                        'missing_requested_facts' => [],
+                    ],
+                ]);
         });
 
         $result = app(AiHelperGroundingVerifier::class)->verify(

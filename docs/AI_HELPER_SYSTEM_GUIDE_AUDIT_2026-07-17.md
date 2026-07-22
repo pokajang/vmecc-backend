@@ -1,5 +1,7 @@
 # Ask AI System-Guide Audit
 
+> Historical audit record. Its environment-switch and deployment references are superseded by `AI_HELPER_SYSTEM_GUIDE_PRODUCTION_RUNBOOK.md` and the four-variable environment boundary in `config/ai_helper.php`; do not use this file as a deployment runbook.
+
 Date: 2026-07-17
 
 Scope: role-aware system-guide catalog, Markdown corpus, seeder, authorization, retrieval, citations, readiness, and deployment gate

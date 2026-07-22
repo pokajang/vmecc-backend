@@ -126,7 +126,7 @@ class AiHelperApiTest extends TestCase
             'new_thread' => true,
         ])->assertOk()->streamedContent();
 
-        $this->assertStringContainsString('supporting guidance directly', $content);
+        $this->assertStringContainsString('The relevant guidance states', $content);
         $this->assertStringContainsString('official Malaysian Emergency Service Centre', $content);
         $this->assertStringNotContainsString('Call 999 immediately', $content);
         $message = AiHelperMessage::query()->where('role', AiHelperMessage::ROLE_ASSISTANT)->latest('id')->firstOrFail();
@@ -142,7 +142,7 @@ class AiHelperApiTest extends TestCase
             'ai_helper.api_key' => 'test-key',
             'ai_helper.embedding_enabled' => false,
             'ai_helper.rerank_enabled' => false,
-            'ai_helper.retrieval_v3' => true,
+            'ai_helper.pipeline_version' => 4,
             'ai_helper.knowledge_strict_readiness' => false,
         ]);
         $this->actingAs(User::factory()->create(['status' => 'active']));
@@ -240,6 +240,7 @@ MD;
         config([
             'ai_helper.enabled' => true,
             'ai_helper.api_key' => 'sk-secret-value',
+            'ai_helper.model' => 'test-primary',
             'ai_helper.embedding_model' => 'test-embedding',
             'ai_helper.embedding_dimensions' => 2,
         ]);
@@ -261,6 +262,9 @@ MD;
             ->assertOk()
             ->assertJsonPath('data.enabled', true)
             ->assertJsonPath('data.configured', true)
+            ->assertJsonPath('data.provider.api_version', 'v1')
+            ->assertJsonPath('data.provider.primary_model', 'test-primary')
+            ->assertJsonPath('data.provider.embedding_model', 'test-embedding')
             ->assertJsonPath('data.knowledge_runtime.mode', 'markdown_only')
             ->assertJsonPath('data.knowledge_runtime.pdf_ingestion_enabled', false)
             ->assertJsonPath('data.knowledge_runtime.external_ocr_required', false)
@@ -285,7 +289,24 @@ MD;
                     'p95_response_ms',
                 ],
             ]])
-            ->assertJsonMissing(['api_key' => 'sk-secret-value']);
+            ->assertJsonMissing(['api_key' => 'sk-secret-value'])
+            ->assertDontSee('sk-secret-value');
+    }
+
+    public function test_admin_diagnostics_does_not_report_a_blank_primary_model_as_configured(): void
+    {
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'sk-secret-value',
+            'ai_helper.model' => ' ',
+        ]);
+        $this->actingAs($this->systemAdministrator());
+
+        $this->getJson('/api/ai-helper/diagnostics')
+            ->assertOk()
+            ->assertJsonPath('data.configured', false)
+            ->assertJsonPath('data.provider.primary_model', '')
+            ->assertDontSee('sk-secret-value');
     }
 
     private function systemAdministrator(): User

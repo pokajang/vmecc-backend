@@ -21,7 +21,8 @@ class AiHelperEmbeddingService
     public function isAvailable(): bool
     {
         return (bool) config('ai_helper.embedding_enabled', true)
-            && trim((string) config('ai_helper.api_key')) !== '';
+            && trim((string) config('ai_helper.api_key')) !== ''
+            && trim((string) config('ai_helper.embedding_model')) !== '';
     }
 
     /** @return array<int, float>|null */

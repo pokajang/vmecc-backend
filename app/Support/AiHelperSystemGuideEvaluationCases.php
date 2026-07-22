@@ -232,6 +232,14 @@ class AiHelperSystemGuideEvaluationCases
                 'expected_topic_key' => 'inspection',
             ],
             [
+                'id' => 'system-guide-global-alias-fire-truck-mixed',
+                'guide_key' => 'inspection-fire-truck-conduct',
+                'question' => 'Macam mana nak inspect fire rescue truck?',
+                'path' => '/dashboard',
+                'response_language' => 'auto',
+                'expected_topic_key' => 'fire_truck',
+            ],
+            [
                 'id' => 'system-guide-global-alias-payslip-bm-noise',
                 'guide_key' => 'payroll-self-service',
                 'question' => 'Kat mana nak tengok slip gaji saya?',

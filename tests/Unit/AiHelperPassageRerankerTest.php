@@ -14,16 +14,19 @@ class AiHelperPassageRerankerTest extends TestCase
 {
     public function test_it_applies_only_valid_chunk_ids_from_the_structured_ranking(): void
     {
-        config(['ai_helper.rerank_enabled' => true]);
+        config(['ai_helper.rerank_enabled' => true, 'ai_helper.model' => 'shared-primary-model']);
         $this->mock(AiHelperOpenAiService::class, function ($mock) {
-            $mock->shouldReceive('structuredResponse')->once()->andReturn([
-                'response_id' => 'rerank-1',
-                'data' => ['results' => [
-                    ['chunk_id' => 2, 'relevance' => 3, 'direct_answer' => true, 'covers' => ['answer']],
-                    ['chunk_id' => 999, 'relevance' => 3, 'direct_answer' => true, 'covers' => []],
-                    ['chunk_id' => 1, 'relevance' => 1, 'direct_answer' => false, 'covers' => []],
-                ]],
-            ]);
+            $mock->shouldReceive('structuredResponse')
+                ->once()
+                ->withArgs(fn (...$arguments) => $arguments[0] === 'shared-primary-model')
+                ->andReturn([
+                    'response_id' => 'rerank-1',
+                    'data' => ['results' => [
+                        ['chunk_id' => 2, 'relevance' => 3, 'direct_answer' => true, 'covers' => ['answer']],
+                        ['chunk_id' => 999, 'relevance' => 3, 'direct_answer' => true, 'covers' => []],
+                        ['chunk_id' => 1, 'relevance' => 1, 'direct_answer' => false, 'covers' => []],
+                    ]],
+                ]);
         });
 
         $result = app(AiHelperPassageReranker::class)->rerank(

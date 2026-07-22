@@ -95,7 +95,8 @@ class AiHelperKnowledgeRetriever
             $semanticFallback = true;
         }
 
-        $retrievalV4 = (bool) config('ai_helper.retrieval_v4', false);
+        $pipelineVersion = $this->pipelineVersion();
+        $retrievalV4 = $pipelineVersion >= 4;
         $rankedDocuments = $entries->map(function (AiHelperKnowledgeEntry $entry) use ($analysis, $rankingContext, $queryEmbedding, $retrievalV4, $semanticCompatibleIds) {
             $topicScore = $retrievalV4 ? $this->documentTopicScore($entry, $analysis) : 0;
             $matchedTopicKeys = $retrievalV4
@@ -107,6 +108,7 @@ class AiHelperKnowledgeRetriever
             $operationScore = $retrievalV4 ? $this->documentOperationScore($entry, $analysis) : 0;
             $taskScore = $retrievalV4 ? $this->documentTaskScore($entry, $analysis) : 0;
             $taskConflict = $retrievalV4 && $this->documentTaskConflict($entry, $analysis);
+            $entityConflict = $retrievalV4 && $this->documentEntityConflict($entry, $analysis);
             $exactMatch = $this->isExactDocumentMatch($entry, $analysis);
             $pageMatch = $this->isPageMatch($entry, $rankingContext);
             $semanticCompatible = $semanticCompatibleIds->has((int) $entry->id);
@@ -123,6 +125,7 @@ class AiHelperKnowledgeRetriever
                 'operation_score' => $operationScore,
                 'task_score' => $taskScore,
                 'task_conflict' => $taskConflict,
+                'entity_conflict' => $entityConflict,
                 'page_match' => $pageMatch,
                 'semantic_compatible' => $semanticCompatible,
                 'protected_match' => $exactMatch || $taskScore > 0 || ($topicScore > 0
@@ -130,7 +133,8 @@ class AiHelperKnowledgeRetriever
                     && in_array($analysis['context_dependency'] ?? null, ['explicit_topic', 'mixed'], true))
                     || ($pageMatch && ($analysis['context_dependency'] ?? null) === 'page_deictic'),
             ];
-        })->filter(fn (array $document) => ! ($document['task_conflict'] ?? false) || ($document['exact_match'] ?? false))
+        })->filter(fn (array $document) => ! ($document['entity_conflict'] ?? false)
+            && (! ($document['task_conflict'] ?? false) || ($document['exact_match'] ?? false)))
             ->sortByDesc('score')->values();
         $documentLimit = max(1, (int) config('ai_helper.knowledge_document_candidate_limit', 12));
         $exactDocuments = $rankedDocuments->where('exact_match', true)->values();
@@ -199,7 +203,7 @@ class AiHelperKnowledgeRetriever
                 $recoverySucceeded = true;
             }
         }
-        $retrievalV3 = (bool) config('ai_helper.retrieval_v3', false) || $retrievalV4;
+        $retrievalV3 = $pipelineVersion >= 3;
         $rankedChunks = $retrievalV3
             ? $this->rankChunksWithFusion($rankedChunks)
             : $rankedChunks->sortByDesc('score')->values();
@@ -304,7 +308,7 @@ class AiHelperKnowledgeRetriever
             ->all();
 
         return ['analysis' => $analysis, 'guidance' => $guidance, 'trace' => [
-            'pipeline_version' => $retrievalV4 ? 4 : ($retrievalV3 ? 3 : 2),
+            'pipeline_version' => $pipelineVersion,
             'mode' => $queryEmbedding ? 'hybrid' : 'lexical',
             'documents_considered' => $entries->count(),
             'documents_selected' => $selected->pluck('entry.id')->unique()->count(),
@@ -429,7 +433,7 @@ class AiHelperKnowledgeRetriever
         $document = $entry->sourceDocument;
         $title = Str::lower($this->documentIdentity($entry));
         $score = $this->termScore($title, $analysis['terms'] ?? []) * 35;
-        $retrievalV4 = (bool) config('ai_helper.retrieval_v4', false);
+        $retrievalV4 = $this->pipelineVersion() >= 4;
         $topicScore = $retrievalV4 ? $this->documentTopicScore($entry, $analysis) : 0;
         if ($topicScore > 0) {
             $score += $topicScore * 240;
@@ -585,6 +589,22 @@ class AiHelperKnowledgeRetriever
         return $requested->isNotEmpty()
             && $documentTasks->isNotEmpty()
             && $requested->intersect($documentTasks)->isEmpty();
+    }
+
+    private function documentEntityConflict(AiHelperKnowledgeEntry $entry, array $analysis): bool
+    {
+        if ($entry->knowledge_type !== AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE) {
+            return false;
+        }
+
+        $entities = collect($analysis['entity_keys'] ?? []);
+        if ($entities->isEmpty()) {
+            return false;
+        }
+
+        $documentEntities = collect($this->systemGuides->entitiesForGuideKey($this->guideKey($entry)));
+
+        return $documentEntities->isNotEmpty() && $entities->intersect($documentEntities)->isEmpty();
     }
 
     /** @return array<int, string> */
@@ -1079,6 +1099,11 @@ class AiHelperKnowledgeRetriever
         }
 
         return 'General guidance';
+    }
+
+    private function pipelineVersion(): int
+    {
+        return max(2, min(4, (int) config('ai_helper.pipeline_version', 4)));
     }
 
     private function cosineSimilarity(array $left, array $right): float

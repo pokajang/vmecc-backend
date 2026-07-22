@@ -80,8 +80,60 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
         $analyzer = new AiHelperKnowledgeQueryAnalyzer;
 
         $this->assertSame('casual', $analyzer->analyze('Hello')['intent']);
+        $this->assertSame('casual', $analyzer->analyze('Hello, how are you?')['intent']);
+        $this->assertSame('casual', $analyzer->analyze('Selamat pagi')['intent']);
+        $this->assertSame('casual', $analyzer->analyze('Apa khabar?')['intent']);
         $this->assertSame('general_help', $analyzer->analyze('What can I do here?')['intent']);
         $this->assertSame('knowledge_question', $analyzer->analyze('What is the control room lunch menu?')['intent']);
+        $this->assertSame('knowledge_question', $analyzer->analyze('Hello, how do I apply for leave?')['intent']);
+    }
+
+    public function test_it_assigns_answer_modes_and_canonical_product_entities(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $casual = $analyzer->analyze('hello');
+        $overview = $analyzer->analyze('system ni boleh buat apa');
+        $dashboard = $analyzer->analyze('What does this dashboard show?');
+        $fireTruck = $analyzer->analyze('macam mana nak inspect fire rescue truck');
+        $hse = $analyzer->analyze('cara buat HSE inspection');
+
+        $this->assertSame('casual', $casual['answer_mode']);
+        $this->assertFalse($casual['evidence_required']);
+        $this->assertSame('product_capability', $overview['answer_mode']);
+        $this->assertContains('system_overview', $overview['topic_keys']);
+        $this->assertSame('product_navigation', $dashboard['answer_mode']);
+        $this->assertSame('product_workflow', $fireTruck['answer_mode']);
+        $this->assertSame(['fire_truck'], $fireTruck['entity_keys']);
+        $this->assertContains('hse_inspection', $hse['entity_keys']);
+    }
+
+    public function test_common_greeting_and_identity_variants_remain_casual_without_hiding_real_questions(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        foreach (['Hi there', 'salam', 'assalamualaikum', 'Who are you?', 'Boleh bantu saya?'] as $message) {
+            $analysis = $analyzer->analyze($message);
+            $this->assertSame('casual', $analysis['answer_mode'], $message);
+            $this->assertFalse($analysis['evidence_required'], $message);
+        }
+
+        $workflow = $analyzer->analyze('Hi there, how do I apply for leave?');
+        $this->assertSame('product_workflow', $workflow['answer_mode']);
+        $this->assertSame(['leave.self_service'], $workflow['task_keys']);
+    }
+
+    public function test_it_assigns_canonical_tasks_for_common_product_workflows(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $this->assertSame(['leave.self_service'], $analyzer->analyze('How do I apply for leave?')['task_keys']);
+        $this->assertSame(['overtime.self_service'], $analyzer->analyze('Macam mana nak submit overtime?')['task_keys']);
+        $this->assertSame(['payroll.payslip.view'], $analyzer->analyze('How do I download my payslip?')['task_keys']);
+        $this->assertSame(['payroll.claim.submit'], $analyzer->analyze('Cara buat salary claim')['task_keys']);
+        $this->assertSame(['roster.manage'], $analyzer->analyze('How do I publish a roster?')['task_keys']);
+        $this->assertSame(['users.manage'], $analyzer->analyze('How do I create a user account?')['task_keys']);
+        $this->assertSame('operational_knowledge', $analyzer->analyze('What is the leave policy?')['answer_mode']);
     }
 
     public function test_it_builds_a_bilingual_explicit_topic_plan(): void

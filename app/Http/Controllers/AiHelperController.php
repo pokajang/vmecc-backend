@@ -851,7 +851,13 @@ class AiHelperController extends Controller
             return response()->json([
                 'data' => [
                     'enabled' => (bool) config('ai_helper.enabled'),
-                    'configured' => trim((string) config('ai_helper.api_key')) !== '',
+                    'configured' => trim((string) config('ai_helper.api_key')) !== ''
+                        && trim((string) config('ai_helper.model')) !== '',
+                    'provider' => [
+                        'api_version' => 'v1',
+                        'primary_model' => trim((string) config('ai_helper.model')),
+                        'embedding_model' => trim((string) config('ai_helper.embedding_model')),
+                    ],
                     'queue' => [
                         'default_connection' => config('queue.default'),
                     ],
@@ -859,10 +865,8 @@ class AiHelperController extends Controller
                         'mode' => 'markdown_only',
                         'pdf_ingestion_enabled' => false,
                         'external_ocr_required' => false,
-                        'retrieval_mode' => (bool) config('ai_helper.retrieval_v2', true) ? 'hybrid' : 'legacy',
-                        'retrieval_pipeline_version' => (bool) config('ai_helper.retrieval_v4', false)
-                            ? 4
-                            : ((bool) config('ai_helper.retrieval_v3', false) ? 3 : 2),
+                        'retrieval_mode' => 'hybrid',
+                        'retrieval_pipeline_version' => (int) config('ai_helper.pipeline_version', 4),
                         'rerank_enabled' => (bool) config('ai_helper.rerank_enabled', false),
                         'critical_fact_validation_enabled' => (bool) config('ai_helper.critical_fact_validation_enabled', true),
                         'grounding_verification_mode' => (string) config('ai_helper.grounding_verification_mode', 'disabled'),
@@ -1174,12 +1178,14 @@ class AiHelperController extends Controller
                     $previousUserMessages,
                     $deadline,
                     'vmecc-user-'.$actor->id,
+                    (array) ($validated['ui_state'] ?? []),
                 );
             $pageContext['page']['conversation_purpose'] = $conversationPurpose;
             $pageContext['page']['assistant_surface'] = $conversationPurpose;
             $this->recordRunRetrieval($run, $pageContext);
             $evidenceRequired = $conversationPurpose === self::CONVERSATION_PURPOSE_CHAT
-                && ($pageContext['query_analysis']['intent'] ?? null) !== 'casual';
+                && (bool) ($pageContext['query_analysis']['evidence_required']
+                    ?? (($pageContext['query_analysis']['intent'] ?? null) !== 'casual'));
             $responseLanguage = (string) ($validated['response_language'] ?? 'auto');
             $instructions = $embeddedTask !== null
                 ? ''
@@ -1338,6 +1344,7 @@ class AiHelperController extends Controller
                         $previousUserMessages,
                         $deadline,
                         'vmecc-user-'.$actor->id,
+                        (array) ($pageContext['ui_state'] ?? []),
                     );
                     $expandedGuidance = $expandedContext['guidance'] ?? [];
                     $initialChunkIds = collect($effectiveRetrieval['chunk_ids'] ?? []);
@@ -1633,6 +1640,8 @@ class AiHelperController extends Controller
                 'intent' => Str::limit((string) ($analysis['intent'] ?? ''), 32, '') ?: null,
                 'language' => Str::limit((string) ($analysis['language'] ?? ''), 16, '') ?: null,
                 'source_mode' => Str::limit((string) ($analysis['source_mode'] ?? ''), 16, '') ?: null,
+                'answer_mode' => Str::limit((string) ($analysis['answer_mode'] ?? ''), 32, '') ?: null,
+                'workflow_key' => Str::limit((string) data_get($context, 'product_context.workflow.key', ''), 96, '') ?: null,
                 'topic_keys' => array_values((array) ($analysis['topic_keys'] ?? [])),
                 'operation_keys' => array_values((array) ($analysis['operation_keys'] ?? [])),
                 'candidate_documents' => min(65535, max(0, (int) ($trace['documents_selected'] ?? 0))),

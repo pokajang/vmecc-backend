@@ -73,7 +73,7 @@ class AiHelperRetrievalV2Test extends TestCase
     public function test_reranking_cannot_remove_an_exactly_matched_revision(): void
     {
         config([
-            'ai_helper.retrieval_v3' => true,
+            'ai_helper.pipeline_version' => 3,
             'ai_helper.rerank_enabled' => true,
             'ai_helper.embedding_enabled' => false,
         ]);
@@ -148,7 +148,7 @@ class AiHelperRetrievalV2Test extends TestCase
     public function test_retrieval_v3_uses_rank_fusion_and_records_a_fallback_safe_trace(): void
     {
         config([
-            'ai_helper.retrieval_v3' => true,
+            'ai_helper.pipeline_version' => 3,
             'ai_helper.rerank_enabled' => false,
             'ai_helper.embedding_enabled' => false,
         ]);
@@ -170,7 +170,7 @@ class AiHelperRetrievalV2Test extends TestCase
     public function test_retrieval_v3_abstains_when_no_chunk_meets_the_relevance_floor(): void
     {
         config([
-            'ai_helper.retrieval_v3' => true,
+            'ai_helper.pipeline_version' => 3,
             'ai_helper.rerank_enabled' => false,
             'ai_helper.embedding_enabled' => false,
         ]);

@@ -19,7 +19,7 @@ class AiHelperSystemGuideCatalog
 
     public const RELEASE_STATUSES = [self::RELEASE_DRAFT, self::RELEASE_FINAL];
 
-    /** @var array<string, array{module_key: string, route_key: string, module_gate: string, permissions: array<int, string>, permission_match?: string, roles?: array<int, string>, owner: string, tasks?: array<int, string>, page_help_priority?: int}> */
+    /** @var array<string, array{module_key: string, route_key: string, module_gate: string, permissions: array<int, string>, permission_match?: string, roles?: array<int, string>, owner: string, tasks?: array<int, string>, entities?: array<int, string>, page_help_priority?: int}> */
     private const GUIDES = [
         'ask-ai-usage' => ['module_key' => 'profile', 'route_key' => 'global', 'module_gate' => 'profile', 'permissions' => [], 'owner' => 'System Administration'],
         'dashboard-basics' => ['module_key' => 'dashboard', 'route_key' => 'dashboard', 'module_gate' => 'dashboard', 'permissions' => ['self.dashboard'], 'owner' => 'System Administration'],
@@ -28,17 +28,17 @@ class AiHelperSystemGuideCatalog
         'profile-medical' => ['module_key' => 'profile', 'route_key' => 'profile', 'module_gate' => 'profile', 'permissions' => ['self.profile.medical'], 'owner' => 'Human Resources'],
         'profile-emergency' => ['module_key' => 'profile', 'route_key' => 'profile', 'module_gate' => 'profile', 'permissions' => ['self.profile.emergency'], 'owner' => 'Human Resources'],
         'messages' => ['module_key' => 'messages', 'route_key' => 'messages', 'module_gate' => 'messages', 'permissions' => ['self.messages'], 'owner' => 'System Administration'],
-        'leave-self-service' => ['module_key' => 'leave', 'route_key' => 'leave', 'module_gate' => 'leave.self_service', 'permissions' => ['self.leave'], 'owner' => 'Human Resources'],
+        'leave-self-service' => ['module_key' => 'leave', 'route_key' => 'leave', 'module_gate' => 'leave.self_service', 'permissions' => ['self.leave'], 'owner' => 'Human Resources', 'tasks' => ['leave.self_service']],
         'leave-management' => ['module_key' => 'leave', 'route_key' => 'leave-management', 'module_gate' => 'leave.management', 'permissions' => ['staff.leave.manage'], 'owner' => 'Human Resources'],
         'leave-entitlements' => ['module_key' => 'leave', 'route_key' => 'leave-management', 'module_gate' => 'leave.assignments', 'permissions' => ['staff.leave.manage'], 'owner' => 'Human Resources'],
         'holiday-administration' => ['module_key' => 'leave', 'route_key' => 'leave-management', 'module_gate' => 'leave.holidays', 'permissions' => ['staff.leave.manage'], 'owner' => 'Human Resources'],
         'leave-workflow-rules' => ['module_key' => 'leave', 'route_key' => 'leave-management', 'module_gate' => 'leave.workflow_rules', 'permissions' => ['settings.manage'], 'owner' => 'Human Resources'],
-        'overtime-self-service' => ['module_key' => 'overtime', 'route_key' => 'overtime', 'module_gate' => 'overtime.self_service', 'permissions' => ['self.overtime'], 'owner' => 'Human Resources'],
+        'overtime-self-service' => ['module_key' => 'overtime', 'route_key' => 'overtime', 'module_gate' => 'overtime.self_service', 'permissions' => ['self.overtime'], 'owner' => 'Human Resources', 'tasks' => ['overtime.self_service']],
         'overtime-management' => ['module_key' => 'overtime', 'route_key' => 'overtime-management', 'module_gate' => 'overtime.management', 'permissions' => ['staff.overtime.manage'], 'owner' => 'Human Resources'],
         'overtime-rates' => ['module_key' => 'overtime', 'route_key' => 'salary-claims', 'module_gate' => 'overtime.rate_settings', 'permissions' => ['settings.manage'], 'owner' => 'Human Resources'],
         'overtime-workflow-rules' => ['module_key' => 'overtime', 'route_key' => 'overtime-management', 'module_gate' => 'overtime.workflow_rules', 'permissions' => ['settings.manage'], 'owner' => 'Human Resources'],
-        'payroll-self-service' => ['module_key' => 'payroll', 'route_key' => 'payroll', 'module_gate' => 'payroll.payslips', 'permissions' => ['self.payroll'], 'owner' => 'Finance'],
-        'payroll-claims' => ['module_key' => 'payroll', 'route_key' => 'payroll', 'module_gate' => 'payroll.claims', 'permissions' => ['self.payroll'], 'owner' => 'Finance'],
+        'payroll-self-service' => ['module_key' => 'payroll', 'route_key' => 'payroll', 'module_gate' => 'payroll.payslips', 'permissions' => ['self.payroll'], 'owner' => 'Finance', 'tasks' => ['payroll.payslip.view']],
+        'payroll-claims' => ['module_key' => 'payroll', 'route_key' => 'payroll', 'module_gate' => 'payroll.claims', 'permissions' => ['self.payroll'], 'owner' => 'Finance', 'tasks' => ['payroll.claim.submit']],
         'salary-claims-management' => ['module_key' => 'payroll', 'route_key' => 'salary-claims', 'module_gate' => 'payroll.salary_claims_management', 'permissions' => ['staff.salary.manage'], 'owner' => 'Finance'],
         'payment-actions' => ['module_key' => 'payroll', 'route_key' => 'salary-claims', 'module_gate' => 'payroll.payment_actions', 'permissions' => ['staff.salary.pay'], 'owner' => 'Finance'],
         'salary-assignments' => ['module_key' => 'payroll', 'route_key' => 'salary-claims', 'module_gate' => 'payroll.salary_assignments', 'permissions' => ['staff.salary.manage'], 'owner' => 'Finance'],
@@ -47,28 +47,29 @@ class AiHelperSystemGuideCatalog
         'payroll-workflow-rules' => ['module_key' => 'payroll', 'route_key' => 'salary-claims', 'module_gate' => 'payroll.workflow_rules', 'permissions' => ['settings.manage'], 'owner' => 'Finance'],
         'staff-directory' => ['module_key' => 'staff', 'route_key' => 'staff', 'module_gate' => 'staff.directory', 'permissions' => ['staff.view'], 'owner' => 'Human Resources'],
         'staff-records' => ['module_key' => 'staff', 'route_key' => 'staff', 'module_gate' => 'staff', 'permissions' => ['staff.manage'], 'owner' => 'Human Resources'],
-        'user-administration' => ['module_key' => 'users', 'route_key' => 'users', 'module_gate' => 'users', 'permissions' => ['users.manage'], 'owner' => 'System Administration'],
+        'user-administration' => ['module_key' => 'users', 'route_key' => 'users', 'module_gate' => 'users', 'permissions' => ['users.manage'], 'owner' => 'System Administration', 'tasks' => ['users.manage']],
         'role-assignments' => ['module_key' => 'users', 'route_key' => 'users', 'module_gate' => 'users', 'permissions' => ['roles.assign'], 'owner' => 'System Administration'],
         'password-session-controls' => ['module_key' => 'users', 'route_key' => 'users', 'module_gate' => 'users', 'permissions' => ['users.manage'], 'owner' => 'System Administration'],
         'teams-view' => ['module_key' => 'teams', 'route_key' => 'teams', 'module_gate' => 'teams.directory', 'permissions' => ['teams.view'], 'owner' => 'Operations'],
-        'teams-manage' => ['module_key' => 'teams', 'route_key' => 'teams', 'module_gate' => 'teams.directory', 'permissions' => ['teams.manage'], 'owner' => 'Operations'],
+        'teams-manage' => ['module_key' => 'teams', 'route_key' => 'teams', 'module_gate' => 'teams.directory', 'permissions' => ['teams.manage'], 'owner' => 'Operations', 'tasks' => ['teams.manage']],
         'roster-view' => ['module_key' => 'roster', 'route_key' => 'roster', 'module_gate' => 'roster', 'permissions' => ['teams.view'], 'owner' => 'Operations'],
-        'roster-manage' => ['module_key' => 'roster', 'route_key' => 'roster', 'module_gate' => 'roster', 'permissions' => ['rosters.manage'], 'owner' => 'Operations'],
-        'reports-navigation' => ['module_key' => 'reports', 'route_key' => 'reports', 'module_gate' => 'reports', 'permissions' => ['reports.inspection.view', 'reports.erco.view', 'reports.drill.view', 'reports.fitness.view'], 'owner' => 'Operations'],
+        'roster-manage' => ['module_key' => 'roster', 'route_key' => 'roster', 'module_gate' => 'roster', 'permissions' => ['rosters.manage'], 'owner' => 'Operations', 'tasks' => ['roster.manage']],
+        'reports-navigation' => ['module_key' => 'reports', 'route_key' => 'reports', 'module_gate' => 'reports', 'permissions' => ['reports.inspection.view', 'reports.erco.view', 'reports.drill.view', 'reports.fitness.view'], 'owner' => 'Operations', 'tasks' => ['reports.navigate']],
         'erco-reports' => ['module_key' => 'reports', 'route_key' => 'erco', 'module_gate' => 'reports.erco', 'permissions' => ['reports.erco.view'], 'owner' => 'Operations'],
         'drill-reports' => ['module_key' => 'reports', 'route_key' => 'drill', 'module_gate' => 'reports.drill', 'permissions' => ['reports.drill.view'], 'owner' => 'Operations'],
         'fitness-reports' => ['module_key' => 'reports', 'route_key' => 'fitness', 'module_gate' => 'reports.fitness_test', 'permissions' => ['reports.fitness.view'], 'owner' => 'Operations'],
         'report-management' => ['module_key' => 'reports', 'route_key' => 'reports', 'module_gate' => 'reports', 'permissions' => ['reports.manage'], 'owner' => 'Operations'],
         'inspection-view' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.view'], 'owner' => 'Operations', 'tasks' => ['inspection.records.view'], 'page_help_priority' => 1],
         'inspection-manage' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.manage', 'reports.inspection.conduct'], 'owner' => 'Operations', 'tasks' => ['inspection.conduct']],
-        'inspection-fire-extinguisher-conduct' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.manage', 'reports.inspection.conduct'], 'owner' => 'Operations', 'tasks' => ['inspection.conduct']],
+        'inspection-fire-extinguisher-conduct' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.manage', 'reports.inspection.conduct'], 'owner' => 'Operations', 'tasks' => ['inspection.conduct'], 'entities' => ['extinguisher']],
+        'inspection-fire-truck-conduct' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.manage', 'reports.inspection.conduct'], 'owner' => 'Operations', 'tasks' => ['inspection.conduct'], 'entities' => ['fire_truck']],
         'inspection-types' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.view', 'reports.inspection.conduct', 'reports.manage'], 'owner' => 'Operations', 'tasks' => ['inspection.types.list']],
-        'extinguisher-management' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.extinguishers.manage'], 'owner' => 'Operations', 'tasks' => ['inspection.asset.manage']],
+        'extinguisher-management' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.extinguishers.manage'], 'owner' => 'Operations', 'tasks' => ['inspection.asset.manage'], 'entities' => ['extinguisher']],
         'inspection-issue-management' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.issues.manage'], 'owner' => 'Operations', 'tasks' => ['inspection.issue.manage']],
         'inspection-issue-verification' => ['module_key' => 'reports.inspection', 'route_key' => 'inspection', 'module_gate' => 'reports.inspection', 'permissions' => ['reports.inspection.issues.verify'], 'owner' => 'Operations', 'tasks' => ['inspection.issue.verify']],
         'inspection-workflow-settings' => ['module_key' => 'reports.inspection', 'route_key' => 'settings', 'module_gate' => 'reports.inspection', 'permissions' => ['settings.manage'], 'owner' => 'Operations', 'tasks' => ['inspection.workflow.configure']],
-        'module-activation' => ['module_key' => 'settings.module_activation', 'route_key' => 'settings', 'module_gate' => 'settings.module_activation', 'permissions' => ['settings.manage'], 'owner' => 'System Administration'],
-        'role-permissions' => ['module_key' => 'settings.role_permissions', 'route_key' => 'settings', 'module_gate' => 'settings.role_permissions', 'permissions' => ['settings.manage'], 'owner' => 'System Administration'],
+        'module-activation' => ['module_key' => 'settings.module_activation', 'route_key' => 'settings', 'module_gate' => 'settings.module_activation', 'permissions' => ['settings.manage'], 'owner' => 'System Administration', 'tasks' => ['settings.module_activation']],
+        'role-permissions' => ['module_key' => 'settings.role_permissions', 'route_key' => 'settings', 'module_gate' => 'settings.role_permissions', 'permissions' => ['settings.manage'], 'owner' => 'System Administration', 'tasks' => ['roles.permissions.manage']],
         'dashboard-visibility' => ['module_key' => 'settings.dashboard_visibility', 'route_key' => 'settings', 'module_gate' => 'settings.dashboard_visibility', 'permissions' => ['settings.manage'], 'owner' => 'System Administration'],
         'system-maintenance' => ['module_key' => 'settings.system_maintenance', 'route_key' => 'settings', 'module_gate' => 'settings.system_maintenance', 'permissions' => ['settings.manage'], 'owner' => 'System Administration'],
         'workflow-notifications-settings' => ['module_key' => 'workflow_notifications', 'route_key' => 'settings', 'module_gate' => 'workflow_notifications', 'permissions' => [], 'owner' => 'System Administration'],
@@ -129,6 +130,12 @@ class AiHelperSystemGuideCatalog
     public function tasksForGuideKey(string $key): array
     {
         return self::GUIDES[$key]['tasks'] ?? [];
+    }
+
+    /** @return array<int, string> */
+    public function entitiesForGuideKey(string $key): array
+    {
+        return self::GUIDES[$key]['entities'] ?? [];
     }
 
     public function pageHelpPriorityForGuideKey(string $key): int

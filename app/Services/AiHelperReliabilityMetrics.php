@@ -39,6 +39,8 @@ class AiHelperReliabilityMetrics
                 'input_tokens',
                 'output_tokens',
                 'duration_ms',
+                'answer_mode',
+                'workflow_key',
             ]);
     }
 
@@ -60,6 +62,8 @@ class AiHelperReliabilityMetrics
                 'input_tokens',
                 'output_tokens',
                 'duration_ms',
+                'answer_mode',
+                'workflow_key',
             ]);
     }
 
@@ -89,6 +93,12 @@ class AiHelperReliabilityMetrics
         $repaired = $count(fn (AiHelperRun $run) => $run->verification_status === 'verified'
             && (int) $run->verification_attempts > 1);
         $shadowFailures = $count(fn (AiHelperRun $run) => $run->verification_status === 'shadow_failed');
+        $casualAnswers = $count(fn (AiHelperRun $run) => $run->answer_mode === 'casual');
+        $capabilityAnswers = $count(fn (AiHelperRun $run) => $run->answer_mode === 'product_capability');
+        $navigationAnswers = $count(fn (AiHelperRun $run) => $run->answer_mode === 'product_navigation');
+        $workflowAnswers = $count(fn (AiHelperRun $run) => $run->answer_mode === 'product_workflow');
+        $operationalAnswers = $count(fn (AiHelperRun $run) => $run->answer_mode === 'operational_knowledge');
+        $deterministicWorkflows = $count(fn (AiHelperRun $run) => filled($run->workflow_key));
         $durations = $runs
             ->map(fn (AiHelperRun $run) => (int) $run->duration_ms)
             ->filter(fn (int $duration) => $duration > 0)
@@ -114,6 +124,12 @@ class AiHelperReliabilityMetrics
             'semantic_fallbacks' => $semanticFallbacks,
             'rerank_fallbacks' => $rerankFallbacks,
             'grounding_shadow_failures' => $shadowFailures,
+            'casual_answers' => $casualAnswers,
+            'product_capability_answers' => $capabilityAnswers,
+            'product_navigation_answers' => $navigationAnswers,
+            'product_workflow_answers' => $workflowAnswers,
+            'operational_knowledge_answers' => $operationalAnswers,
+            'deterministic_workflow_answers' => $deterministicWorkflows,
             'verification_pass_rate' => $this->rate($verified, $completed),
             'completion_rate' => $this->rate($completed, $total),
             'failure_rate' => $this->rate($failed, $total),
@@ -199,6 +215,12 @@ class AiHelperReliabilityMetrics
                 $metadata,
                 'verification.grounding_verification.would_pass',
             ) === false),
+            'casual_answers' => 0,
+            'product_capability_answers' => 0,
+            'product_navigation_answers' => 0,
+            'product_workflow_answers' => 0,
+            'operational_knowledge_answers' => 0,
+            'deterministic_workflow_answers' => 0,
             'verification_pass_rate' => $this->rate($verified, $total),
             'completion_rate' => $this->rate($total, $total),
             'failure_rate' => $this->rate(0, $total),
@@ -251,6 +273,12 @@ class AiHelperReliabilityMetrics
             'semantic_fallbacks' => 0,
             'rerank_fallbacks' => 0,
             'grounding_shadow_failures' => 0,
+            'casual_answers' => 0,
+            'product_capability_answers' => 0,
+            'product_navigation_answers' => 0,
+            'product_workflow_answers' => 0,
+            'operational_knowledge_answers' => 0,
+            'deterministic_workflow_answers' => 0,
             'verification_pass_rate' => null,
             'completion_rate' => null,
             'failure_rate' => null,

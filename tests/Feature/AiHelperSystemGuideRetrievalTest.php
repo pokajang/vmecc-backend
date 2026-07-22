@@ -24,7 +24,7 @@ class AiHelperSystemGuideRetrievalTest extends TestCase
             'ai_helper.system_guides_enabled' => true,
             'ai_helper.system_guide_final_corpus_enforced' => true,
             'ai_helper.embedding_enabled' => false,
-            'ai_helper.retrieval_v3' => true,
+            'ai_helper.pipeline_version' => 4,
         ]);
         $this->seed(AiHelperSystemGuideSeeder::class);
     }

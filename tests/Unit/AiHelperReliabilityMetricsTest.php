@@ -16,6 +16,7 @@ class AiHelperReliabilityMetricsTest extends TestCase
     {
         $runs = collect([
             $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_VERIFIED', 'verified', 100, [
+                'answer_mode' => 'casual',
                 'provider_calls' => 2,
                 'input_tokens' => 100,
                 'output_tokens' => 10,
@@ -24,18 +25,24 @@ class AiHelperReliabilityMetricsTest extends TestCase
                 'verification_attempts' => 2,
             ]),
             $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_VERIFIED', 'verified', 200, [
+                'answer_mode' => 'product_capability',
                 'provider_calls' => 2,
                 'input_tokens' => 200,
                 'output_tokens' => 20,
                 'rerank_fallback' => true,
             ]),
             $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_VALIDATION_FAILED', 'rejected', 300, [
+                'answer_mode' => 'product_navigation',
                 'provider_calls' => 2,
             ]),
             $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_VERIFICATION_SHADOW_FAILED', 'shadow_failed', 350, [
+                'answer_mode' => 'product_workflow',
+                'workflow_key' => 'inspection.conduct.fire_truck',
                 'provider_calls' => 2,
             ]),
-            $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_NO_AUTHORIZED_EVIDENCE', 'rejected', 400),
+            $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_NO_AUTHORIZED_EVIDENCE', 'rejected', 400, [
+                'answer_mode' => 'operational_knowledge',
+            ]),
             $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_PROVIDER_TIMEOUT', 'fallback_extractive', 500, [
                 'provider_calls' => 1,
             ]),
@@ -63,6 +70,12 @@ class AiHelperReliabilityMetricsTest extends TestCase
         $this->assertSame(1, $metrics['semantic_fallbacks']);
         $this->assertSame(1, $metrics['rerank_fallbacks']);
         $this->assertSame(1, $metrics['grounding_shadow_failures']);
+        $this->assertSame(1, $metrics['casual_answers']);
+        $this->assertSame(1, $metrics['product_capability_answers']);
+        $this->assertSame(1, $metrics['product_navigation_answers']);
+        $this->assertSame(1, $metrics['product_workflow_answers']);
+        $this->assertSame(1, $metrics['operational_knowledge_answers']);
+        $this->assertSame(1, $metrics['deterministic_workflow_answers']);
         $this->assertSame(0.3333, $metrics['verification_pass_rate']);
         $this->assertSame(0.6667, $metrics['completion_rate']);
         $this->assertSame(0.1111, $metrics['failure_rate']);
