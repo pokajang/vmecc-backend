@@ -8,6 +8,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DrillReportPdfController;
 use App\Http\Controllers\ErcoReportPdfController;
 use App\Http\Controllers\FeedbackReportController;
+use App\Http\Controllers\FitnessTestAnalyticsController;
 use App\Http\Controllers\FireExtinguisherExceptionExportController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\InspectionDutyContextController;
@@ -229,6 +230,8 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
         Route::post('reports/erco/pdf', [ErcoReportPdfController::class, 'download']);
         Route::post('reports/drill/pdf', [DrillReportPdfController::class, 'download']);
         Route::post('reports/inspection/pdf', [InspectionReportPdfController::class, 'download']);
+        Route::post('reports/fitness-test/export', [ReportController::class, 'exportFitness'])
+            ->middleware('permission.assignment:reports.fitness.export|reports.fitness.manage|reports.manage');
     });
     Route::get('report-media/health', [ReportMediaController::class, 'health']);
     Route::post('report-media', [ReportMediaController::class, 'store'])->middleware(['throttle:photo-uploads', LimitPhotoUploadConcurrency::class]);
@@ -309,12 +312,26 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::get('reports', [ReportController::class, 'index']);
     Route::post('reports', [ReportController::class, 'store']);
     Route::get('reports/inspection/checklist-summary', [ReportController::class, 'inspectionChecklistSummary']);
+    Route::middleware(['module.enabled:reports.fitness_test', 'permission.assignment:reports.fitness.analytics.view|reports.fitness.manage|reports.manage'])
+        ->prefix('reports/fitness-test')
+        ->group(function (): void {
+            Route::get('stats', [FitnessTestAnalyticsController::class, 'stats']);
+            Route::get('trends', [FitnessTestAnalyticsController::class, 'trends']);
+            Route::get('checkpoints', [FitnessTestAnalyticsController::class, 'checkpoints']);
+            Route::get('coverage', [FitnessTestAnalyticsController::class, 'coverage']);
+        });
+    Route::get('reports/fitness-test/personnel/{user}', [FitnessTestAnalyticsController::class, 'personnel'])
+        ->middleware(['module.enabled:reports.fitness_test', 'permission.assignment:reports.fitness.individual-results.view|reports.fitness.manage|reports.manage']);
+
     Route::get('reports/{reportUid}', [ReportController::class, 'show']);
     Route::put('reports/{reportUid}', [ReportController::class, 'update']);
     Route::delete('reports/{reportUid}', [ReportController::class, 'destroy']);
-    Route::post('reports/{reportUid}/review', [ReportController::class, 'review']);
-    Route::post('reports/{reportUid}/approve', [ReportController::class, 'approve']);
-    Route::post('reports/{reportUid}/reject', [ReportController::class, 'reject']);
+    Route::post('reports/{reportUid}/restore', [ReportController::class, 'restore']);
+        Route::post('reports/{reportUid}/review', [ReportController::class, 'review']);
+        Route::post('reports/{reportUid}/approve', [ReportController::class, 'approve']);
+        Route::post('reports/{reportUid}/reject', [ReportController::class, 'reject']);
+        Route::get('reports/{reportUid}/revisions', [ReportController::class, 'revisions']);
+        Route::get('reports/{reportUid}/revisions/{revision}', [ReportController::class, 'revision']);
 
     Route::post('migration/ot-payroll/import', [OtPayrollMigrationController::class, 'import'])
         ->middleware('module.enabled:payroll');

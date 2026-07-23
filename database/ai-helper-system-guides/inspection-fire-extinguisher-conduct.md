@@ -55,4 +55,4 @@ Do not create a replacement asset merely to bypass a missing or incorrect serial
 
 ## Related tasks
 
-Use **All Extinguishers** to manage asset records and **Managed issues** to handle defects reported during inspection.
+Use **All Extinguishers** to manage asset records and **Issues** to handle defects reported during inspection.

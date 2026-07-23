@@ -425,26 +425,9 @@ Files:
 
 - `app/Console/Commands/EvaluateAiHelperKnowledge.php`
 - `app/Support/AiHelperKnowledgeEvaluationCases.php`
-- `app/Support/AiHelperSystemGuideEvaluationCases.php` — new
 - `tests/Feature/AiHelperKnowledgeEvaluationCommandTest.php`
-- `tests/Feature/AiHelperSystemGuideEvaluationCommandTest.php` — new
 
-The current evaluator always uses a null user and `/dashboard`, so it cannot validate permission-aware system guides. Correct it as follows:
-
-1. Preserve the existing reference `core` and `coverage` suites.
-2. Add `system-guide-core` and `system-guide-coverage` suites.
-3. Add case fields for trusted page path, actor persona, expected guide keys/titles, forbidden guide keys/titles, expected source type, language, and retrieval-only/live behavior.
-4. For automated tests, create users with the exact role assignments and permissions required by each persona.
-5. For UAT/live execution, accept a server-only actor map that associates case personas with existing active UAT user IDs. Do not create production users or print identities in results.
-6. Add at least these deterministic cases per guide:
-   - one authorized question;
-   - one unauthorized question with zero leaked title/source ID;
-   - one forged route/module context attempt;
-   - one disabled-module case.
-7. Add representative Bahasa Melayu and mixed-language cases for each major module.
-8. Add prompt-injection cases requesting hidden administrator, payroll-payment, role-permission, and user-management procedures.
-9. Require zero unauthorized source IDs, zero forbidden titles, and zero raw metadata leakage.
-10. Keep the live model suite a UAT gate, not an unattended migration step.
+The optional simulated-user evaluator proposed in this historical plan was removed to keep deployment focused on the standard retrieval benchmarks. The active evaluator supports only `core`, `coverage`, and `all`; access control remains covered by application authorization tests and manual role-based smoke checks.
 
 ## 9. Workstream F — Frontend contract and route checks
 
@@ -522,9 +505,8 @@ With system guides enabled and approval enforcement enabled:
 ```bash
 php artisan ai-helper:system-guides:audit --json
 php artisan ai-helper:knowledge-readiness --production --json
-php artisan ai-helper:evaluate-knowledge --suite=system-guide-core --json
-php artisan ai-helper:evaluate-knowledge --suite=system-guide-coverage --json
-php artisan ai-helper:evaluate-knowledge --suite=system-guide-core --live --json
+php artisan ai-helper:evaluate-knowledge --suite=core --json
+php artisan ai-helper:evaluate-knowledge --suite=coverage --json
 ```
 
 Run manual role-based smoke checks using System Administrator, HR, Finance, Operations/management, and ordinary self-service accounts. Confirm both positive access and negative isolation.

@@ -3,24 +3,20 @@
 namespace App\Console\Commands;
 
 use App\Models\AiHelperKnowledgeEntry;
-use App\Models\User;
 use App\Services\AiHelperKnowledgeService;
 use App\Services\AiHelperOpenAiService;
 use App\Services\AiHelperResponsePipeline;
 use App\Support\AiHelperKnowledgeEvaluationCases;
-use App\Support\AiHelperSystemGuideEvaluationCases;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
-use JsonException;
 use RuntimeException;
 
 class EvaluateAiHelperKnowledge extends Command
 {
     protected $signature = 'ai-helper:evaluate-knowledge
         {--live : Ask the configured response model and grade its answers}
-        {--suite=core : Evaluation suite: core, coverage, all, system-guide-core, system-guide-coverage, or system-guide-global}
+        {--suite=core : Evaluation suite: core, coverage, or all}
         {--case=* : Run only the specified case IDs}
-        {--actor-map= : Server-only JSON file mapping system-guide personas to active user IDs}
         {--json : Emit machine-readable JSON}';
 
     protected $description = 'Evaluate source retrieval and optional live answer grounding against the private Markdown corpus.';
@@ -29,7 +25,6 @@ class EvaluateAiHelperKnowledge extends Command
         private readonly AiHelperKnowledgeService $knowledge,
         private readonly AiHelperOpenAiService $openAi,
         private readonly AiHelperResponsePipeline $responsePipeline,
-        private readonly AiHelperSystemGuideEvaluationCases $systemGuideCases,
     ) {
         parent::__construct();
     }
@@ -42,17 +37,11 @@ class EvaluateAiHelperKnowledge extends Command
         }
         $selectedIds = collect($this->option('case'))->filter()->values();
         $suite = strtolower(trim((string) $this->option('suite')));
-        if (! in_array($suite, ['core', 'coverage', 'all', 'system-guide-core', 'system-guide-coverage', 'system-guide-global'], true)) {
-            throw new RuntimeException('Evaluation suite must be core, coverage, all, system-guide-core, system-guide-coverage, or system-guide-global.');
+        if (! in_array($suite, ['core', 'coverage', 'all'], true)) {
+            throw new RuntimeException('Evaluation suite must be core, coverage, or all.');
         }
-        $systemGuideSuite = str_starts_with($suite, 'system-guide-');
-        $cases = collect(match ($suite) {
-            'system-guide-core' => $this->systemGuideCases->core(),
-            'system-guide-coverage' => $this->systemGuideCases->coverage(),
-            'system-guide-global' => $this->systemGuideCases->global(),
-            default => AiHelperKnowledgeEvaluationCases::all(),
-        })
-            ->when(! $systemGuideSuite && $suite !== 'all', fn ($items) => $items->filter(
+        $cases = collect(AiHelperKnowledgeEvaluationCases::all())
+            ->when($suite !== 'all', fn ($items) => $items->filter(
                 fn (array $case) => ($case['suite'] ?? 'core') === $suite
             ))
             ->when($selectedIds->isNotEmpty(), fn ($items) => $items->whereIn('id', $selectedIds))
@@ -61,8 +50,7 @@ class EvaluateAiHelperKnowledge extends Command
             throw new RuntimeException('No matching evaluation cases were selected.');
         }
 
-        $actorMap = $systemGuideSuite ? $this->loadActorMap() : [];
-        $results = $cases->map(fn (array $case) => $this->evaluate($case, $live, $actorMap))->all();
+        $results = $cases->map(fn (array $case) => $this->evaluate($case, $live))->all();
         $retrievalPassed = collect($results)->where('retrieval_passed', true)->count();
         $livePassed = $live ? collect($results)->where('answer_passed', true)->count() : null;
         $documentRecallValues = collect($results)->pluck('document_recall')->filter(fn ($value) => $value !== null);
@@ -109,9 +97,9 @@ class EvaluateAiHelperKnowledge extends Command
     }
 
     /** @return array<string, mixed> */
-    private function evaluate(array $case, bool $live, array $actorMap = []): array
+    private function evaluate(array $case, bool $live): array
     {
-        $user = $this->resolveActor($case, $actorMap);
+        $user = null;
         $previousDisabledGate = config('ai_helper.evaluation_disabled_module_gate');
         config(['ai_helper.evaluation_disabled_module_gate' => $case['disabled_module_gate'] ?? null]);
         try {
@@ -294,55 +282,5 @@ class EvaluateAiHelperKnowledge extends Command
     private function comparableAnswer(string $answer): string
     {
         return Str::lower((string) preg_replace('/[`*_~]+/u', '', $answer));
-    }
-
-    /** @return array<string, int> */
-    private function loadActorMap(): array
-    {
-        $path = trim((string) $this->option('actor-map'));
-        if ($path === '' || ! is_file($path)) {
-            throw new RuntimeException('System-guide evaluation requires a readable server-only --actor-map JSON file.');
-        }
-
-        try {
-            $decoded = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
-        } catch (JsonException $exception) {
-            throw new RuntimeException('The system-guide actor map is invalid JSON.', previous: $exception);
-        }
-        if (! is_array($decoded)) {
-            throw new RuntimeException('The system-guide actor map must be a JSON object.');
-        }
-
-        return collect($decoded)
-            ->mapWithKeys(function ($id, $persona) {
-                if (! is_string($persona) || ! is_int($id) || $id < 1) {
-                    throw new RuntimeException('Every system-guide actor-map value must be a positive integer user ID.');
-                }
-
-                return [$persona => $id];
-            })
-            ->all();
-    }
-
-    private function resolveActor(array $case, array $actorMap): ?User
-    {
-        $persona = (string) ($case['persona'] ?? 'unauthenticated');
-        if ($persona === 'unauthenticated') {
-            return null;
-        }
-        $userId = $actorMap[$persona] ?? null;
-        if (! is_int($userId)) {
-            throw new RuntimeException("The actor map has no user ID for persona {$persona}.");
-        }
-        $user = User::query()
-            ->whereKey($userId)
-            ->whereNull('deleted_at')
-            ->whereRaw('LOWER(status) = ?', ['active'])
-            ->first();
-        if (! $user) {
-            throw new RuntimeException("The actor mapped for persona {$persona} is not active.");
-        }
-
-        return $user;
     }
 }

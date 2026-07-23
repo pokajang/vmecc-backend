@@ -124,6 +124,7 @@ class FireExtinguisherCoverageRowBuilder
         ?array $coverage,
         int $locatorDuplicateCount,
         bool $includeChecks,
+        array $monthlyCompliance = [],
     ): array {
         $validity = $row->certification_validity;
         $latestRow = $coverage['latestRow'] ?? null;
@@ -165,6 +166,7 @@ class FireExtinguisherCoverageRowBuilder
             'locatorDuplicateCount' => max(1, $locatorDuplicateCount),
             'latestReportId' => $latestRow instanceof InspectionCheckRow ? (string) $latestRow->display_id : '',
             'latestReportUid' => $latestRow instanceof InspectionCheckRow ? (string) $latestRow->report_uid : '',
+            'monthlyCompliance' => $monthlyCompliance,
         ];
         if ($includeChecks) {
             $formatted['checks'] = $coverage['checks'] ?? $this->emptyCoverageChecks();

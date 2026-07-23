@@ -27,6 +27,7 @@ class FireExtinguisherCoveragePolicy
             'issues' => strtolower($this->text($filters['issues'] ?? 'all')) ?: 'all',
             'certification' => strtolower($this->text($filters['certification'] ?? 'all')) ?: 'all',
             'duplicateScope' => strtolower($this->text($filters['duplicateScope'] ?? 'all')) ?: 'all',
+            'monthlyCompliance' => strtolower($this->text($filters['monthlyCompliance'] ?? 'all')) ?: 'all',
             'sort' => strtolower($this->text($filters['sort'] ?? 'zone-location')) ?: 'zone-location',
             'direction' => $direction,
             'lifecycleStatus' => strtolower($this->text($filters['lifecycleStatus'] ?? 'active')) ?: 'active',
@@ -60,6 +61,10 @@ class FireExtinguisherCoveragePolicy
                 return false;
             }
             if ($filters['certification'] !== 'all' && $this->certificationStatus($row) !== $filters['certification']) {
+                return false;
+            }
+            if ($filters['monthlyCompliance'] !== 'all'
+                && $this->text(data_get($row, 'monthlyCompliance.status', '')) !== $filters['monthlyCompliance']) {
                 return false;
             }
 

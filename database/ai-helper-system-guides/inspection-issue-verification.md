@@ -35,7 +35,7 @@ Review asset identity, originating occurrences, corrective action, resolution no
 ## Steps
 
 1. Go to **Inspection**, open **All Extinguishers**, and select the affected extinguisher.
-2. In **Managed issues**, open an issue whose status is **pending verification** and compare it with the correct extinguisher and check criterion.
+2. In **Issues**, open an issue whose status is **pending verification** and compare it with the correct extinguisher and check criterion.
 3. Review corrective action, resolution notes, photos, occurrence history, and event history.
 4. Perform the required independent verification outside Ask AI.
 5. Select **Verify and close**, enter the required **Verification notes**, and select **Confirm**.

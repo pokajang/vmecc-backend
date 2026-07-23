@@ -41,6 +41,11 @@ return [
         FILTER_VALIDATE_BOOL,
         FILTER_NULL_ON_FAILURE
     ) ?? false,
+    'fitness_shadow_reads_enabled' => filter_var(
+        env('FEATURE_FITNESS_SHADOW_READS_ENABLED', false),
+        FILTER_VALIDATE_BOOL,
+        FILTER_NULL_ON_FAILURE
+    ) ?? false,
     'holiday_guidance_cohort_user_ids' => array_values(array_filter(array_map(
         static fn ($id) => is_numeric(trim((string) $id)) ? (int) trim((string) $id) : null,
         explode(',', (string) env('FEATURE_HOLIDAY_GUIDANCE_COHORT_USER_IDS', ''))

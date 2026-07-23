@@ -963,7 +963,10 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             $response->assertJsonPath('meta.total', 2);
             $response->assertJsonPath('meta.filtered', 2);
             $response->assertJsonPath('meta.summary.total', 2);
-            $response->assertJsonPath('meta.summary.inspected', 0);
+            $response->assertJsonPath('meta.summary.inspected', 1);
+            $response->assertJsonPath('meta.summary.notInspected', 1);
+            $response->assertJsonPath('meta.summary.cycle.label', 'July 2026');
+            $response->assertJsonPath('meta.summary.cycle.repeatChecks', 0);
             $oldRow = collect($response->json('data'))->firstWhere('idLocNo', 'OLD-001');
             $neverRow = collect($response->json('data'))->firstWhere('idLocNo', 'NEVER-001');
             $this->assertSame('', $oldRow['physical']);
@@ -1046,7 +1049,10 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
             $emptyWindow->assertOk();
             $emptyWindow->assertJsonPath('meta.total', 1);
-            $emptyWindow->assertJsonPath('meta.summary.inspected', 0);
+            $emptyWindow->assertJsonPath('meta.summary.inspected', 1);
+            $emptyWindow->assertJsonPath('meta.summary.notInspected', 0);
+            $emptyWindow->assertJsonPath('meta.summary.cycle.label', 'July 2026');
+            $emptyWindow->assertJsonPath('meta.summary.cycle.repeatChecks', 1);
             $emptyWindow->assertJsonPath('data.0.latestInspectionAt', null);
             $emptyWindow->assertJsonPath('data.0.reportCount', 0);
 

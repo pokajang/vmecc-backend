@@ -90,9 +90,6 @@ php artisan ai-helper:storage-health --json
 php artisan ai-helper:knowledge-readiness --production --json
 php artisan ai-helper:evaluate-knowledge --suite=core --json
 php artisan ai-helper:evaluate-knowledge --suite=coverage --json
-php artisan ai-helper:evaluate-knowledge --suite=system-guide-core --actor-map=/secure/path/ai-helper-uat-actors.json --json
-php artisan ai-helper:evaluate-knowledge --suite=system-guide-coverage --actor-map=/secure/path/ai-helper-uat-actors.json --json
-php artisan ai-helper:evaluate-knowledge --suite=system-guide-global --actor-map=/secure/path/ai-helper-uat-actors.json --json
 
 php artisan up
 ```

@@ -6,8 +6,9 @@ use App\Models\ReportDraft;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\DrillPayloadService;
 use App\Services\ErcoPayloadService;
-use App\Services\FitnessTestPayloadService;
 use App\Services\InspectionPayloadService;
+use App\Services\ReportModuleAdapter;
+use App\Services\ReportModuleRegistry;
 use App\Services\ReportMediaService;
 use App\Services\RoleCatalog;
 use Illuminate\Http\JsonResponse;
@@ -38,7 +39,7 @@ class ReportDraftController extends Controller
         private readonly ReportMediaService $reportMediaService,
         private readonly DrillPayloadService $drillPayloadService,
         private readonly ErcoPayloadService $ercoPayloadService,
-        private readonly FitnessTestPayloadService $fitnessTestPayloadService,
+        private readonly ReportModuleRegistry $reportModuleRegistry,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -127,14 +128,16 @@ class ReportDraftController extends Controller
             return response()->json(['message' => 'report_type is required.'], 422);
         }
         $this->ensureReportPermission($request, $reportType);
-        if ($reportType === 'drill') {
-            $this->drillPayloadService->validateForDraft((array) $data['payload']);
-        }
-        if ($reportType === self::ERCO_TYPE) {
-            $this->ercoPayloadService->validateForDraft((array) $data['payload']);
-        }
-        if ($reportType === 'fitness-test') {
-            $this->fitnessTestPayloadService->validateForDraft((array) $data['payload']);
+        $adapter = $this->moduleAdapterForType($reportType);
+        if ($adapter === null) {
+            if ($reportType === 'drill') {
+                $this->drillPayloadService->validateForDraft((array) $data['payload']);
+            }
+            if ($reportType === self::ERCO_TYPE) {
+                $this->ercoPayloadService->validateForDraft((array) $data['payload']);
+            }
+        } else {
+            $data['payload'] = $adapter->validateDraft((array) $data['payload']);
         }
         if ($reportType === self::INSPECTION_TYPE) {
             $data['payload'] = $this->applyInspectionSessionInspector(
@@ -210,17 +213,20 @@ class ReportDraftController extends Controller
 
         $this->ensureReportPermission($request, (string) $row->report_type);
 
-        if ($this->normalizeReportType((string) $row->report_type) === 'drill') {
-            $this->drillPayloadService->validateForDraft((array) $data['payload']);
-        }
-        if ($this->normalizeReportType((string) $row->report_type) === self::ERCO_TYPE) {
-            $this->ercoPayloadService->validateForDraft((array) $data['payload']);
-        }
-        if ($this->normalizeReportType((string) $row->report_type) === 'fitness-test') {
-            $this->fitnessTestPayloadService->validateForDraft((array) $data['payload']);
+        $reportType = $this->normalizeReportType((string) $row->report_type);
+        $adapter = $this->moduleAdapterForType($reportType);
+        if ($adapter === null) {
+            if ($reportType === 'drill') {
+                $this->drillPayloadService->validateForDraft((array) $data['payload']);
+            }
+            if ($reportType === self::ERCO_TYPE) {
+                $this->ercoPayloadService->validateForDraft((array) $data['payload']);
+            }
+        } else {
+            $data['payload'] = $adapter->validateDraft((array) $data['payload']);
         }
 
-        if ($this->normalizeReportType((string) ($row->report_type ?? '')) === self::INSPECTION_TYPE) {
+        if ($reportType === self::INSPECTION_TYPE) {
             $data['payload'] = $this->applyInspectionSessionInspector(
                 (array) $data['payload'],
                 $request
@@ -303,6 +309,11 @@ class ReportDraftController extends Controller
         if (! $user || ! $permission || ! $this->authorizationService->hasPermission($user, "reports.manage|{$permission}")) {
             abort(403, 'Forbidden');
         }
+    }
+
+    private function moduleAdapterForType(string $reportType): ?ReportModuleAdapter
+    {
+        return $this->reportModuleRegistry->for($this->normalizeReportType($reportType));
     }
 
     private function normalizeNullableString(mixed $value): ?string

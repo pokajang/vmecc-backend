@@ -5,12 +5,9 @@ namespace Tests\Feature;
 use App\Models\AiHelperDocument;
 use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
-use App\Models\User;
 use App\Services\AiHelperOpenAiService;
-use Database\Seeders\AiHelperSystemGuideSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
-use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 class AiHelperKnowledgeEvaluationCommandTest extends TestCase
@@ -84,35 +81,5 @@ class AiHelperKnowledgeEvaluationCommandTest extends TestCase
 
         $this->assertSame(1, $exitCode);
         $this->assertStringContainsString('answer:grounding_would_fail_enforcement', Artisan::output());
-    }
-
-    public function test_global_system_guide_suite_gates_cross_route_bm_alias_retrieval_v4(): void
-    {
-        config([
-            'ai_helper.system_guides_enabled' => true,
-            'ai_helper.system_guide_final_corpus_enforced' => true,
-            'ai_helper.embedding_enabled' => false,
-            'ai_helper.pipeline_version' => 4,
-            'ai_helper.rerank_enabled' => false,
-        ]);
-        $this->seed(AiHelperSystemGuideSeeder::class);
-        Permission::findOrCreate('self.leave', 'web');
-        $user = User::factory()->create(['status' => 'active']);
-        $user->givePermissionTo('self.leave');
-        $actorMap = tempnam(sys_get_temp_dir(), 'ai-helper-eval-');
-        file_put_contents($actorMap, json_encode(['permission:self.leave' => $user->id], JSON_THROW_ON_ERROR));
-
-        try {
-            $exitCode = Artisan::call('ai-helper:evaluate-knowledge', [
-                '--suite' => 'system-guide-global',
-                '--case' => ['system-guide-global-alias-leave-bm-noise'],
-                '--actor-map' => $actorMap,
-                '--json' => true,
-            ]);
-        } finally {
-            @unlink($actorMap);
-        }
-
-        $this->assertSame(0, $exitCode, Artisan::output());
     }
 }

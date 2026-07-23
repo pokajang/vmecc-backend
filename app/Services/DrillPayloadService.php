@@ -3,19 +3,11 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 final class DrillPayloadService
 {
     private const SCHEMA_VERSION = 2;
-
-    private const EXERCISE_CATEGORIES = [
-        'Fire',
-        'Rescue',
-        'Hazmat / Oil Spill',
-        'Special Assistance',
-    ];
 
     private const EXCLUSIVE_ROLES = [
         'SC',
@@ -81,8 +73,8 @@ final class DrillPayloadService
             'reportIssuanceDate' => ['nullable', 'date_format:Y-m-d'],
             'weather' => ['nullable', 'string', 'max:190'],
             'incidentType' => ['nullable', 'string', 'max:190'],
-            'exerciseCategories' => ['nullable', 'array', 'max:4'],
-            'exerciseCategories.*' => ['string', 'distinct', Rule::in(self::EXERCISE_CATEGORIES)],
+            'exerciseCategories' => ['nullable', 'array', 'max:100'],
+            'exerciseCategories.*' => ['string', 'distinct', 'max:190'],
             'location' => ['nullable', 'string', 'max:190'],
             'exerciseTitle' => ['nullable', 'string', 'max:190'],
             'details' => ['nullable', 'string', 'max:20000'],

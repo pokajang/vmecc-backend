@@ -37,6 +37,9 @@ class Report extends Model
         'reviewed_at',
         'approved_at',
         'rejected_at',
+        'domain_projection_version',
+        'domain_projected_at',
+        'domain_projection_status',
     ];
 
     protected $casts = [
@@ -47,6 +50,7 @@ class Report extends Model
         'inspection_checklist_item_ids' => 'array',
         'inspection_checklist_item_labels' => 'array',
         'inspection_has_checklist' => 'boolean',
+        'domain_projected_at' => 'datetime',
         'submitted_at' => 'datetime',
         'reviewed_at' => 'datetime',
         'approved_at' => 'datetime',
@@ -62,5 +66,15 @@ class Report extends Model
     public function timelineEntries(): HasMany
     {
         return $this->hasMany(ReportTimelineEntry::class)->orderBy('created_at');
+    }
+
+    public function revisions(): HasMany
+    {
+        return $this->hasMany(ReportRevision::class);
+    }
+
+    public function fitnessShadowReconciliations(): HasMany
+    {
+        return $this->hasMany(FitnessShadowReconciliation::class);
     }
 }

@@ -82,6 +82,63 @@ class FitnessTestPayloadValidationTest extends TestCase
         ]);
     }
 
+    public function test_fitness_submission_accepts_canonical_fitness_payload(): void
+    {
+        $user = $this->reporter();
+        $request = [
+            'display_id' => 'FIT-CANON-001',
+            'report_type' => 'fitness-test',
+            'status' => 'Submitted',
+            'payload' => [
+                'schemaVersion' => 1,
+                'reportingMonth' => '2026-07',
+                'documentReference' => 'DOC-FIT-001',
+                'protocolRevision' => 'v1',
+                'shiftGroups' => [
+                    [
+                        'id' => 'group-1',
+                        'shiftName' => 'Day Shift',
+                        'assessor' => ['userId' => (string) $user->id, 'name' => (string) $user->name],
+                        'participants' => [
+                            [
+                                'id' => 'participant-1',
+                                'userId' => (string) $user->id,
+                                'name' => 'Test Member',
+                                'role' => 'SC',
+                                'source' => 'roster',
+                                'ageSnapshot' => 28,
+                                'fitness' => [
+                                    'sitUps' => 12,
+                                    'jumpingJacks' => 15,
+                                    'pushUps' => 10,
+                                    'testedOn' => '2026-07-22',
+                                    'result' => 'passed',
+                                ],
+                                'proficiency' => [
+                                    'durationSeconds' => 90,
+                                    'testedOn' => '2026-07-22',
+                                    'result' => 'passed',
+                                    'checkpoints' => [
+                                        [
+                                            'checkpointCode' => 'CP1',
+                                            'completed' => 'true',
+                                            'durationSeconds' => 20,
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $this->actingAs($user)->postJson('/api/reports', $request)
+            ->assertCreated()
+            ->assertJsonPath('data.reportType', 'fitness-test')
+            ->assertJsonPath('data.reportingMonth', '2026-07');
+    }
+
     public function test_fitness_update_uses_optimistic_versioning_without_creating_a_sibling(): void
     {
         $user = $this->reporter();

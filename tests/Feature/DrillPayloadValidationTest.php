@@ -33,7 +33,7 @@ class DrillPayloadValidationTest extends TestCase
             ->assertJsonPath('data.payload.erpReferences.0.annexNumber', 'ERP-10');
     }
 
-    public function test_complete_v2_final_payload_is_preserved(): void
+    public function test_complete_v2_final_payload_with_custom_category_is_preserved(): void
     {
         $user = $this->userWithDrillPermission();
 
@@ -46,6 +46,7 @@ class DrillPayloadValidationTest extends TestCase
 
         $response->assertJsonPath('data.schemaVersion', 2);
         $response->assertJsonPath('data.exerciseCategories.0', 'Fire');
+        $response->assertJsonPath('data.exerciseCategories.1', 'Medical Response');
         $response->assertJsonPath('data.respondingTeam.attendance.0.exerciseRole', 'SC');
         $this->assertDatabaseHas('reports', ['display_id' => 'DRL-V2-VALID']);
     }
@@ -196,7 +197,7 @@ class DrillPayloadValidationTest extends TestCase
             'reportIssuanceDate' => '2026-07-12',
             'weather' => 'Clear',
             'incidentType' => 'Fire Drill',
-            'exerciseCategories' => ['Fire', 'Rescue'],
+            'exerciseCategories' => ['Fire', 'Medical Response'],
             'location' => 'Workshop',
             'exerciseTitle' => 'Workshop major fire exercise',
             'details' => 'A simulated workshop fire required evacuation and rescue response.',

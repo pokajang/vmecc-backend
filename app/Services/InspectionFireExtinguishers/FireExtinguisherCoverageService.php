@@ -17,6 +17,7 @@ class FireExtinguisherCoverageService
     public function __construct(
         private readonly FireExtinguisherCoveragePolicy $policy,
         private readonly FireExtinguisherCoverageRowBuilder $rowBuilder,
+        private readonly FireExtinguisherMonthlyComplianceService $monthlyCompliance,
     ) {}
 
     /**
@@ -39,12 +40,14 @@ class FireExtinguisherCoverageService
             $normalized['periodTo'],
         );
         $coverageRows = $this->rowBuilder->coverageRowsForCatalog($catalogRows, $periodStart, $periodEnd);
+        $monthlyComplianceRows = $this->monthlyCompliance->forCatalog($catalogRows);
         $duplicateCounts = $this->coverageLocatorDuplicateCounts($catalogRows);
         $data = $catalogRows->map(fn (InspectionFireExtinguisher $row): array => $this->rowBuilder->formatCoverageRow(
             $row,
             $coverageRows[(int) $row->id] ?? null,
             $duplicateCounts[(int) $row->id] ?? 1,
             $includeChecks,
+            $monthlyComplianceRows[(int) $row->id] ?? [],
         ))->values();
         $filtered = $this->policy->filter($data, $normalized);
         $sorted = $this->policy->sort($filtered, $normalized['sort'], $normalized['direction']);
@@ -54,7 +57,7 @@ class FireExtinguisherCoverageService
             'unfilteredRows' => $data,
             'total' => $total,
             'filtered' => $sorted->count(),
-            'summary' => $this->policy->summary($filtered),
+            'summary' => $this->summaryForCatalogScope($normalized, $total),
             'lifecycleSummary' => $this->lifecycleSummary($normalized),
             'options' => $this->coverageFilterOptions($data),
             'filters' => $normalized,
@@ -101,19 +104,21 @@ class FireExtinguisherCoverageService
             ->forPage($page, $perPage)
             ->get();
         $coverageRows = $this->rowBuilder->coverageRowsForCatalogPage($catalogRows, $periodStart, $periodEnd);
+        $monthlyComplianceRows = $this->monthlyCompliance->forCatalog($catalogRows);
         $duplicateCounts = $this->coverageLocatorDuplicateCounts($catalogRows);
         $rows = $catalogRows->map(fn (InspectionFireExtinguisher $row): array => $this->rowBuilder->formatCoverageRow(
             $row,
             $coverageRows[(int) $row->id] ?? null,
             $duplicateCounts[(int) $row->id] ?? 1,
             false,
+            $monthlyComplianceRows[(int) $row->id] ?? [],
         ))->values();
 
         return [
             'rows' => $rows,
             'total' => $total,
             'filtered' => $total,
-            'summary' => $this->databaseSummary($normalized, $periodStart, $periodEnd, $total),
+            'summary' => $this->summaryForCatalogScope($normalized, $total),
             'lifecycleSummary' => $this->lifecycleSummary($normalized),
             'options' => $this->databaseFilterOptions($normalized, $periodStart, $periodEnd),
             'filters' => $normalized,
@@ -173,6 +178,7 @@ class FireExtinguisherCoverageService
             && $normalized['duplicateScope'] === 'all'
             && $normalized['issues'] === 'all'
             && $normalized['certification'] === 'all'
+            && $normalized['monthlyCompliance'] === 'all'
             && $normalized['sort'] === 'zone-location';
     }
 
@@ -220,22 +226,11 @@ class FireExtinguisherCoverageService
      * @param  array<string, string>  $normalized
      * @return array<string, int>
      */
-    private function databaseSummary(
-        array $normalized,
-        ?Carbon $periodStart,
-        ?Carbon $periodEnd,
-        int $total,
-    ): array {
-        $catalogIds = $this->catalogQuery($normalized, false)->select('inspection_fire_extinguishers.id');
-        $checks = $this->inspectionRowsQuery($catalogIds, $periodStart, $periodEnd);
-        $inspected = (clone $checks)->distinct()->count('equipment_catalog_id');
-        $repeatAssets = DB::query()->fromSub(
-            (clone $checks)
-                ->select('equipment_catalog_id')
-                ->groupBy('equipment_catalog_id')
-                ->havingRaw('COUNT(DISTINCT report_id) > 1'),
-            'repeat_assets',
-        )->count();
+    private function summaryForCatalogScope(array $normalized, int $total): array
+    {
+        $monthlySummary = $this->monthlyCompliance->summarize(
+            $this->catalogQuery($normalized, false)->get(),
+        );
         $issues = $this->catalogQuery($normalized, false)
             ->whereHas('issues', fn ($builder) => $builder->whereIn('status', InspectionFireExtinguisherIssue::ACTIVE_STATUSES))
             ->count();
@@ -250,12 +245,21 @@ class FireExtinguisherCoverageService
 
         return [
             'total' => $total,
-            'inspected' => $inspected,
-            'notInspected' => max(0, $total - $inspected),
+            'inspected' => $monthlySummary['inspected'],
+            'notInspected' => $monthlySummary['notInspected'],
             'issues' => $issues,
-            'duplicates' => $repeatAssets,
+            'openIssues' => $issues,
+            'duplicates' => $monthlySummary['repeatChecks'],
             'locatorDuplicates' => $locatorDuplicates,
             'expired' => $expired,
+            'cycle' => [
+                ...$monthlySummary['cycle'],
+                'inspected' => $monthlySummary['inspected'],
+                'notInspected' => $monthlySummary['notInspected'],
+                'repeatChecks' => $monthlySummary['repeatChecks'],
+                'excludedOutOfService' => $monthlySummary['excludedOutOfService'],
+                'excludedRetired' => $monthlySummary['excludedRetired'],
+            ],
         ];
     }
 
@@ -346,6 +350,7 @@ class FireExtinguisherCoverageService
         );
         $catalogRows = collect([$row]);
         $coverageRows = $this->rowBuilder->coverageRowsForCatalog($catalogRows, $periodStart, $periodEnd);
+        $monthlyComplianceRows = $this->monthlyCompliance->forCatalog($catalogRows);
         $duplicateCounts = $this->coverageLocatorDuplicateCounts($catalogRows);
 
         return [
@@ -354,6 +359,7 @@ class FireExtinguisherCoverageService
                 $coverageRows[(int) $row->id] ?? null,
                 $duplicateCounts[(int) $row->id] ?? 1,
                 true,
+                $monthlyComplianceRows[(int) $row->id] ?? [],
             ),
             'filters' => $normalized,
             'periodStart' => $periodStart,

@@ -4,21 +4,26 @@ namespace App\Http\Controllers;
 
 use App\Models\Report;
 use App\Models\ReportTimelineEntry;
+use App\Jobs\ReconcileFitnessShadowRead;
+use App\Services\FitnessShadowReadCutoverService;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\DrillPayloadService;
 use App\Services\ErcoPayloadService;
-use App\Services\FitnessTestPayloadService;
 use App\Services\InspectionCheckRowSyncService;
 use App\Services\InspectionDutyConfirmationService;
 use App\Services\InspectionDutyContextResolver;
 use App\Services\InspectionPayloadService;
 use App\Services\InspectionPolicy;
 use App\Services\InspectionSessionReportPayloadBuilder;
+use Barryvdh\DomPDF\Facade\Pdf;
 use App\Services\ReportDraftConsumptionService;
+use App\Services\ReportModuleAdapter;
+use App\Services\FitnessTestReportXlsxRenderer;
 use App\Services\ReportingWorkflowService;
 use App\Services\ReportMediaService;
 use App\Services\ReportReadAuthorizationService;
+use App\Services\ReportModuleRegistry;
 use App\Services\RoleCatalog;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Database\QueryException;
@@ -44,10 +49,11 @@ class ReportController extends Controller
         private readonly ReportReadAuthorizationService $reportReadAuthorizationService,
         private readonly DrillPayloadService $drillPayloadService,
         private readonly ErcoPayloadService $ercoPayloadService,
-        private readonly FitnessTestPayloadService $fitnessTestPayloadService,
         private readonly InspectionDutyConfirmationService $dutyConfirmations,
         private readonly InspectionDutyContextResolver $dutyContextResolver,
         private readonly InspectionPolicy $inspectionPolicy,
+        private readonly ReportModuleRegistry $reportModuleRegistry,
+        private readonly FitnessTestReportXlsxRenderer $fitnessTestReportXlsxRenderer,
     ) {}
 
     private const STATUS_DRAFT = 'Draft';
@@ -74,7 +80,7 @@ class ReportController extends Controller
                 'action' => ['Actionable report scope requires action=review or action=approve.'],
             ]);
         }
-        if (in_array($scope, ['all', 'actionable'], true) && $this->isManagedReportingWorkflowType($reportTypeFilter)) {
+        if ($reportTypeFilter !== '' && $this->isManagedReportingWorkflowType($reportTypeFilter)) {
             $this->ensureReportingModulePermission($request, $reportTypeFilter);
         }
         $isAllManagedScope =
@@ -147,6 +153,51 @@ class ReportController extends Controller
         $report = $this->findReadableReport($request, $reportUid);
 
         return response()->json(['data' => $this->formatReport($report)]);
+    }
+
+    public function revisions(Request $request, string $reportUid): JsonResponse
+    {
+        $report = $this->findReadableReport($request, $reportUid);
+
+        $revisions = $report->revisions()
+            ->orderBy('revision')
+            ->get()
+            ->map(function ($revision) {
+                return [
+                    'revision' => (int) $revision->revision,
+                    'schemaVersion' => (int) $revision->schema_version,
+                    'createdBy' => $revision->created_by,
+                    'createdAt' => optional($revision->created_at)->toIso8601String(),
+                    'payload' => $revision->payload,
+                    'payloadChecksum' => $revision->payload_checksum,
+                ];
+            });
+
+        return response()->json([
+            'data' => $revisions,
+            'currentRevision' => (int) $report->revision,
+            'currentVersion' => (int) $report->version,
+        ]);
+    }
+
+    public function revision(Request $request, string $reportUid, int $revision): JsonResponse
+    {
+        $report = $this->findReadableReport($request, $reportUid);
+
+        $revisionRecord = $report->revisions()->where('revision', $revision)->firstOrFail();
+
+        return response()->json([
+            'data' => [
+                'reportUid' => (string) $report->report_uid,
+                'reportType' => (string) $report->report_type,
+                'revision' => (int) $revisionRecord->revision,
+                'schemaVersion' => (int) $revisionRecord->schema_version,
+                'createdBy' => $revisionRecord->created_by,
+                'createdAt' => optional($revisionRecord->created_at)->toIso8601String(),
+                'payload' => $revisionRecord->payload,
+                'payloadChecksum' => $revisionRecord->payload_checksum,
+            ],
+        ]);
     }
 
     public function inspectionChecklistSummary(Request $request): JsonResponse
@@ -269,26 +320,26 @@ class ReportController extends Controller
         if ($isInspection) {
             $this->ensureInspectionConductPermission($request);
         }
-        if ($reportType === 'drill') {
-            if ($status === self::STATUS_DRAFT) {
-                $this->drillPayloadService->validateForDraft((array) $data['payload']);
-            } else {
-                $this->drillPayloadService->validateForSubmit((array) $data['payload']);
+        $reportModuleAdapter = $this->moduleAdapterForType($reportType);
+        if ($reportModuleAdapter === null) {
+            if ($reportType === 'drill') {
+                if ($status === self::STATUS_DRAFT) {
+                    $this->drillPayloadService->validateForDraft((array) $data['payload']);
+                } else {
+                    $this->drillPayloadService->validateForSubmit((array) $data['payload']);
+                }
             }
-        }
-        if ($reportType === 'erco') {
-            if ($status === self::STATUS_DRAFT) {
-                $this->ercoPayloadService->validateForDraft((array) $data['payload']);
-            } else {
-                $this->ercoPayloadService->validateForSubmit((array) $data['payload']);
+            if ($reportType === 'erco') {
+                if ($status === self::STATUS_DRAFT) {
+                    $this->ercoPayloadService->validateForDraft((array) $data['payload']);
+                } else {
+                    $this->ercoPayloadService->validateForSubmit((array) $data['payload']);
+                }
             }
-        }
-        if ($reportType === 'fitness-test') {
-            if ($status === self::STATUS_DRAFT) {
-                $this->fitnessTestPayloadService->validateForDraft((array) $data['payload']);
-            } else {
-                $this->fitnessTestPayloadService->validateForSubmit((array) $data['payload']);
-            }
+        } elseif ($status === self::STATUS_DRAFT) {
+            $data['payload'] = $reportModuleAdapter->validateDraft((array) $data['payload']);
+        } else {
+            $data['payload'] = $reportModuleAdapter->validateSubmission((array) $data['payload']);
         }
         if ($isInspection) {
             $data['payload'] = $this->applyInspectionSessionInspector(
@@ -359,7 +410,7 @@ class ReportController extends Controller
             : null;
 
         try {
-            $report = DB::transaction(function () use ($data, $status, $action, $submissionKey, $sourceDraftId, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType, $reportUid, $dutyContext) {
+            $report = DB::transaction(function () use ($data, $status, $action, $submissionKey, $sourceDraftId, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType, $reportUid, $dutyContext, $reportModuleAdapter) {
                 $report = Report::create([
                     'report_uid' => $reportUid,
                     'display_id' => trim((string) $data['display_id']),
@@ -388,21 +439,31 @@ class ReportController extends Controller
                     meta: $isInspection ? $this->inspectionWorkflowActorMeta($user) : null,
                 );
 
-                if ($isInspection) {
-                    $report->refresh();
-                    $this->inspectionCheckRowSyncService->syncForReport($report, (int) $user->id);
-                }
-                $this->reportMediaService->syncPayloadLinks((array) $report->payload, 'report', (string) $report->report_uid, (int) $user->id, $reportType);
-                if ($status === self::STATUS_SUBMITTED) {
-                    $this->reportDraftConsumptionService->consumeOwnedDraft(
-                        (int) $user->id,
-                        $sourceDraftId,
-                        $reportType,
-                    );
-                }
+            if ($isInspection) {
+                $report->refresh();
+                $this->inspectionCheckRowSyncService->syncForReport($report, (int) $user->id);
+            }
+            if ($reportModuleAdapter !== null) {
+                $reportModuleAdapter->project($report, (array) $report->payload);
+            }
+            $this->reportMediaService->syncPayloadLinks(
+                (array) $report->payload,
+                'report',
+                (string) $report->report_uid,
+                (int) $user->id,
+                $reportType,
+            );
+            if ($status === self::STATUS_SUBMITTED) {
+                $this->reportDraftConsumptionService->consumeOwnedDraft(
+                    (int) $user->id,
+                    $sourceDraftId,
+                    $reportType,
+                );
+            }
 
-                return $report->load('timelineEntries');
-            });
+            return $report->load('timelineEntries');
+        });
+        $this->dispatchFitnessShadowReconciliation($report);
         } catch (QueryException $exception) {
             if ($submissionKey !== '' && $this->isSubmissionKeyDuplicateException($exception)) {
                 $existing = Report::query()
@@ -481,26 +542,26 @@ class ReportController extends Controller
         $isInspection = $reportType === 'inspection';
         $isManagedWorkflow = $this->isManagedReportingWorkflowType($reportType);
         $isSystemAdministrator = $this->isSystemAdministrator($user);
-        if ($reportType === 'drill') {
-            if ($targetStatus === self::STATUS_DRAFT) {
-                $this->drillPayloadService->validateForDraft((array) $data['payload']);
-            } else {
-                $this->drillPayloadService->validateForSubmit((array) $data['payload']);
+        $reportModuleAdapter = $this->moduleAdapterForType($reportType);
+        if ($reportModuleAdapter === null) {
+            if ($reportType === 'drill') {
+                if ($targetStatus === self::STATUS_DRAFT) {
+                    $this->drillPayloadService->validateForDraft((array) $data['payload']);
+                } else {
+                    $this->drillPayloadService->validateForSubmit((array) $data['payload']);
+                }
             }
-        }
-        if ($reportType === 'erco') {
-            if ($targetStatus === self::STATUS_DRAFT) {
-                $this->ercoPayloadService->validateForDraft((array) $data['payload']);
-            } else {
-                $this->ercoPayloadService->validateForSubmit((array) $data['payload']);
+            if ($reportType === 'erco') {
+                if ($targetStatus === self::STATUS_DRAFT) {
+                    $this->ercoPayloadService->validateForDraft((array) $data['payload']);
+                } else {
+                    $this->ercoPayloadService->validateForSubmit((array) $data['payload']);
+                }
             }
-        }
-        if ($reportType === 'fitness-test') {
-            if ($targetStatus === self::STATUS_DRAFT) {
-                $this->fitnessTestPayloadService->validateForDraft((array) $data['payload']);
-            } else {
-                $this->fitnessTestPayloadService->validateForSubmit((array) $data['payload']);
-            }
+        } elseif ($targetStatus === self::STATUS_DRAFT) {
+            $data['payload'] = $reportModuleAdapter->validateDraft((array) $data['payload']);
+        } else {
+            $data['payload'] = $reportModuleAdapter->validateSubmission((array) $data['payload']);
         }
         if ($isInspection) {
             $this->ensureInspectionConductPermission($request);
@@ -585,7 +646,7 @@ class ReportController extends Controller
             : null;
 
         $sourceDraftId = trim((string) ($data['source_draft_id'] ?? ''));
-        DB::transaction(function () use ($report, $data, $sourceDraftId, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType, $dutyContext) {
+        DB::transaction(function () use ($report, $data, $sourceDraftId, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType, $dutyContext, $reportModuleAdapter) {
             $fromStatus = $report->status;
             $report->update([
                 'payload' => $data['payload'],
@@ -619,6 +680,9 @@ class ReportController extends Controller
                 $report->refresh();
                 $this->inspectionCheckRowSyncService->syncForReport($report, (int) $user->id);
             }
+            if ($reportModuleAdapter !== null) {
+                $reportModuleAdapter->project($report, (array) $report->payload);
+            }
             $this->reportMediaService->syncPayloadLinks((array) $report->payload, 'report', (string) $report->report_uid, (int) $user->id, $reportType);
             if ($targetStatus === self::STATUS_SUBMITTED) {
                 $this->reportDraftConsumptionService->consumeOwnedDraft(
@@ -630,6 +694,7 @@ class ReportController extends Controller
         });
 
         $report->load('timelineEntries');
+        $this->dispatchFitnessShadowReconciliation($report);
         AuditLogger::log($request, 'report_updated', $user, [
             'report_uid' => $report->report_uid,
             'display_id' => $report->display_id,
@@ -695,6 +760,251 @@ class ReportController extends Controller
         );
 
         return response()->json(null, 204);
+    }
+
+    public function restore(Request $request, string $reportUid): JsonResponse
+    {
+        $user = $request->user();
+        $report = $this->findRestorableReport($request, $reportUid);
+        if (! $report->trashed()) {
+            return response()->json(['message' => 'Report is already active.'], 200);
+        }
+
+        $dutyContext = null;
+        if ($this->isInspectionReport($report) && $report->status !== self::STATUS_DRAFT) {
+            $dutyContext = $this->dutyConfirmations->consume(
+                $request,
+                'restore',
+                $report->report_uid,
+                $this->inspectionFormId((array) $report->payload),
+            );
+        }
+
+        DB::transaction(function () use ($report, $user): void {
+            $report->restore();
+            $this->appendTimeline(
+                report: $report,
+                action: 'Restored',
+                fromStatus: $report->status,
+                toStatus: $report->status,
+                userId: (int) $user->id,
+                byName: (string) $user->name,
+                remarks: 'Report restored.',
+            );
+            $this->reportMediaService->syncPayloadLinks(
+                (array) $report->payload,
+                'report',
+                (string) $report->report_uid,
+                (int) $user->id,
+                (string) $report->report_type,
+            );
+        });
+
+        AuditLogger::log($request, 'report_restored', $user, [
+            'report_uid' => $report->report_uid,
+            'display_id' => $report->display_id,
+            'report_type' => $report->report_type,
+            'status' => $report->status,
+            'duty_confirmation_token_id' => data_get($dutyContext, 'confirmationTokenId'),
+        ]);
+        $this->emitWorkflowNotificationSafely(
+            eventType: 'restored',
+            report: $report,
+            actor: $user,
+            actionRequired: false,
+            remarks: 'Report restored.',
+        );
+
+        $report->refresh();
+        $report->load('timelineEntries');
+
+        return response()->json([
+            'data' => $this->formatReport($report),
+        ]);
+    }
+
+    public function exportFitness(Request $request)
+    {
+        $validated = $request->validate([
+            'report_uid' => ['required', 'string', 'max:190'],
+            'format' => ['nullable', 'string', 'max:32'],
+        ]);
+
+        $reportUid = trim((string) ($validated['report_uid'] ?? ''));
+        $format = strtolower(trim((string) ($validated['format'] ?? 'json')));
+        $user = $request->user();
+        if (! $user
+            || ! $this->reportReadAuthorizationService->canViewModule($user, 'fitness-test')
+            || ! $this->authorizationService->hasPermission($user, 'reports.fitness.export|reports.fitness.manage|reports.manage')) {
+            abort(403, 'Forbidden');
+        }
+        if (! in_array($format, ['json', 'html', 'pdf', 'xlsx'], true)) {
+            return response()->json([
+                'message' => 'Unsupported fitness export format.',
+                'code' => 'REPORT_EXPORT_FORMAT_UNSUPPORTED',
+            ], 422);
+        }
+
+        $report = Report::query()
+            ->with('timelineEntries')
+            ->where('report_uid', $reportUid)
+            ->where('report_type', 'fitness-test')
+            ->first();
+        if (! $report) {
+            return response()->json(['message' => 'Report not found.'], 404);
+        }
+        if (strtolower((string) $report->status) === strtolower(self::STATUS_DRAFT)) {
+            return response()->json([
+                'message' => 'Fitness export is unavailable until the report is submitted.',
+                'code' => 'REPORT_EXPORT_UNAVAILABLE',
+            ], 422);
+        }
+
+        $adapter = $this->moduleAdapterForType('fitness-test');
+        if ($adapter === null) {
+            return response()->json([
+                'message' => 'Fitness export is unavailable for this report.',
+                'code' => 'REPORT_EXPORT_UNSUPPORTED',
+            ], 422);
+        }
+
+        $basePayload = $adapter->serialize($report);
+        if (! is_array($basePayload)) {
+            return response()->json([
+                'message' => 'Fitness export payload is invalid.',
+                'code' => 'REPORT_EXPORT_UNAVAILABLE',
+            ], 422);
+        }
+
+        $displayId = trim((string) ($report->display_id ?? 'fitness-test-report'));
+        $safeId = preg_replace('/[^A-Za-z0-9\\-_]/', '-', $displayId);
+        $safeId = trim((string) $safeId, '-');
+        $filenameBase = $safeId !== '' ? $safeId : 'fitness-test-report';
+
+        if ($format === 'json') {
+            $exportPayload = $adapter->generateExport($report, $format);
+            if (! is_array($exportPayload)) {
+                return response()->json([
+                    'message' => 'This report format is not supported for export.',
+                    'code' => 'REPORT_EXPORT_UNAVAILABLE',
+                ], 422);
+            }
+            $json = json_encode($exportPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($json === false) {
+                return response()->json([
+                    'message' => 'Unable to encode fitness report export.',
+                    'code' => 'REPORT_EXPORT_ENCODING_ERROR',
+                ], 500);
+            }
+            $filename = $filenameBase.'.json';
+
+            AuditLogger::log($request, 'report_exported', $user, [
+                'report_uid' => $report->report_uid,
+                'report_type' => $report->report_type,
+                'report_version' => (int) $report->version,
+                'report_status' => $report->status,
+                'owner_user_id' => (int) $report->owner_user_id,
+                'export_format' => $format,
+            ]);
+
+            return response($json, 200, [
+                'Content-Type' => 'application/json',
+                'Content-Disposition' => 'attachment; filename="'.$filename.'"; filename*=UTF-8\'\''.rawurlencode($filename),
+                'Cache-Control' => 'private, no-store, max-age=0',
+                'X-Content-Type-Options' => 'nosniff',
+                'X-Report-Version' => (string) $report->version,
+                'Content-Length' => strlen($json),
+            ]);
+        }
+
+        $basePayload['id'] = (string) $report->report_uid;
+        $basePayload['displayId'] = (string) $report->display_id;
+        $basePayload['reportType'] = (string) $report->report_type;
+        $basePayload['status'] = (string) $report->status;
+        $basePayload['version'] = (int) $report->version;
+        $basePayload['revision'] = (int) $report->revision;
+        $basePayload['submittedAt'] = optional($report->submitted_at)->toIso8601String();
+        $basePayload['reviewedAt'] = optional($report->reviewed_at)->toIso8601String();
+        $basePayload['approvedAt'] = optional($report->approved_at)->toIso8601String();
+        $basePayload['rejectedAt'] = optional($report->rejected_at)->toIso8601String();
+
+        if ($format === 'html') {
+            $html = view('pdf.fitness_test_report', ['record' => $basePayload])->render();
+            $filename = $filenameBase.'.html';
+            AuditLogger::log($request, 'report_exported', $user, [
+                'report_uid' => $report->report_uid,
+                'report_type' => $report->report_type,
+                'report_version' => (int) $report->version,
+                'report_status' => $report->status,
+                'owner_user_id' => (int) $report->owner_user_id,
+                'export_format' => $format,
+            ]);
+
+            return response($html, 200, [
+                'Content-Type' => 'text/html; charset=utf-8',
+                'Content-Disposition' => 'inline; filename="'.$filename.'"; filename*=UTF-8\'\''.rawurlencode($filename),
+                'Cache-Control' => 'private, no-store, max-age=0',
+                'X-Content-Type-Options' => 'nosniff',
+                'X-Report-Version' => (string) $report->version,
+                'Content-Length' => strlen($html),
+            ]);
+        }
+
+        if ($format === 'xlsx') {
+            $xlsx = $this->fitnessTestReportXlsxRenderer->render($basePayload);
+            if ($xlsx === '') {
+                return response()->json([
+                    'message' => 'Unable to generate fitness report XLSX export.',
+                    'code' => 'REPORT_EXPORT_ENCODING_ERROR',
+                ], 500);
+            }
+            $filename = $filenameBase.'.xlsx';
+
+            AuditLogger::log($request, 'report_exported', $user, [
+                'report_uid' => $report->report_uid,
+                'report_type' => $report->report_type,
+                'report_version' => (int) $report->version,
+                'report_status' => $report->status,
+                'owner_user_id' => (int) $report->owner_user_id,
+                'export_format' => $format,
+            ]);
+
+            return response($xlsx, 200, [
+                'Content-Type' => FitnessTestReportXlsxRenderer::CONTENT_TYPE,
+                'Content-Disposition' => 'attachment; filename="'.$filename.'"; filename*=UTF-8\'\''.rawurlencode($filename),
+                'Cache-Control' => 'private, no-store, max-age=0',
+                'X-Content-Type-Options' => 'nosniff',
+                'X-Report-Version' => (string) $report->version,
+                'Content-Length' => strlen($xlsx),
+            ]);
+        }
+
+        $document = Pdf::loadView('pdf.fitness_test_report', ['record' => $basePayload])->setPaper('a4')->setOption([
+            'defaultFont' => 'Helvetica',
+            'isFontSubsettingEnabled' => true,
+            'isHtml5ParserEnabled' => true,
+            'isRemoteEnabled' => false,
+        ]);
+        $output = $document->output(['compress' => 1]);
+        $filename = $filenameBase.'.pdf';
+
+        AuditLogger::log($request, 'report_exported', $user, [
+            'report_uid' => $report->report_uid,
+            'report_type' => $report->report_type,
+            'report_version' => (int) $report->version,
+            'report_status' => $report->status,
+            'owner_user_id' => (int) $report->owner_user_id,
+            'export_format' => $format,
+        ]);
+
+        return response($output, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="'.$filename.'"; filename*=UTF-8\'\''.rawurlencode($filename),
+            'Cache-Control' => 'private, no-store, max-age=0',
+            'X-Content-Type-Options' => 'nosniff',
+            'X-Report-Version' => (string) $report->version,
+            'Content-Length' => strlen($output),
+        ]);
     }
 
     public function review(Request $request, string $reportUid): JsonResponse
@@ -948,6 +1258,34 @@ class ReportController extends Controller
         return $report;
     }
 
+    private function findRestorableReport(Request $request, string $reportUid): Report
+    {
+        $user = $request->user();
+        $report = Report::query()
+            ->withTrashed()
+            ->where('report_uid', $reportUid)
+            ->with('timelineEntries')
+            ->firstOrFail();
+
+        $reportType = $this->normalizeReportType($report->report_type ?? '');
+        if ($this->isManagedReportingWorkflowType($reportType)) {
+            $this->ensureReportingModulePermission($request, $reportType);
+        }
+        if ($reportType === 'inspection') {
+            $decision = $this->inspectionPolicy->canDelete($report, $user, $this->isSystemAdministrator($user));
+            if ($decision->allowed) {
+                return $report;
+            }
+            abort(404);
+        }
+
+        if ((int) $report->owner_user_id !== (int) $user->id) {
+            abort(404);
+        }
+
+        return $report;
+    }
+
     private function findReadableReport(Request $request, string $reportUid): Report
     {
         $user = $request->user();
@@ -996,7 +1334,7 @@ class ReportController extends Controller
 
     private function formatReport(Report $report): array
     {
-        $payload = is_array($report->payload) ? $report->payload : [];
+        $payload = $this->reportPayloadForModule($report);
         $canReview = $this->formatCanReview($report);
         $canApprove = $this->formatCanApprove($report);
         $canReject = $this->formatCanReject($report);
@@ -1073,6 +1411,44 @@ class ReportController extends Controller
             'createdAt' => optional($report->created_at)->toIso8601String(),
             'updatedAt' => optional($report->updated_at)->toIso8601String(),
         ]);
+    }
+
+    private function reportPayloadForModule(Report $report): array
+    {
+        $adapter = $this->moduleAdapterForType((string) ($report->report_type ?? ''));
+        if ($adapter === null) {
+            return is_array($report->payload) ? $report->payload : [];
+        }
+        $reportType = strtolower(trim((string) $report->report_type));
+        if ($reportType === 'fitness-test' && (! (bool) config('features.fitness_shadow_reads_enabled', false) || ! app(FitnessShadowReadCutoverService::class)->isReady())) {
+            return $adapter->serializeForLegacyReads($report);
+        }
+
+        return $adapter->serialize($report);
+    }
+
+    private function dispatchFitnessShadowReconciliation(Report $report): void
+    {
+        if (strtolower(trim((string) $report->report_type)) !== 'fitness-test') {
+            return;
+        }
+        if ($report->id === null) {
+            return;
+        }
+
+        try {
+            ReconcileFitnessShadowRead::dispatch((int) $report->id)->afterCommit();
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to dispatch fitness shadow reconciliation job.', [
+                'report_uid' => $report->report_uid,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    private function moduleAdapterForType(string $reportType): ?ReportModuleAdapter
+    {
+        return $this->reportModuleRegistry->for($reportType);
     }
 
     private function stripServerManagedPayloadMetadata(array $payload): array
