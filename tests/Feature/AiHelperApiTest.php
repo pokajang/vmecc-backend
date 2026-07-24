@@ -62,6 +62,69 @@ class AiHelperApiTest extends TestCase
             ->assertJsonStructure(['request_id']);
     }
 
+    public function test_general_conversation_remains_available_while_the_knowledge_corpus_is_not_ready(): void
+    {
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'test-key',
+            'ai_helper.knowledge_strict_readiness' => true,
+        ]);
+        $this->actingAs(User::factory()->create(['status' => 'active']));
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('isAvailable')->andReturnTrue();
+            $mock->shouldReceive('streamResponse')->once()->andReturnUsing(function ($instructions, $input, $onDelta) {
+                $onDelta('Boleh—cuba makan sesuatu yang ringkas dan mengenyangkan.');
+
+                return ['response_id' => 'general-without-corpus'];
+            });
+        });
+
+        $content = $this->postJson('/api/ai-helper/messages/stream', [
+            'message' => 'saya lapar hari ini, boleh bagi cadangan?',
+            'page_context' => ['path' => '/dashboard'],
+            'response_language' => 'bm',
+            'new_thread' => true,
+        ])->assertOk()->streamedContent();
+
+        $this->assertStringContainsString('sesuatu yang ringkas', $content);
+        $message = AiHelperMessage::query()
+            ->where('role', AiHelperMessage::ROLE_ASSISTANT)
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame('general_conversation', $message->retrieval_metadata['mode']);
+    }
+
+    public function test_grounded_question_still_requires_a_ready_knowledge_corpus(): void
+    {
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'test-key',
+            'ai_helper.knowledge_strict_readiness' => true,
+        ]);
+        $this->actingAs(User::factory()->create(['status' => 'active']));
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('isAvailable')->andReturnTrue();
+            $mock->shouldNotReceive('streamResponse');
+            $mock->shouldNotReceive('structuredResponse');
+        });
+
+        $response = $this->postJson('/api/ai-helper/messages/stream', [
+            'message' => 'According to Annex 11, what is the emergency telephone number?',
+            'page_context' => ['path' => '/dashboard'],
+            'new_thread' => true,
+        ]);
+
+        $response
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'AI_HELPER_KNOWLEDGE_NOT_READY')
+            ->assertJsonPath(
+                'message',
+                'Sorry, the reference information needed to answer this question is temporarily unavailable. Please try again later or contact the responsible team if this continues.',
+            );
+        $this->assertStringNotContainsString('corpus', $response->getContent());
+        $this->assertStringNotContainsString('processing', $response->getContent());
+    }
+
     public function test_stream_sse_contract_remains_available(): void
     {
         config([
@@ -135,7 +198,7 @@ class AiHelperApiTest extends TestCase
         $this->assertSame(['S1'], collect($message->sources)->pluck('source_id')->all());
     }
 
-    public function test_unsupported_knowledge_question_returns_deterministic_not_found_without_calling_the_model(): void
+    public function test_unsupported_policy_question_returns_a_polite_deterministic_fallback_without_calling_the_model(): void
     {
         config([
             'ai_helper.enabled' => true,
@@ -153,13 +216,14 @@ class AiHelperApiTest extends TestCase
         });
 
         $content = $this->postJson('/api/ai-helper/messages/stream', [
-            'message' => 'What colour is the CEO car?',
+            'message' => 'What is the company vehicle inspection policy?',
             'page_context' => ['path' => '/dashboard'],
             'response_language' => 'en',
             'new_thread' => true,
         ])->assertOk()->streamedContent();
 
-        $this->assertStringContainsString('not found in the available VMECC knowledge', $content);
+        $this->assertStringContainsString('not yet have enough reference information', $content);
+        $this->assertStringNotContainsString('available VMECC knowledge', $content);
         $this->assertStringNotContainsString('event: status', $content);
         $message = AiHelperMessage::query()->where('role', AiHelperMessage::ROLE_ASSISTANT)->latest('id')->firstOrFail();
         $this->assertSame([], $message->sources);

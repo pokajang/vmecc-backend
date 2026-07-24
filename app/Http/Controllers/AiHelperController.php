@@ -28,6 +28,7 @@ use App\Services\AiHelperEmbeddedTaskService;
 use App\Services\AiHelperEmbeddingService;
 use App\Services\AiHelperKnowledgeLifecycleService;
 use App\Services\AiHelperKnowledgeProcessingService;
+use App\Services\AiHelperKnowledgeQueryAnalyzer;
 use App\Services\AiHelperKnowledgeQuotaService;
 use App\Services\AiHelperKnowledgeService;
 use App\Services\AiHelperMarkdownKnowledgeParser;
@@ -38,6 +39,7 @@ use App\Services\AiHelperRequestDeadline;
 use App\Services\AiHelperRequestDeduplicator;
 use App\Services\AiHelperResponsePipeline;
 use App\Services\AiHelperSensitiveDataGuard;
+use App\Services\AiHelperUserFacingFallbacks;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -74,6 +76,8 @@ class AiHelperController extends Controller
         private readonly AiHelperResponsePipeline $responsePipeline,
         private readonly AiHelperReliabilityMetrics $reliabilityMetrics,
         private readonly AiHelperApiResponder $responder,
+        private readonly AiHelperKnowledgeQueryAnalyzer $queryAnalyzer,
+        private readonly AiHelperUserFacingFallbacks $fallbacks,
     ) {}
 
     public function context(Request $request): JsonResponse
@@ -1078,21 +1082,6 @@ class AiHelperController extends Controller
         $embeddedTask = $conversationPurpose === self::CONVERSATION_PURPOSE_EMBEDDED_HELPER
             ? (trim((string) ($validated['embedded_task'] ?? '')) ?: null)
             : null;
-        $corpus = $embeddedTask === null
-            ? $this->knowledge->corpusReadiness()
-            : ['ready' => true, 'release_gate' => 'not_required_for_embedded_task'];
-        if ($embeddedTask === null
-            && (bool) config('ai_helper.knowledge_strict_readiness', true)
-            && ! ($corpus['ready'] ?? false)) {
-            return $this->responder->error(
-                $request,
-                'Ask AI is waiting for the uploaded knowledge corpus to finish processing. Resolve failed documents or wait for ingestion to complete.',
-                'AI_HELPER_KNOWLEDGE_NOT_READY',
-                409,
-                ['corpus' => $corpus],
-            );
-        }
-
         if ($this->sensitiveDataGuard->categories((string) $validated['message']) !== []) {
             return $this->responder->error(
                 $request,
@@ -1109,6 +1098,52 @@ class AiHelperController extends Controller
                 422,
             );
         }
+        $retrievalThread = null;
+        $previousUserMessages = [];
+        $knowledgeRequired = false;
+        $preflightAnalysis = [];
+        if ($embeddedTask === null) {
+            try {
+                if ($conversationPurpose === self::CONVERSATION_PURPOSE_CHAT && ! (bool) ($validated['new_thread'] ?? false)) {
+                    $threadQuery = AiHelperThread::query()->where('user_id', $actor->id);
+                    $retrievalThread = ! empty($validated['thread_id'])
+                        ? $this->regularThreadById($threadQuery, (int) $validated['thread_id'])
+                        : $this->latestRegularThreadForUser($actor->id);
+                }
+                $previousUserMessages = $this->conversation->recentUserMessages($retrievalThread);
+                $preflightAnalysis = $this->queryAnalyzer->analyze(
+                    (string) $validated['message'],
+                    $previousUserMessages,
+                );
+                $knowledgeRequired = (bool) ($preflightAnalysis['evidence_required'] ?? true);
+            } catch (Throwable $e) {
+                return $this->safeFailure($request, $e, 'stream_preflight');
+            }
+        }
+        $corpus = match (true) {
+            $embeddedTask !== null => ['ready' => true, 'release_gate' => 'not_required_for_embedded_task'],
+            ! $knowledgeRequired => ['ready' => true, 'release_gate' => 'not_required_for_general_conversation'],
+            default => $this->knowledge->corpusReadiness(),
+        };
+        if ($embeddedTask === null
+            && $knowledgeRequired
+            && (bool) config('ai_helper.knowledge_strict_readiness', true)
+            && ! ($corpus['ready'] ?? false)) {
+            $requestedLanguage = (string) ($validated['response_language'] ?? 'auto');
+            $fallbackLanguage = $requestedLanguage === 'bm'
+                || ($requestedLanguage === 'auto'
+                    && in_array((string) ($preflightAnalysis['language'] ?? 'en'), ['ms', 'mixed'], true))
+                ? 'bm'
+                : 'en';
+
+            return $this->responder->error(
+                $request,
+                $this->fallbacks->knowledgeTemporarilyUnavailable($fallbackLanguage),
+                'AI_HELPER_KNOWLEDGE_NOT_READY',
+                409,
+            );
+        }
+
         try {
             $reserved = $this->requestDeduplicator->reserve($actor->id, $requestUuid);
         } catch (Throwable $e) {
@@ -1145,14 +1180,6 @@ class AiHelperController extends Controller
         $deadline = AiHelperRequestDeadline::fromConfig();
 
         try {
-            $retrievalThread = null;
-            if ($conversationPurpose === self::CONVERSATION_PURPOSE_CHAT && ! (bool) ($validated['new_thread'] ?? false)) {
-                $threadQuery = AiHelperThread::query()->where('user_id', $actor->id);
-                $retrievalThread = ! empty($validated['thread_id'])
-                    ? $this->regularThreadById($threadQuery, (int) $validated['thread_id'])
-                    : $this->latestRegularThreadForUser($actor->id);
-            }
-            $previousUserMessages = $this->conversation->recentUserMessages($retrievalThread);
             $pageContext = $embeddedTask !== null
                 ? [
                     'page' => $this->knowledge->normalizePageContext($validated['page_context'] ?? []),
@@ -1179,13 +1206,13 @@ class AiHelperController extends Controller
                     $deadline,
                     'vmecc-user-'.$actor->id,
                     (array) ($validated['ui_state'] ?? []),
+                    $corpus,
                 );
             $pageContext['page']['conversation_purpose'] = $conversationPurpose;
             $pageContext['page']['assistant_surface'] = $conversationPurpose;
             $this->recordRunRetrieval($run, $pageContext);
             $evidenceRequired = $conversationPurpose === self::CONVERSATION_PURPOSE_CHAT
-                && (bool) ($pageContext['query_analysis']['evidence_required']
-                    ?? (($pageContext['query_analysis']['intent'] ?? null) !== 'casual'));
+                && (bool) ($pageContext['query_analysis']['evidence_required'] ?? true);
             $responseLanguage = (string) ($validated['response_language'] ?? 'auto');
             $instructions = $embeddedTask !== null
                 ? ''
@@ -1318,7 +1345,11 @@ class AiHelperController extends Controller
                     $sources,
                     $deterministicContent,
                     $responseLanguage,
-                    fn (string $status) => $this->emitPipelineStatus($status, $requestId),
+                    fn (string $status) => $this->emitPipelineStatus(
+                        $status,
+                        $requestId,
+                        (string) ($queryPlan['answer_mode'] ?? ''),
+                    ),
                     function (string $delta) use (&$lastHeartbeatAt, $requestId) {
                         if (connection_aborted()) {
                             throw new RuntimeException('AI helper stream aborted by client.');
@@ -1360,7 +1391,11 @@ class AiHelperController extends Controller
                             $this->knowledge->citationsForGuidance($expandedGuidance),
                             $this->knowledge->deterministicResponseFor($expandedContext, $responseLanguage),
                             $responseLanguage,
-                            fn (string $status) => $this->emitPipelineStatus($status, $requestId),
+                            fn (string $status) => $this->emitPipelineStatus(
+                                $status,
+                                $requestId,
+                                (string) ($recoveryQueryPlan['answer_mode'] ?? ''),
+                            ),
                             function (string $delta) use (&$lastHeartbeatAt, $requestId) {
                                 if (connection_aborted()) {
                                     throw new RuntimeException('AI helper stream aborted by client.');
@@ -1501,7 +1536,7 @@ class AiHelperController extends Controller
                 $this->emit('heartbeat', ['request_id' => $requestId, 'at' => now()->toIso8601String()], $requestId);
 
                 $startedAt = microtime(true);
-                $this->emitPipelineStatus('generating', $requestId);
+                $this->emitPipelineStatus('generating', $requestId, 'embedded_task');
                 $result = $this->embeddedTasks->execute(
                     $embeddedTask,
                     $question,
@@ -1952,13 +1987,17 @@ class AiHelperController extends Controller
         return Str::limit(Str::headline($title ?: 'VMECC').' help', 80, '');
     }
 
-    private function emitPipelineStatus(string $status, string $requestId): void
+    private function emitPipelineStatus(string $status, string $requestId, string $answerMode = ''): void
     {
         $message = match ($status) {
-            'generating' => 'Preparing an answer from the selected knowledge...',
+            'generating' => match ($answerMode) {
+                'casual', 'general_conversation' => 'Preparing a response...',
+                'embedded_task' => 'Preparing the requested content...',
+                default => 'Preparing an answer from the relevant guidance...',
+            },
             'verifying' => 'Checking the answer against its sources...',
-            'repairing' => 'Correcting an answer that did not pass source checks...',
-            'retrieving_more' => 'Searching the wider authorized knowledge for more evidence...',
+            'repairing' => 'Refining the answer...',
+            'retrieving_more' => 'Looking for more relevant guidance...',
             default => 'Processing the Ask AI request...',
         };
 

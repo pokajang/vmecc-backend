@@ -98,7 +98,7 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
         $fireTruck = $analyzer->analyze('macam mana nak inspect fire rescue truck');
         $hse = $analyzer->analyze('cara buat HSE inspection');
 
-        $this->assertSame('casual', $casual['answer_mode']);
+        $this->assertSame('general_conversation', $casual['answer_mode']);
         $this->assertFalse($casual['evidence_required']);
         $this->assertSame('product_capability', $overview['answer_mode']);
         $this->assertContains('system_overview', $overview['topic_keys']);
@@ -114,13 +114,88 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
 
         foreach (['Hi there', 'salam', 'assalamualaikum', 'Who are you?', 'Boleh bantu saya?'] as $message) {
             $analysis = $analyzer->analyze($message);
-            $this->assertSame('casual', $analysis['answer_mode'], $message);
+            $this->assertSame('general_conversation', $analysis['answer_mode'], $message);
             $this->assertFalse($analysis['evidence_required'], $message);
         }
 
         $workflow = $analyzer->analyze('Hi there, how do I apply for leave?');
         $this->assertSame('product_workflow', $workflow['answer_mode']);
         $this->assertSame(['leave.self_service'], $workflow['task_keys']);
+    }
+
+    public function test_daily_conversation_defaults_to_general_help_without_evidence_gating(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        foreach ([
+            'saya rasa kurang sihat hari ini',
+            'jika saya kurang sihat perlu ke saya datang bekerja',
+            'saya lapar hari ini, boleh bagi saya cadangan?',
+            'saya gaduh dengan isteri hari ini',
+            'macam mana nak pujuk isteri selepas gaduh?',
+            'bila nak naik gaji ni?',
+            'saya lapar, menu apa yang sedap?',
+            'I feel stressed today',
+            'Can you suggest something for lunch?',
+        ] as $message) {
+            $analysis = $analyzer->analyze($message);
+
+            $this->assertSame('general_conversation', $analysis['answer_mode'], $message);
+            $this->assertFalse($analysis['evidence_required'], $message);
+        }
+    }
+
+    public function test_explicit_product_policy_and_operational_requests_remain_grounded(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        foreach ([
+            'Apa polisi kenaikan gaji syarikat?',
+            'Macam mana nak mohon cuti dalam VMECC?',
+            'Saya kurang sihat, macam mana nak mohon cuti?',
+            'Macam mana nak inspect fire rescue truck?',
+            'Menurut Annex 11, apakah prosedurnya?',
+            'Di mana saya boleh lihat slip gaji?',
+            'What is my leave balance?',
+            'Where is payroll?',
+            'What is the overtime rate?',
+            'Has my salary claim been approved?',
+            'Why is my payslip deduction high?',
+            'What is the public holiday entitlement?',
+        ] as $message) {
+            $analysis = $analyzer->analyze($message);
+
+            $this->assertNotSame('general_conversation', $analysis['answer_mode'], $message);
+            $this->assertTrue($analysis['evidence_required'], $message);
+        }
+    }
+
+    public function test_authoritative_document_follow_up_keeps_its_grounded_context(): void
+    {
+        $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze(
+            'What about the number?',
+            ['According to Annex 11, what should happen for multiple casualties?'],
+        );
+
+        $this->assertTrue($analysis['follow_up']);
+        $this->assertSame('operational_knowledge', $analysis['answer_mode']);
+        $this->assertTrue($analysis['evidence_required']);
+        $this->assertSame([11], $analysis['annex_numbers']);
+    }
+
+    public function test_generic_next_step_continues_general_conversation_unless_page_context_is_explicit(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+        $history = ['Saya kurang sihat hari ini'];
+
+        $general = $analyzer->analyze('What should I do next?', $history);
+        $pageHelp = $analyzer->analyze('What should I do next on this page?', $history);
+
+        $this->assertTrue($general['follow_up']);
+        $this->assertSame('general_conversation', $general['answer_mode']);
+        $this->assertFalse($general['evidence_required']);
+        $this->assertSame('product_navigation', $pageHelp['answer_mode']);
+        $this->assertTrue($pageHelp['evidence_required']);
     }
 
     public function test_it_assigns_canonical_tasks_for_common_product_workflows(): void

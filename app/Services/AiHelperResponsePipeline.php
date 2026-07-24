@@ -7,7 +7,8 @@ class AiHelperResponsePipeline
     public function __construct(
         private readonly AiHelperOpenAiService $openAi,
         private readonly AiHelperResponseValidationService $validator,
-        private readonly AiHelperResponseResultFactory $results
+        private readonly AiHelperResponseResultFactory $results,
+        private readonly AiHelperUserFacingFallbacks $fallbacks,
     ) {}
 
     /**
@@ -105,6 +106,25 @@ class AiHelperResponsePipeline
                 );
             } catch (AiHelperProviderException $failure) {
                 $generationDuration += $this->elapsedMilliseconds($generationStartedAt);
+                if (! $evidenceRequired) {
+                    return $this->withPolicyMetadata(
+                        $this->results->conversationalUnavailable(
+                            $failure,
+                            $fallbackLanguage,
+                            $attempt,
+                            $responseIds,
+                            $providerRequestIds,
+                            $usage,
+                            $generationDuration,
+                            $pipelineStartedAt,
+                        ),
+                        $qualitySignals,
+                        $this->qualityProfile('', ['valid' => false], [], $queryPlan, $retrievalMetadata, $attempt),
+                        false,
+                        'partial',
+                        ['provider_unavailable'],
+                    );
+                }
 
                 return $this->withPolicyMetadata(
                     $this->results->providerFallback(
@@ -580,9 +600,7 @@ class AiHelperResponsePipeline
         );
 
         $fallbackAction = $policy['evidence_gaps'] === [] ? 'ask_for_more_context' : 'ask_for_additional_scope';
-        $extractive['content'] = $fallbackLanguage === 'bm'
-            ? 'Saya belum mempunyai maklumat yang cukup untuk menjawab dengan tepat. Nyatakan tugas yang anda mahu lakukan dan nama rekod, peralatan atau dokumen jika berkaitan.'
-            : 'I do not yet have enough information to answer accurately. Tell me the task you want to complete and the relevant record, equipment, or document if applicable.';
+        $extractive['content'] = $this->fallbacks->lowConfidence($fallbackLanguage);
         $extractive['outcome_code'] = 'AI_HELPER_LOW_CONFIDENCE';
         $extractive['recovery_action'] = $fallbackAction;
 
@@ -594,12 +612,7 @@ class AiHelperResponsePipeline
         string $fallbackLanguage,
         array $quality
     ): array {
-        $isBm = $fallbackLanguage === 'bm';
-        if ($isBm) {
-            $result['content'] = 'Saya belum dapat mengesahkan jawapan terperinci untuk permintaan ini. Nyatakan tugas atau butiran khusus yang anda perlukan.';
-        } else {
-            $result['content'] = 'I could not verify a detailed answer for this request. Tell me the specific task or detail you need.';
-        }
+        $result['content'] = $this->fallbacks->lowConfidence($fallbackLanguage);
         if (($quality['validation_success'] ?? 0) >= 0.55) {
             $result['fallback_action'] = 'ask_for_more_context';
         }

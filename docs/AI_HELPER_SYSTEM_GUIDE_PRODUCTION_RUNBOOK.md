@@ -174,12 +174,17 @@ Use existing UAT/production accounts; do not create users in the deployment:
 8. forged route/module context does not leak a forbidden title or source ID.
 9. explicit leave, overtime, payroll, and inspection questions retrieve the authorized global guide even while the user is on an unrelated page;
 10. vague questions such as "what can I do here?" use the current page only as a ranking hint, not as an authorization boundary.
+11. ordinary daily conversation, including food suggestions, mild wellbeing concerns, personal stress, and informal career questions, uses `general_conversation` without document retrieval, citations, or confidence language;
+12. conversational health responses remain brief, do not diagnose or prescribe, and recommend suitable human or professional support;
+13. conversational salary and workplace responses do not guarantee management decisions or invent organisation policy;
+14. a personal concern combined with an explicit VMECC task remains on the grounded product or operational path while allowing one brief empathetic acknowledgement.
+15. `general_conversation` remains available when the knowledge corpus is rebuilding or temporarily not ready, while product, policy, and operational questions continue to fail closed with a polite user-facing message.
 
 Record results against the exact backend SHA, frontend SHA, seeded content hashes, and UAT reference.
 
 Deploy workflow-registry support, seed and index the matching system guides, and confirm `ai-helper:knowledge-readiness --production` before opening traffic. Product workflows are part of the code-controlled production profile rather than an independent environment switch.
 
-After enabling it, confirm recent `ai_helper_runs` rows contain `answer_mode` and, for deterministic workflow answers, `workflow_key`. These are bounded category keys for aggregate quality monitoring; raw `ui_state` and form values must never be copied into run telemetry or stored route context.
+After enabling it, confirm recent `ai_helper_runs` rows contain `answer_mode` and, for deterministic workflow answers, `workflow_key`. New ordinary conversation rows should use `general_conversation`; historical `casual` rows remain valid and are counted in the same aggregate metric. These are bounded category keys for aggregate quality monitoring; raw conversation content, `ui_state`, and form values must never be copied into new run telemetry fields or stored route context.
 
 ## Rollback and failed gate
 

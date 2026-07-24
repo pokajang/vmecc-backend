@@ -19,6 +19,8 @@ class AiHelperKnowledgeService
         private readonly AiHelperInspectionCapabilityCatalog $inspectionCapabilities,
         private readonly AiHelperProductContextService $productContext,
         private readonly AiHelperUiStateNormalizer $uiState,
+        private readonly AiHelperResponsePolicy $responsePolicy,
+        private readonly AiHelperUserFacingFallbacks $fallbacks,
     ) {}
 
     public function buildContext(
@@ -29,6 +31,7 @@ class AiHelperKnowledgeService
         ?AiHelperRequestDeadline $deadline = null,
         ?string $safetyIdentifier = null,
         array $rawUiState = [],
+        ?array $corpusState = null,
     ): array {
         $context = $this->normalizePageContext($rawContext);
         $uiState = $this->uiState->normalize($rawUiState);
@@ -58,12 +61,16 @@ class AiHelperKnowledgeService
         }
 
         $analysis = $retrieval['analysis'] ?? [];
+        $evidenceRequired = (bool) ($analysis['evidence_required'] ?? true);
+        $corpus = $corpusState ?? ($evidenceRequired
+            ? $this->corpusReadiness()
+            : ['ready' => true, 'release_gate' => 'not_required_for_general_conversation']);
 
         return [
             'page' => $context,
             'guidance' => $guidance,
             'available' => count($guidance) > 0,
-            'corpus' => $this->corpusReadiness(),
+            'corpus' => $corpus,
             'catalogue' => $catalogueIntent ? $this->catalogueForUser($user) : null,
             'capability_catalogue' => $capabilityCatalogue,
             'retrieval' => $retrieval['trace'] ?? [],
@@ -257,6 +264,11 @@ class AiHelperKnowledgeService
 
         $guidance = $contextEnvelope['guidance'] ?? [];
         $languageInstruction = $this->languageInstruction($responseLanguage);
+        $answerMode = (string) data_get($contextEnvelope, 'query_analysis.answer_mode', 'operational_knowledge');
+        if ($this->responsePolicy->isConversational($answerMode)) {
+            return $this->responsePolicy->conversationalInstructions($languageInstruction);
+        }
+
         $guidanceText = collect($guidance)->map(function ($entry, $index) {
             $sourceId = $entry['source_id'] ?? 'S'.($index + 1);
             $scope = $entry['source_scope'] ?? 'guidance';
@@ -316,13 +328,8 @@ SOURCE;
             $contextEnvelope['product_context'] ?? null,
             JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
         );
-        $answerMode = (string) data_get($contextEnvelope, 'query_analysis.answer_mode', 'operational_knowledge');
-        $answerContract = match ($answerMode) {
-            'casual' => 'Respond naturally and briefly. No citation or product disclaimer is needed unless the user asks a VMECC question.',
-            'product_capability', 'product_navigation' => 'Answer the question in the first sentence. Mention only permission-visible product context, then offer concise navigation if useful.',
-            'product_workflow' => 'Start with the target menu and action, then give the shortest complete ordered workflow. Keep operational facts outside the product context grounded in approved guidance.',
-            default => 'Answer every supported part directly and keep operational or policy claims grounded in the supplied approved guidance.',
-        };
+        $answerContract = $this->responsePolicy->answerContract($answerMode);
+        $empatheticTaskRule = $this->responsePolicy->empatheticTaskRule();
 
         return <<<TEXT
 You are the VMECC in-app AI helper. Help signed-in users understand how to use the VMECC operations management system.
@@ -330,6 +337,7 @@ You are the VMECC in-app AI helper. Help signed-in users understand how to use t
 Rules:
 - Response contract for this request: {$answerContract}
 - Be concise, practical, and use ordinary user-facing language.
+- {$empatheticTaskRule}
 - Ask one clarification question only when different answers would materially change the workflow. When safe common information is available, give it before the question.
 - Search results are drawn from all VMECC knowledge currently authorized for the signed-in user. Treat the current page only as a hint for questions such as "here" or "this page".
 - An explicitly named subject always overrides the current page. For example, a Leave question asked from Inspection must be answered from authorized Leave guidance.
@@ -656,17 +664,13 @@ TEXT;
                 ? 'Senarai jenis pemeriksaan tidak tersedia dalam akses VMECC semasa anda. Jika anda perlu menjalankan atau melihat pemeriksaan, minta penyelia atau pentadbir menyemak akses anda.'
                 : 'The inspection-type list is not available within your current VMECC access. If you need to conduct or view inspections, ask your supervisor or administrator to check your access.';
         }
-        if (in_array($intent, ['knowledge_question', 'general_help', 'capability_catalogue'], true) && empty($contextEnvelope['guidance'])) {
+        $evidenceRequired = (bool) data_get($contextEnvelope, 'query_analysis.evidence_required', true);
+        if ($evidenceRequired
+            && in_array($intent, ['knowledge_question', 'general_help', 'capability_catalogue'], true)
+            && empty($contextEnvelope['guidance'])) {
             $sourceMode = (string) ($contextEnvelope['query_analysis']['source_mode'] ?? 'any');
-            if ($sourceMode === 'system') {
-                return $useBahasaMelayu
-                    ? 'Tiada panduan penggunaan berkaitan tersedia untuk permintaan ini dalam akses VMECC semasa anda. Cuba nyatakan nama halaman, borang atau tindakan. Jika tugas ini sebahagian daripada tanggungjawab anda, minta penyelia atau pentadbir menyemak akses anda.'
-                    : 'No related usage guide is available for this request within your current VMECC access. Try naming the page, form, or action. If this task is part of your responsibility, ask your supervisor or administrator to check your access.';
-            }
 
-            return $useBahasaMelayu
-                ? 'Jawapan tidak ditemui dalam pengetahuan VMECC yang tersedia. Cuba nyatakan topik, dokumen atau prosedur dengan lebih khusus.'
-                : 'The answer was not found in the available VMECC knowledge. Try naming the topic, document, or procedure more specifically.';
+            return $this->fallbacks->missingKnowledge($useBahasaMelayu ? 'bm' : 'en', $sourceMode);
         }
 
         return null;

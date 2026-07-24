@@ -179,7 +179,7 @@ class AiHelperRetrievalV2Test extends TestCase
         $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
             ['route_key' => '', 'module_key' => ''],
             null,
-            'What colour is the CEO car?',
+            'According to Annex 99, what is the payroll escalation deadline?',
         );
 
         $this->assertSame([], $result['guidance']);

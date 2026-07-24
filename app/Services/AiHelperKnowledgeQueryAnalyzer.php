@@ -8,9 +8,14 @@ class AiHelperKnowledgeQueryAnalyzer
 {
     private readonly AiHelperTopicAliasRegistry $topics;
 
-    public function __construct(?AiHelperTopicAliasRegistry $topics = null)
-    {
+    private readonly AiHelperAnswerModeResolver $answerModes;
+
+    public function __construct(
+        ?AiHelperTopicAliasRegistry $topics = null,
+        ?AiHelperAnswerModeResolver $answerModes = null,
+    ) {
         $this->topics = $topics ?? new AiHelperTopicAliasRegistry;
+        $this->answerModes = $answerModes ?? new AiHelperAnswerModeResolver;
     }
 
     /** @return array<string, mixed> */
@@ -23,12 +28,20 @@ class AiHelperKnowledgeQueryAnalyzer
             ->filter(fn ($value) => is_string($value) && trim($value) !== '')
             ->map(fn (string $value) => trim($value))
             ->last();
+        $previousNormalized = is_string($previous)
+            ? $this->normalize($previous)
+            : null;
         $previousTopics = is_string($previous)
-            ? $this->topics->topicKeys($this->normalize($previous))
+            ? $this->topics->topicKeys((string) $previousNormalized)
             : [];
         $followUp = is_string($previous)
             && $this->looksLikeFollowUp($normalized)
-            && $this->topicsAreCompatible($currentTopics, $previousTopics, $normalized);
+            && $this->topicsAreCompatible(
+                $currentTopics,
+                $previousTopics,
+                $normalized,
+                (string) $previousNormalized,
+            );
         $followUpConfidence = $this->followUpConfidence($normalized, $currentTopics, $previousTopics, $followUp);
         $retrievalQuery = $followUp && is_string($previous)
             ? $previous."\n".$message
@@ -39,12 +52,29 @@ class AiHelperKnowledgeQueryAnalyzer
         $intent = $this->intent($normalized);
         $taskKeys = $this->taskKeys($normalizedQuery, $topicKeys, $operationKeys, $intent);
         $entityKeys = $this->entityKeys($topicKeys);
-        $answerMode = $this->answerMode($intent, $taskKeys, $topicKeys, $normalized);
         $sourceMode = $this->sourceMode($followUp ? $normalizedQuery : $normalized);
         if ($sourceMode === 'system'
             && array_intersect($topicKeys, ['extinguisher', 'height_rescue']) !== []
             && in_array('maintain', $operationKeys, true)) {
             $sourceMode = 'mixed';
+        }
+        if ($intent === 'general_help'
+            && is_string($previousNormalized)
+            && $this->standaloneAnswerMode($previousNormalized) === 'general_conversation'
+            && $currentTopics === []
+            && $sourceMode === 'any') {
+            $intent = 'knowledge_question';
+        }
+        $answerMode = $this->answerModes->resolve(
+            $intent,
+            $taskKeys,
+            $topicKeys,
+            $operationKeys,
+            $sourceMode,
+            $normalized,
+        );
+        if ($this->isSensitiveRequest($normalized)) {
+            $answerMode = 'sensitive';
         }
         $contextDependency = $this->contextDependency($normalized, $currentTopics);
         $queryScope = $this->queryScope(
@@ -96,7 +126,7 @@ class AiHelperKnowledgeQueryAnalyzer
             sensitiveRequest: $this->isSensitiveRequest($normalized),
             answerMode: $answerMode,
             entityKeys: $entityKeys,
-            evidenceRequired: $answerMode !== 'casual',
+            evidenceRequired: $this->answerModes->evidenceRequired($answerMode),
         );
 
         return $plan->toArray();
@@ -168,32 +198,6 @@ class AiHelperKnowledgeQueryAnalyzer
             ->all();
     }
 
-    /** @param array<int, string> $taskKeys @param array<int, string> $topicKeys */
-    private function answerMode(string $intent, array $taskKeys, array $topicKeys, string $message): string
-    {
-        if ($this->isSensitiveRequest($message)) {
-            return 'sensitive';
-        }
-        if ($intent === 'casual') {
-            return 'casual';
-        }
-        if ($intent === 'capability_catalogue' || in_array('system_overview', $topicKeys, true)) {
-            return 'product_capability';
-        }
-        if ($intent === 'general_help') {
-            return 'product_navigation';
-        }
-        if (in_array('dashboard', $topicKeys, true)
-            && preg_match('/\b(?:what does|what is|show|shows|papar|dipaparkan|apa (?:yang )?ada)\b/u', $message) === 1) {
-            return 'product_navigation';
-        }
-        if ($taskKeys !== []) {
-            return 'product_workflow';
-        }
-
-        return 'operational_knowledge';
-    }
-
     /** @return array<int, string> */
     public function terms(string $value): array
     {
@@ -237,10 +241,23 @@ class AiHelperKnowledgeQueryAnalyzer
     }
 
     /** @param array<int, string> $currentTopics @param array<int, string> $previousTopics */
-    private function topicsAreCompatible(array $currentTopics, array $previousTopics, string $message): bool
-    {
+    private function topicsAreCompatible(
+        array $currentTopics,
+        array $previousTopics,
+        string $message,
+        string $previousMessage,
+    ): bool {
         if ($currentTopics === [] || $previousTopics === []) {
-            return $this->containsFollowUpPronoun($message);
+            if ($this->containsFollowUpPronoun($message)) {
+                return true;
+            }
+
+            $previousWasGrounded = $previousTopics !== []
+                || in_array($this->sourceMode($previousMessage), ['reference', 'mixed'], true);
+
+            return $currentTopics === []
+                && $previousWasGrounded
+                && preg_match('/^(?:and|also|then|what about|how about|dan|juga|kemudian|bagaimana pula)\b/u', $message) === 1;
         }
 
         if (array_intersect($currentTopics, $previousTopics) !== []) {
@@ -259,6 +276,33 @@ class AiHelperKnowledgeQueryAnalyzer
     private function containsFollowUpPronoun(string $message): bool
     {
         return preg_match('/\b(it|that|those|them|this|next|previous|above|here|there|itu|tersebut|seterusnya|tadi)\b/u', $message) === 1;
+    }
+
+    private function standaloneAnswerMode(string $message): string
+    {
+        $topicKeys = $this->topics->topicKeys($message);
+        $operationKeys = $this->operationKeys($message);
+        $intent = $this->intent($message);
+        $taskKeys = $this->taskKeys($message, $topicKeys, $operationKeys, $intent);
+        $sourceMode = $this->sourceMode($message);
+        if ($sourceMode === 'system'
+            && array_intersect($topicKeys, ['extinguisher', 'height_rescue']) !== []
+            && in_array('maintain', $operationKeys, true)) {
+            $sourceMode = 'mixed';
+        }
+
+        if ($this->isSensitiveRequest($message)) {
+            return 'sensitive';
+        }
+
+        return $this->answerModes->resolve(
+            $intent,
+            $taskKeys,
+            $topicKeys,
+            $operationKeys,
+            $sourceMode,
+            $message,
+        );
     }
 
     private function followUpConfidence(
@@ -495,12 +539,12 @@ class AiHelperKnowledgeQueryAnalyzer
     private function operationKeys(string $message): array
     {
         $patterns = [
-            'view' => '/\b(?:view|find|search|read|check status|lihat|cari|semak|papar)\b/u',
+            'view' => '/\b(?:view|find|search|read|check status|where is|where can i find|what is my|lihat|cari|semak|papar|di mana|kat mana)\b/u',
             'create' => '/\b(?:create|add|new|register|record|apply|buat|tambah|baharu|daftar|rekod|mohon)\b/u',
             'inspect' => '/\b(?:inspect|inspection|checklist|check|conduct|pemeriksaan|periksa)\b/u',
             'maintain' => '/\b(?:maintain|maintenance|service|servicing|lifecycle|selenggara|penyelenggaraan|servis)\b/u',
             'submit' => '/\b(?:submit|send|hantar)\b/u',
-            'approve' => '/\b(?:approve|review|verify|reject|lulus|semak|sahkan|tolak)\b/u',
+            'approve' => '/\b(?:approve|approved|approval|review|reviewed|verify|verified|reject|rejected|lulus|diluluskan|semak|sahkan|disahkan|tolak|ditolak)\b/u',
             'configure' => '/\b(?:configure|setting|settings|enable|disable|tetapan|konfigurasi|aktifkan|nyahaktif)\b/u',
             'troubleshoot' => '/\b(?:error|problem|failed|cannot|can\x{2019}t|stuck|ralat|masalah|gagal|tak boleh|tersangkut)\b/u',
             'list' => '/\b(?:list|how many|count|senarai|berapa)\b/u',

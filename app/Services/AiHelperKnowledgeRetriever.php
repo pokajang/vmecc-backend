@@ -55,9 +55,9 @@ class AiHelperKnowledgeRetriever
                 'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
             ]];
         }
-        if ($analysis['intent'] === 'casual') {
+        if (! ($analysis['evidence_required'] ?? true)) {
             return ['analysis' => $analysis, 'guidance' => [], 'trace' => [
-                'mode' => 'casual',
+                'mode' => (string) ($analysis['answer_mode'] ?? 'general_conversation'),
                 'documents_considered' => 0,
                 'documents_selected' => 0,
                 'chunks_selected' => 0,

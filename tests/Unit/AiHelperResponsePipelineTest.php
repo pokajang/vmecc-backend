@@ -312,7 +312,8 @@ class AiHelperResponsePipelineTest extends TestCase
         $this->assertSame('AI_HELPER_NO_AUTHORIZED_EVIDENCE', $result['outcome_code']);
         $this->assertSame('retrieve_more_evidence', $result['recovery_action']);
         $this->assertSame('rejected', $result['verification']['status']);
-        $this->assertStringContainsString('within your current VMECC access', $result['content']);
+        $this->assertStringContainsString('enough reference information', $result['content']);
+        $this->assertStringNotContainsString('authorised evidence', $result['content']);
     }
 
     public function test_it_returns_a_direct_approved_extract_when_generation_is_temporarily_unavailable(): void
@@ -533,6 +534,41 @@ class AiHelperResponsePipelineTest extends TestCase
         $this->assertSame('AI_HELPER_LOW_CONFIDENCE', $result['outcome_code']);
         $this->assertStringNotContainsString('Confidence:', $result['content']);
         $this->assertStringNotContainsString('module/page involved', $result['content']);
-        $this->assertStringContainsString('task you want to complete', $result['content']);
+        $this->assertStringContainsString('specific task or detail', $result['content']);
+    }
+
+    public function test_general_conversation_provider_failure_uses_a_polite_nontechnical_fallback(): void
+    {
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('streamResponse')->once()->andThrow(new AiHelperProviderException(
+                'AI_HELPER_PROVIDER_TIMEOUT',
+                'Provider timeout.',
+                true,
+                stage: 'generation',
+            ));
+        });
+
+        $result = app(AiHelperResponsePipeline::class)->respond(
+            'saya rasa kurang sihat hari ini',
+            'Reply naturally.',
+            [['role' => 'user', 'content' => 'saya rasa kurang sihat hari ini']],
+            [],
+            [],
+            null,
+            'bm',
+            fn () => null,
+            fn () => null,
+            null,
+            false,
+            null,
+            ['answer_mode' => 'general_conversation'],
+            ['mode' => 'general_conversation', 'chunks_selected' => 0],
+        );
+
+        $this->assertSame('AI_HELPER_PROVIDER_TIMEOUT', $result['outcome_code']);
+        $this->assertSame([], $result['sources']);
+        $this->assertStringContainsString('Sila cuba lagi sebentar', $result['content']);
+        $this->assertStringNotContainsString('provider', $result['content']);
+        $this->assertStringNotContainsString('VMECC knowledge', $result['content']);
     }
 }

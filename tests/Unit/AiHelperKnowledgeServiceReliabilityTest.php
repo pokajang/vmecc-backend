@@ -40,7 +40,7 @@ class AiHelperKnowledgeServiceReliabilityTest extends TestCase
             'retrieval' => ['mode' => 'blocked_sensitive'],
         ], 'en');
 
-        $this->assertStringContainsString('Jawapan tidak ditemui', $missing);
+        $this->assertStringContainsString('belum mempunyai rujukan yang mencukupi', $missing);
         $this->assertStringContainsString('Credential information', $credential);
     }
 
@@ -56,7 +56,34 @@ class AiHelperKnowledgeServiceReliabilityTest extends TestCase
             'retrieval' => ['mode' => 'hybrid'],
         ], 'en');
 
-        $this->assertStringContainsString('within your current VMECC access', $response);
+        $this->assertStringContainsString('menu, page, or action', $response);
+        $this->assertStringNotContainsString('current VMECC access', $response);
+    }
+
+    public function test_general_conversation_uses_a_compact_human_prompt_and_no_knowledge_fallback(): void
+    {
+        $service = app(AiHelperKnowledgeService::class);
+        $context = [
+            'page' => ['route_key' => 'dashboard', 'route_name' => 'Dashboard'],
+            'guidance' => [],
+            'query_analysis' => [
+                'intent' => 'knowledge_question',
+                'answer_mode' => 'general_conversation',
+                'evidence_required' => false,
+                'message' => 'saya rasa kurang sihat hari ini',
+            ],
+            'retrieval' => ['mode' => 'general_conversation'],
+        ];
+
+        $this->assertNull($service->deterministicResponseFor($context, 'auto'));
+
+        $instructions = $service->instructionsFor($context, 'bm');
+        $this->assertStringContainsString('considerate workplace assistant', $instructions);
+        $this->assertStringContainsString('do not diagnose', $instructions);
+        $this->assertStringContainsString('Never guarantee an outcome', $instructions);
+        $this->assertStringContainsString('Protect privacy', $instructions);
+        $this->assertStringNotContainsString('Available VMECC guidance', $instructions);
+        $this->assertStringNotContainsString('answer was not found', $instructions);
     }
 
     public function test_client_page_labels_are_replaced_with_trusted_route_catalogue_values(): void

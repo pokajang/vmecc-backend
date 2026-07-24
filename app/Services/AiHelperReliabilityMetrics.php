@@ -93,7 +93,11 @@ class AiHelperReliabilityMetrics
         $repaired = $count(fn (AiHelperRun $run) => $run->verification_status === 'verified'
             && (int) $run->verification_attempts > 1);
         $shadowFailures = $count(fn (AiHelperRun $run) => $run->verification_status === 'shadow_failed');
-        $casualAnswers = $count(fn (AiHelperRun $run) => $run->answer_mode === 'casual');
+        $generalConversationAnswers = $count(fn (AiHelperRun $run) => in_array(
+            $run->answer_mode,
+            ['casual', 'general_conversation'],
+            true,
+        ));
         $capabilityAnswers = $count(fn (AiHelperRun $run) => $run->answer_mode === 'product_capability');
         $navigationAnswers = $count(fn (AiHelperRun $run) => $run->answer_mode === 'product_navigation');
         $workflowAnswers = $count(fn (AiHelperRun $run) => $run->answer_mode === 'product_workflow');
@@ -124,7 +128,9 @@ class AiHelperReliabilityMetrics
             'semantic_fallbacks' => $semanticFallbacks,
             'rerank_fallbacks' => $rerankFallbacks,
             'grounding_shadow_failures' => $shadowFailures,
-            'casual_answers' => $casualAnswers,
+            // Keep the legacy key for existing diagnostics consumers.
+            'casual_answers' => $generalConversationAnswers,
+            'general_conversation_answers' => $generalConversationAnswers,
             'product_capability_answers' => $capabilityAnswers,
             'product_navigation_answers' => $navigationAnswers,
             'product_workflow_answers' => $workflowAnswers,
@@ -216,6 +222,7 @@ class AiHelperReliabilityMetrics
                 'verification.grounding_verification.would_pass',
             ) === false),
             'casual_answers' => 0,
+            'general_conversation_answers' => 0,
             'product_capability_answers' => 0,
             'product_navigation_answers' => 0,
             'product_workflow_answers' => 0,
@@ -274,6 +281,7 @@ class AiHelperReliabilityMetrics
             'rerank_fallbacks' => 0,
             'grounding_shadow_failures' => 0,
             'casual_answers' => 0,
+            'general_conversation_answers' => 0,
             'product_capability_answers' => 0,
             'product_navigation_answers' => 0,
             'product_workflow_answers' => 0,

@@ -16,7 +16,7 @@ class AiHelperReliabilityMetricsTest extends TestCase
     {
         $runs = collect([
             $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_VERIFIED', 'verified', 100, [
-                'answer_mode' => 'casual',
+                'answer_mode' => 'general_conversation',
                 'provider_calls' => 2,
                 'input_tokens' => 100,
                 'output_tokens' => 10,
@@ -71,6 +71,7 @@ class AiHelperReliabilityMetricsTest extends TestCase
         $this->assertSame(1, $metrics['rerank_fallbacks']);
         $this->assertSame(1, $metrics['grounding_shadow_failures']);
         $this->assertSame(1, $metrics['casual_answers']);
+        $this->assertSame(1, $metrics['general_conversation_answers']);
         $this->assertSame(1, $metrics['product_capability_answers']);
         $this->assertSame(1, $metrics['product_navigation_answers']);
         $this->assertSame(1, $metrics['product_workflow_answers']);

@@ -374,6 +374,58 @@ class AiHelperRetrievalV4Test extends TestCase
         $this->assertSame('not_required', $message->retrieval_metadata['verification']['status']);
     }
 
+    public function test_daily_conversation_uses_the_model_without_knowledge_retrieval(): void
+    {
+        config([
+            'ai_helper.enabled' => true,
+            'ai_helper.api_key' => 'test-key',
+            'ai_helper.knowledge_strict_readiness' => false,
+        ]);
+        $this->actingAs($this->userWithPermissions(['self.dashboard']));
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('isAvailable')->andReturnTrue();
+            $mock->shouldReceive('streamResponse')->once()->withArgs(function ($instructions, $input) {
+                $this->assertStringContainsString('do not diagnose', $instructions);
+                $this->assertStringContainsString('informing a supervisor', $instructions);
+                $this->assertStringNotContainsString('Available VMECC guidance', $instructions);
+                $this->assertSame('saya rasa kurang sihat hari ini', data_get($input, '0.content'));
+
+                return true;
+            })->andReturnUsing(function ($instructions, $input, $onDelta) {
+                $onDelta('Maaf anda kurang sihat. Pertimbangkan untuk berehat, maklumkan penyelia jika kerja terjejas, dan dapatkan nasihat profesional kesihatan jika perlu.');
+
+                return ['response_id' => 'general-conversation-stream'];
+            });
+            $mock->shouldNotReceive('structuredResponse');
+        });
+
+        $content = $this->postJson('/api/ai-helper/messages/stream', [
+            'message' => 'saya rasa kurang sihat hari ini',
+            'page_context' => ['path' => '/dashboard'],
+            'response_language' => 'bm',
+            'new_thread' => true,
+        ])->assertOk()->streamedContent();
+
+        $this->assertStringContainsString('Maaf anda kurang sihat', $content);
+        $this->assertStringContainsString('Preparing a response...', $content);
+        $this->assertStringNotContainsString('selected knowledge', $content);
+        $this->assertStringNotContainsString('pengetahuan VMECC', $content);
+        $this->assertStringNotContainsString('Confidence:', $content);
+
+        $message = AiHelperMessage::query()
+            ->where('role', AiHelperMessage::ROLE_ASSISTANT)
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame([], $message->sources);
+        $this->assertSame('general_conversation', $message->retrieval_metadata['mode']);
+        $this->assertSame('not_required', $message->retrieval_metadata['verification']['status']);
+
+        $run = AiHelperRun::query()->latest('id')->firstOrFail();
+        $this->assertSame('general_conversation', $run->answer_mode);
+        $this->assertSame(0, $run->candidate_documents);
+        $this->assertSame(0, $run->candidate_chunks);
+    }
+
     public function test_english_typo_and_compatible_follow_up_keep_the_fire_inspection_task(): void
     {
         $user = $this->userWithPermissions([

@@ -8,6 +8,7 @@ final class AiHelperResponseResultFactory
         private readonly AiHelperCitationValidator $citationValidator,
         private readonly AiHelperCriticalFactValidator $criticalFactValidator,
         private readonly AiHelperExtractiveAnswerRenderer $extractiveRenderer,
+        private readonly AiHelperUserFacingFallbacks $fallbacks,
     ) {}
 
     /** @return array<string, mixed> */
@@ -99,6 +100,45 @@ final class AiHelperResponseResultFactory
                 'citation_validation' => ['valid' => true, 'status' => 'not_required'],
                 'critical_fact_validation' => ['valid' => true, 'status' => 'not_required', 'failures' => []],
                 'grounding_verification' => ['valid' => true, 'status' => 'not_required', 'failures' => []],
+            ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    public function conversationalUnavailable(
+        AiHelperProviderException $failure,
+        string $responseLanguage,
+        int $attempt,
+        array $responseIds,
+        array $providerRequestIds,
+        array $usage,
+        int $generationDuration,
+        float $pipelineStartedAt,
+    ): array {
+        if ($failure->providerRequestId !== null) {
+            $providerRequestIds[] = $failure->providerRequestId;
+        }
+
+        return [
+            'content' => $this->fallbacks->providerUnavailable($responseLanguage),
+            'sources' => [],
+            'response_id' => $responseIds === [] ? null : end($responseIds),
+            'provider_response_ids' => array_values(array_unique($responseIds)),
+            'provider_request_ids' => array_values(array_unique($providerRequestIds)),
+            'usage' => $usage,
+            'outcome_code' => $failure->failureCode,
+            'recovery_action' => $failure->retryable ? 'retry_provider' : null,
+            'timings_ms' => $this->timings($generationDuration, 0, $pipelineStartedAt),
+            'verification' => [
+                'status' => 'provider_unavailable',
+                'attempts' => $attempt,
+                'citation_validation' => ['valid' => true, 'status' => 'not_required'],
+                'critical_fact_validation' => ['valid' => true, 'status' => 'not_required', 'failures' => []],
+                'grounding_verification' => [
+                    'valid' => false,
+                    'status' => 'provider_unavailable',
+                    'failures' => [$failure->context()],
+                ],
             ],
         ];
     }
@@ -246,9 +286,7 @@ final class AiHelperResponseResultFactory
     ): array {
         $rejection = $this->citationValidator->enforce('', $sources, $responseLanguage);
         $content = $outcomeCode === 'AI_HELPER_NO_AUTHORIZED_EVIDENCE'
-            ? ($responseLanguage === 'bm'
-                ? 'Tiada arahan diluluskan yang berkaitan tersedia untuk permintaan ini dalam akses VMECC semasa anda. Jika tugas ini sebahagian daripada tanggungjawab anda, minta penyelia atau pentadbir menyemak akses anda.'
-                : 'No applicable approved instructions are available for this request within your current VMECC access. If this task is part of your responsibility, ask your supervisor or administrator to check your access.')
+            ? $this->fallbacks->missingKnowledge($responseLanguage)
             : $rejection['content'];
 
         return [
