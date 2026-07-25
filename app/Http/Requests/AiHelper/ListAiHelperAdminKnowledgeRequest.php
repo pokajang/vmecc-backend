@@ -2,7 +2,6 @@
 
 namespace App\Http\Requests\AiHelper;
 
-
 class ListAiHelperAdminKnowledgeRequest extends AiHelperRequest
 {
     public function rules(): array

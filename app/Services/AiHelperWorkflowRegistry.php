@@ -3,8 +3,10 @@
 namespace App\Services;
 
 use App\Services\AiHelperWorkflows\AdministrationWorkflows;
+use App\Services\AiHelperWorkflows\FinanceWorkflows;
 use App\Services\AiHelperWorkflows\InspectionWorkflows;
 use App\Services\AiHelperWorkflows\OperationsWorkflows;
+use App\Services\AiHelperWorkflows\ReportWorkflows;
 use App\Services\AiHelperWorkflows\SelfServiceWorkflows;
 
 final class AiHelperWorkflowRegistry
@@ -18,6 +20,8 @@ final class AiHelperWorkflowRegistry
             InspectionWorkflows::definitions(),
             SelfServiceWorkflows::definitions(),
             OperationsWorkflows::definitions(),
+            ReportWorkflows::definitions(),
+            FinanceWorkflows::definitions(),
             AdministrationWorkflows::definitions(),
         ))->map(fn (array $workflow) => ['fact_scope' => 'navigation', ...$workflow])->all();
     }

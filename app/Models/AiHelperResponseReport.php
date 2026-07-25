@@ -8,8 +8,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class AiHelperResponseReport extends Model
 {
     public const STATUS_NEW = 'new';
+
     public const STATUS_REVIEWING = 'reviewing';
+
     public const STATUS_RESOLVED = 'resolved';
+
     public const STATUS_DISMISSED = 'dismissed';
 
     public const STATUSES = [

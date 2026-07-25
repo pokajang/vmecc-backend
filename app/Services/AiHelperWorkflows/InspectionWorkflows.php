@@ -85,6 +85,25 @@ final class InspectionWorkflows
                 ],
                 'ui' => self::inspectionUi(),
             ],
+            [
+                'key' => 'inspection.workflow.configure',
+                'guide_key' => 'inspection-workflow-settings',
+                'task_keys' => ['inspection.workflow.configure'],
+                'entity_keys' => ['workflow_setting'],
+                'module' => 'Settings',
+                'action' => 'Configure Inspection Workflow',
+                'type' => 'Inspection Workflow Settings',
+                'source_labels' => ['Reporting Settings', 'Inspection Workflow Settings', 'Review', 'Fallback Review', 'Approve', 'Save'],
+                'steps' => [
+                    ['key' => 'open_reporting_settings', 'kind' => 'open_menu', 'target' => 'Reporting Settings'],
+                    ['key' => 'open_inspection', 'kind' => 'select', 'target' => 'Inspection'],
+                    ['key' => 'open_workflow_settings', 'kind' => 'select', 'target' => 'Inspection Workflow Settings'],
+                    ['key' => 'select_roles', 'kind' => 'complete', 'targets' => ['Review', 'Fallback Review', 'Approve']],
+                    ['key' => 'configure_safeguards', 'kind' => 'complete', 'targets' => ['Team-scoped AIC', 'Self-review and Self-approve Safeguards']],
+                    ['key' => 'save_and_verify', 'kind' => 'review', 'targets' => ['Save', 'Representative Submission']],
+                ],
+                'ui' => ['actions' => [], 'fields' => [], 'statuses' => []],
+            ],
         ];
     }
 

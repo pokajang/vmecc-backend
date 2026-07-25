@@ -30,7 +30,7 @@ class AiHelperTopicAliasRegistry
         'payroll' => ['payroll', 'payslip', 'pay slip', 'gaji', 'slip gaji'],
         'salary_claim' => ['salary claim', 'salary claims', 'tuntutan gaji', 'claim gaji'],
         'salary_assignment' => ['salary assignment', 'assign salary', 'tetapan gaji', 'gaji pekerja'],
-        'payment' => ['payment', 'mark paid', 'paid claim', 'bayaran', 'tanda dibayar'],
+        'payment' => ['payment', 'mark paid', 'marked as paid', 'unmark paid', 'unmark a paid', 'paid claim', 'claim as paid', 'bayaran', 'tanda dibayar'],
         'statutory_rate' => ['statutory rate', 'statutory deduction', 'epf', 'kwsp', 'socso', 'perkeso', 'eis', 'sip', 'pcb', 'caruman berkanun', 'potongan berkanun', 'cukai gaji'],
         'company_profile' => ['company profile', 'employer details', 'company details', 'profil syarikat', 'maklumat syarikat', 'maklumat majikan'],
         'roster' => ['roster', 'duty roster', 'jadual tugas', 'jadual kerja'],
@@ -45,7 +45,7 @@ class AiHelperTopicAliasRegistry
         'emergency_contact' => ['emergency contact', 'waris kecemasan', 'kontak kecemasan'],
         'message' => ['message', 'messages', 'inbox', 'mesej', 'peti masuk'],
         'report' => ['report', 'reports', 'laporan'],
-        'report_management' => ['report management', 'manage reports', 'approve report', 'urus laporan', 'pengurusan laporan', 'luluskan laporan'],
+        'report_management' => ['report management', 'manage reports', 'review report', 'approve report', 'submitted report', 'urus laporan', 'pengurusan laporan', 'semak laporan', 'luluskan laporan', 'laporan dihantar'],
         'erco' => ['erco', 'emergency response report', 'laporan tindak balas kecemasan'],
         'drill' => ['drill report', 'exercise report', 'laporan latihan', 'latihan kecemasan'],
         'fitness' => ['fitness report', 'fitness test', 'ujian kecergasan', 'laporan kecergasan'],
@@ -55,7 +55,7 @@ class AiHelperTopicAliasRegistry
         'notification' => ['notification', 'notifications', 'pemberitahuan', 'notifikasi'],
         'dashboard' => ['dashboard', 'home page', 'papan pemuka', 'halaman utama'],
         'dashboard_visibility' => ['dashboard visibility', 'dashboard access', 'visible dashboard', 'keterlihatan papan pemuka', 'akses papan pemuka', 'paparan papan pemuka'],
-        'module_activation' => ['module activation', 'activate module', 'enable module', 'disable module', 'pengaktifan modul', 'aktifkan modul', 'nyahaktif modul'],
+        'module_activation' => ['module activation', 'activate module', 'activate a module', 'enable module', 'enable a module', 'disable module', 'disable a module', 'pengaktifan modul', 'aktifkan modul', 'aktifkan sesuatu modul', 'nyahaktif modul'],
         'system_maintenance' => ['system maintenance', 'maintenance mode', 'penyelenggaraan sistem'],
         'audit_log' => ['audit log', 'audit logs', 'activity log', 'log audit', 'rekod aktiviti'],
         'ask_ai' => ['ask ai', 'ai helper', 'pembantu ai'],
@@ -87,6 +87,12 @@ class AiHelperTopicAliasRegistry
             'menu sistem',
         ],
     ];
+
+    /** @return array<int, string> */
+    public function keys(): array
+    {
+        return array_keys(self::TOPICS);
+    }
 
     /** @return array<int, string> */
     public function topicKeys(string $value): array

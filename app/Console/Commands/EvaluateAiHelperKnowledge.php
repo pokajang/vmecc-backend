@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\AiHelperKnowledgeEntry;
+use App\Services\AiHelperAnswerQualityAuditService;
 use App\Services\AiHelperKnowledgeService;
 use App\Services\AiHelperOpenAiService;
 use App\Services\AiHelperResponsePipeline;
@@ -15,7 +16,7 @@ class EvaluateAiHelperKnowledge extends Command
 {
     protected $signature = 'ai-helper:evaluate-knowledge
         {--live : Ask the configured response model and grade its answers}
-        {--suite=core : Evaluation suite: core, coverage, or all}
+        {--suite=core : Evaluation suite: core, coverage, answer-quality, or all}
         {--case=* : Run only the specified case IDs}
         {--json : Emit machine-readable JSON}';
 
@@ -25,6 +26,7 @@ class EvaluateAiHelperKnowledge extends Command
         private readonly AiHelperKnowledgeService $knowledge,
         private readonly AiHelperOpenAiService $openAi,
         private readonly AiHelperResponsePipeline $responsePipeline,
+        private readonly AiHelperAnswerQualityAuditService $answerQuality,
     ) {
         parent::__construct();
     }
@@ -32,13 +34,16 @@ class EvaluateAiHelperKnowledge extends Command
     public function handle(): int
     {
         $live = (bool) $this->option('live');
-        if ($live && ! $this->openAi->isAvailable()) {
-            throw new RuntimeException('The live evaluator requires a configured AI helper provider.');
-        }
         $selectedIds = collect($this->option('case'))->filter()->values();
         $suite = strtolower(trim((string) $this->option('suite')));
-        if (! in_array($suite, ['core', 'coverage', 'all'], true)) {
-            throw new RuntimeException('Evaluation suite must be core, coverage, or all.');
+        if (! in_array($suite, ['core', 'coverage', 'answer-quality', 'all'], true)) {
+            throw new RuntimeException('Evaluation suite must be core, coverage, answer-quality, or all.');
+        }
+        if ($suite === 'answer-quality') {
+            return $this->renderAnswerQualityAudit($selectedIds->all());
+        }
+        if ($live && ! $this->openAi->isAvailable()) {
+            throw new RuntimeException('The live evaluator requires a configured AI helper provider.');
         }
         $cases = collect(AiHelperKnowledgeEvaluationCases::all())
             ->when($suite !== 'all', fn ($items) => $items->filter(
@@ -54,15 +59,19 @@ class EvaluateAiHelperKnowledge extends Command
         $retrievalPassed = collect($results)->where('retrieval_passed', true)->count();
         $livePassed = $live ? collect($results)->where('answer_passed', true)->count() : null;
         $documentRecallValues = collect($results)->pluck('document_recall')->filter(fn ($value) => $value !== null);
+        $answerQualityAudit = $suite === 'all' ? $this->answerQuality->audit() : null;
         $payload = [
             'mode' => $live ? 'retrieval_and_live_answer' : 'retrieval',
             'cases' => count($results),
             'retrieval_passed' => $retrievalPassed,
             'answer_passed' => $livePassed,
+            'answer_quality' => $answerQualityAudit,
             'document_recall' => $documentRecallValues->isEmpty()
                 ? null
                 : round((float) $documentRecallValues->average(), 4),
-            'passed' => $retrievalPassed === count($results) && (! $live || $livePassed === count($results)),
+            'passed' => $retrievalPassed === count($results)
+                && (! $live || $livePassed === count($results))
+                && ($answerQualityAudit === null || $answerQualityAudit['ready']),
             'results' => $results,
         ];
 
@@ -91,9 +100,39 @@ class EvaluateAiHelperKnowledge extends Command
                     ]);
                 })->all(),
             );
+            if ($answerQualityAudit !== null) {
+                $this->components->twoColumnDetail(
+                    'Deterministic answer quality',
+                    $answerQualityAudit['ready'] ? '<fg=green>PASS</>' : '<fg=red>FAIL</>',
+                );
+            }
         }
 
         return $payload['passed'] ? self::SUCCESS : self::FAILURE;
+    }
+
+    /** @param array<int, string> $selectedIds */
+    private function renderAnswerQualityAudit(array $selectedIds): int
+    {
+        $audit = $this->answerQuality->audit($selectedIds);
+        $payload = [
+            'mode' => 'deterministic_answer_quality',
+            'suite' => 'answer-quality',
+            'passed' => $audit['ready'],
+            ...$audit,
+        ];
+
+        if ($this->option('json')) {
+            $this->line((string) json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        } else {
+            $this->components->twoColumnDetail('Answer-quality suite', $audit['ready'] ? '<fg=green>PASS</>' : '<fg=red>FAIL</>');
+            $this->components->twoColumnDetail('Cases', $audit['cases']['passed'].' / '.$audit['cases']['total']);
+            if ($audit['scope'] === 'full') {
+                $this->components->twoColumnDetail('Workflows', $audit['workflows']['covered'].' / '.$audit['workflows']['registry']);
+            }
+        }
+
+        return $audit['ready'] ? self::SUCCESS : self::FAILURE;
     }
 
     /** @return array<string, mixed> */

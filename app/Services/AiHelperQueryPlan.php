@@ -46,6 +46,9 @@ final readonly class AiHelperQueryPlan
         public string $answerMode,
         public array $entityKeys,
         public bool $evidenceRequired,
+        public bool $clarificationRequired,
+        public ?string $clarificationReason,
+        public array $clarificationOptionKeys,
     ) {}
 
     /** @return array<string, mixed> */
@@ -82,6 +85,9 @@ final readonly class AiHelperQueryPlan
             'answer_mode' => $this->answerMode,
             'entity_keys' => $this->entityKeys,
             'evidence_required' => $this->evidenceRequired,
+            'clarification_required' => $this->clarificationRequired,
+            'clarification_reason' => $this->clarificationReason,
+            'clarification_option_keys' => $this->clarificationOptionKeys,
         ];
     }
 }

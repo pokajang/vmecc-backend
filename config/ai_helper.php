@@ -30,8 +30,10 @@ return [
     'embedded_task_max_message_length' => 12000,
     'history_turns' => 12,
     'history_max_characters' => 12000,
-    'rate_limit_per_minute' => 4,
-    'rate_limit_per_hour' => 30,
+    // Version-controlled MVP policy: allow conversational bursts while the
+    // concurrency guard still permits only one active generation per user.
+    'rate_limit_per_minute' => 8,
+    'rate_limit_per_hour' => 60,
     'ip_rate_limit_per_minute' => 12,
     'max_concurrent_per_user' => 1,
     'max_concurrent_global' => 3,

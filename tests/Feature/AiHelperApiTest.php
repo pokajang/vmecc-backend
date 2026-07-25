@@ -62,6 +62,26 @@ class AiHelperApiTest extends TestCase
             ->assertJsonStructure(['request_id']);
     }
 
+    public function test_stream_allows_eight_generation_attempts_per_user_before_rate_limiting(): void
+    {
+        config(['ai_helper.enabled' => false, 'ai_helper.api_key' => null]);
+        $this->assertSame(60, config('ai_helper.rate_limit_per_hour'));
+        $this->actingAs(User::factory()->create(['status' => 'active']));
+
+        for ($attempt = 1; $attempt <= 8; $attempt++) {
+            $this->postJson('/api/ai-helper/messages/stream', [
+                'message' => "Rate-limit probe {$attempt}",
+            ])->assertStatus(503);
+        }
+
+        $this->postJson('/api/ai-helper/messages/stream', [
+            'message' => 'Rate-limit probe 9',
+        ])
+            ->assertStatus(429)
+            ->assertJsonPath('code', 'AI_HELPER_RATE_LIMITED')
+            ->assertJsonPath('retry_after', fn ($seconds) => is_int($seconds) && $seconds > 0);
+    }
+
     public function test_general_conversation_remains_available_while_the_knowledge_corpus_is_not_ready(): void
     {
         config([

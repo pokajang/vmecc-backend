@@ -4,16 +4,19 @@ namespace App\Services;
 
 final class AiHelperWorkflowRenderer
 {
+    public function __construct(private readonly AiHelperWorkflowStatePolicy $statePolicy) {}
+
     public function render(array $workflow, bool $malay, array $uiState = []): string
     {
-        $steps = collect($workflow['steps'] ?? [])->values()->map(
+        $steps = collect($this->statePolicy->stepsFor($workflow, $uiState))->values()->map(
             fn (array $step, int $index): string => ($index + 1).'. '.$this->renderStep($step, $malay),
         );
         $type = $this->localizedTitle($workflow, $malay);
         $intro = $malay
             ? "Untuk **{$type}**, ikut langkah berikut:"
             : "To complete **{$type}**, follow these steps:";
-        $next = $this->nextStep($workflow, $uiState, $malay);
+        $next = $this->statePolicy->stateMessage($workflow, $uiState, $malay)
+            ?? $this->nextStep($workflow, $uiState, $malay);
         $closing = $next ?? ($malay
             ? 'Pilihan yang dipaparkan bergantung pada akses dan keadaan rekod anda.'
             : 'The options shown depend on your access and the current record state.');
@@ -115,6 +118,12 @@ final class AiHelperWorkflowRenderer
             'roster.manage' => 'membuat dan menerbitkan roster',
             'teams.manage' => 'membuat atau mengurus pasukan',
             'reports.navigate' => 'membuka atau membuat laporan',
+            'reports.erco.manage' => 'membuat atau mengurus laporan ERCO',
+            'reports.drill.manage' => 'membuat atau mengurus laporan latihan',
+            'reports.fitness.manage' => 'membuat atau mengurus laporan ujian kecergasan',
+            'reports.review' => 'menyemak atau meluluskan laporan',
+            'payroll.payment.manage' => 'merekod atau membatalkan bayaran tuntutan',
+            'inspection.workflow.configure' => 'mengkonfigurasi aliran kerja pemeriksaan',
             'users.manage' => 'mengurus akaun pengguna',
             'roles.permissions.manage' => 'mengurus kebenaran peranan',
             'settings.module_activation' => 'mengurus pengaktifan modul',

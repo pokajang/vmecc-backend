@@ -41,6 +41,9 @@ class AiHelperReliabilityMetrics
                 'duration_ms',
                 'answer_mode',
                 'workflow_key',
+                'clarification_required',
+                'input_decision',
+                'input_semantic_fallback',
             ]);
     }
 
@@ -64,6 +67,9 @@ class AiHelperReliabilityMetrics
                 'duration_ms',
                 'answer_mode',
                 'workflow_key',
+                'clarification_required',
+                'input_decision',
+                'input_semantic_fallback',
             ]);
     }
 
@@ -103,6 +109,16 @@ class AiHelperReliabilityMetrics
         $workflowAnswers = $count(fn (AiHelperRun $run) => $run->answer_mode === 'product_workflow');
         $operationalAnswers = $count(fn (AiHelperRun $run) => $run->answer_mode === 'operational_knowledge');
         $deterministicWorkflows = $count(fn (AiHelperRun $run) => filled($run->workflow_key));
+        $clarifications = $count(fn (AiHelperRun $run) => (bool) $run->clarification_required);
+        $inputAllowed = $count(fn (AiHelperRun $run) => $run->input_decision === 'allow');
+        $inputClarified = $count(fn (AiHelperRun $run) => $run->input_decision === 'clarify');
+        $inputRephrased = $count(fn (AiHelperRun $run) => $run->input_decision === 'rephrase');
+        $inputPolicyRefusals = $count(fn (AiHelperRun $run) => in_array(
+            $run->input_decision,
+            ['refuse_sensitive', 'refuse_exfiltration'],
+            true,
+        ));
+        $inputSemanticFallbacks = $count(fn (AiHelperRun $run) => (bool) $run->input_semantic_fallback);
         $durations = $runs
             ->map(fn (AiHelperRun $run) => (int) $run->duration_ms)
             ->filter(fn (int $duration) => $duration > 0)
@@ -136,6 +152,13 @@ class AiHelperReliabilityMetrics
             'product_workflow_answers' => $workflowAnswers,
             'operational_knowledge_answers' => $operationalAnswers,
             'deterministic_workflow_answers' => $deterministicWorkflows,
+            'clarification_answers' => $clarifications,
+            'clarification_rate' => $this->rate($clarifications, $completed),
+            'input_allowed' => $inputAllowed,
+            'input_clarified' => $inputClarified,
+            'input_rephrased' => $inputRephrased,
+            'input_policy_refusals' => $inputPolicyRefusals,
+            'input_semantic_fallbacks' => $inputSemanticFallbacks,
             'verification_pass_rate' => $this->rate($verified, $completed),
             'completion_rate' => $this->rate($completed, $total),
             'failure_rate' => $this->rate($failed, $total),
@@ -228,6 +251,13 @@ class AiHelperReliabilityMetrics
             'product_workflow_answers' => 0,
             'operational_knowledge_answers' => 0,
             'deterministic_workflow_answers' => 0,
+            'clarification_answers' => 0,
+            'clarification_rate' => $this->rate(0, $total),
+            'input_allowed' => 0,
+            'input_clarified' => 0,
+            'input_rephrased' => 0,
+            'input_policy_refusals' => 0,
+            'input_semantic_fallbacks' => 0,
             'verification_pass_rate' => $this->rate($verified, $total),
             'completion_rate' => $this->rate($total, $total),
             'failure_rate' => $this->rate(0, $total),
@@ -287,6 +317,13 @@ class AiHelperReliabilityMetrics
             'product_workflow_answers' => 0,
             'operational_knowledge_answers' => 0,
             'deterministic_workflow_answers' => 0,
+            'clarification_answers' => 0,
+            'clarification_rate' => null,
+            'input_allowed' => 0,
+            'input_clarified' => 0,
+            'input_rephrased' => 0,
+            'input_policy_refusals' => 0,
+            'input_semantic_fallbacks' => 0,
             'verification_pass_rate' => null,
             'completion_rate' => null,
             'failure_rate' => null,

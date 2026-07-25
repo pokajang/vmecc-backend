@@ -45,6 +45,43 @@ class AiHelperWorkflowRegistryTest extends TestCase
         $this->assertSame([], $candidates);
     }
 
+    public function test_specific_report_workflow_wins_and_generic_navigation_remains_available(): void
+    {
+        $registry = app(AiHelperWorkflowRegistry::class);
+
+        $erco = $registry->candidatesFor([
+            'task_keys' => ['reports.erco.manage'],
+            'entity_keys' => ['erco'],
+        ]);
+        $generic = $registry->candidatesFor([
+            'task_keys' => ['reports.navigate'],
+            'entity_keys' => [],
+        ]);
+
+        $this->assertSame('reports.erco.manage', $erco[0]['key']);
+        $this->assertSame('erco-reports', $erco[0]['guide_key']);
+        $this->assertSame('reports.navigate', $generic[0]['key']);
+    }
+
+    public function test_payment_and_inspection_settings_use_their_own_workflows(): void
+    {
+        $registry = app(AiHelperWorkflowRegistry::class);
+
+        $payment = $registry->candidatesFor([
+            'task_keys' => ['payroll.payment.manage'],
+            'entity_keys' => ['payment'],
+        ]);
+        $inspectionSettings = $registry->candidatesFor([
+            'task_keys' => ['inspection.workflow.configure'],
+            'entity_keys' => ['workflow_setting'],
+        ]);
+
+        $this->assertSame('payroll.payment.manage', $payment[0]['key']);
+        $this->assertSame('payment-actions', $payment[0]['guide_key']);
+        $this->assertSame('inspection.workflow.configure', $inspectionSettings[0]['key']);
+        $this->assertSame('inspection-workflow-settings', $inspectionSettings[0]['guide_key']);
+    }
+
     public function test_fire_extinguisher_workflow_explains_area_and_serial_number_as_alternatives(): void
     {
         $workflow = app(AiHelperWorkflowRegistry::class)->candidatesFor([
@@ -76,5 +113,36 @@ class AiHelperWorkflowRegistryTest extends TestCase
         $this->assertStringContainsString('This record is **Submitted**.', $answer);
         $this->assertStringNotContainsString('Next, complete', $answer);
         $this->assertStringNotContainsString('next available action', $answer);
+    }
+
+    public function test_submitted_report_state_omits_authoring_and_submission_steps(): void
+    {
+        $workflow = app(AiHelperWorkflowRegistry::class)->candidatesFor([
+            'task_keys' => ['reports.erco.manage'],
+            'entity_keys' => ['erco'],
+        ])[0];
+
+        $answer = app(AiHelperWorkflowRenderer::class)->render($workflow, false, [
+            'record_status' => 'Submitted',
+        ]);
+
+        $this->assertStringContainsString('Select **Existing Record**.', $answer);
+        $this->assertStringNotContainsString('Complete **ERCO Form**', $answer);
+        $this->assertStringNotContainsString('use **Save Draft** and **Submit**', $answer);
+    }
+
+    public function test_report_download_opens_an_existing_record_not_a_draft(): void
+    {
+        $workflow = app(AiHelperWorkflowRegistry::class)->candidatesFor([
+            'task_keys' => ['reports.erco.manage'],
+            'entity_keys' => ['erco'],
+        ])[0];
+        $workflow['requested_operations'] = ['download'];
+
+        $answer = app(AiHelperWorkflowRenderer::class)->render($workflow, false);
+
+        $this->assertStringContainsString('Select **Existing Record**.', $answer);
+        $this->assertStringContainsString('Select **Download**.', $answer);
+        $this->assertStringNotContainsString('Existing Draft', $answer);
     }
 }

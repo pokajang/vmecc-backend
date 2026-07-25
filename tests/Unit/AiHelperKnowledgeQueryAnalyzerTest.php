@@ -211,6 +211,47 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
         $this->assertSame('operational_knowledge', $analyzer->analyze('What is the leave policy?')['answer_mode']);
     }
 
+    public function test_it_recognizes_bilingual_lifecycle_actions_without_losing_specific_report_tasks(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $ercoWrite = $analyzer->analyze('macam mana nak tulis report erco');
+        $ercoEdit = $analyzer->analyze('how can I revise an ERCO report');
+        $drillSubmit = $analyzer->analyze('how do I submit a drill report');
+        $reportReview = $analyzer->analyze('how do I review and approve a submitted report');
+
+        $this->assertContains('create', $ercoWrite['operation_keys']);
+        $this->assertSame(['reports.erco.manage'], $ercoWrite['task_keys']);
+        $this->assertContains('edit', $ercoEdit['operation_keys']);
+        $this->assertSame(['reports.erco.manage'], $ercoEdit['task_keys']);
+        $this->assertContains('submit', $drillSubmit['operation_keys']);
+        $this->assertSame(['reports.drill.manage'], $drillSubmit['task_keys']);
+        $this->assertContains('review', $reportReview['operation_keys']);
+        $this->assertContains('approve', $reportReview['operation_keys']);
+        $this->assertSame(['reports.review'], $reportReview['task_keys']);
+    }
+
+    public function test_it_recognizes_cancel_edit_and_contextual_configuration_actions(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $this->assertContains('cancel', $analyzer->analyze('How can I cancel my leave request?')['operation_keys']);
+        $this->assertContains('edit', $analyzer->analyze('Cara tukar kata laluan saya')['operation_keys']);
+        $this->assertContains('configure', $analyzer->analyze('Cara ubah dan simpan kebenaran akses peranan')['operation_keys']);
+        $this->assertSame(
+            ['settings.module_activation'],
+            $analyzer->analyze('How do I enable a module?')['task_keys'],
+        );
+        $this->assertSame(
+            ['payroll.payment.manage'],
+            $analyzer->analyze('How do I mark an approved salary claim as paid?')['task_keys'],
+        );
+        $this->assertSame(
+            ['inspection.workflow.configure'],
+            $analyzer->analyze('How do I configure inspection workflow settings?')['task_keys'],
+        );
+    }
+
     public function test_it_builds_a_bilingual_explicit_topic_plan(): void
     {
         $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze('Macam mana nak apply cuti?');
@@ -409,5 +450,27 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
             'knowledge_question',
             $analyzer->analyze('What extinguisher types can I inspect?')['intent'],
         );
+    }
+
+    public function test_it_requires_structured_clarification_for_ambiguous_or_unsafe_actions(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $missingType = $analyzer->analyze('How do I submit a report?');
+        $this->assertTrue($missingType['clarification_required']);
+        $this->assertSame('missing_report_type', $missingType['clarification_reason']);
+        $this->assertSame(['erco', 'drill', 'fitness', 'inspection'], $missingType['clarification_option_keys']);
+        $this->assertSame([], $missingType['task_keys']);
+
+        $ambiguousAction = $analyzer->analyze('How do I check a report?');
+        $this->assertSame('ambiguous_action', $ambiguousAction['clarification_reason']);
+        $this->assertSame(['view', 'review'], $ambiguousAction['clarification_option_keys']);
+
+        $missingRecord = $analyzer->analyze('How do I approve this?');
+        $this->assertSame('missing_record_context', $missingRecord['clarification_reason']);
+
+        $unsupported = $analyzer->analyze('How do I delete an approved ERCO report?');
+        $this->assertSame('unsupported_action', $unsupported['clarification_reason']);
+        $this->assertSame([], $unsupported['task_keys']);
     }
 }

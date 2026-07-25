@@ -48,9 +48,13 @@ class AiHelperKnowledgeQueryAnalyzer
             : $message;
         $normalizedQuery = $this->normalize($retrievalQuery);
         $topicKeys = $this->topics->topicKeys($normalizedQuery);
-        $operationKeys = $this->operationKeys($normalizedQuery);
+        $operationKeys = $this->operationKeys($normalizedQuery, $topicKeys);
         $intent = $this->intent($normalized);
         $taskKeys = $this->taskKeys($normalizedQuery, $topicKeys, $operationKeys, $intent);
+        $clarification = $this->clarification($normalizedQuery, $topicKeys, $operationKeys, $taskKeys);
+        if ($clarification !== null) {
+            $taskKeys = [];
+        }
         $entityKeys = $this->entityKeys($topicKeys);
         $sourceMode = $this->sourceMode($followUp ? $normalizedQuery : $normalized);
         if ($sourceMode === 'system'
@@ -73,6 +77,9 @@ class AiHelperKnowledgeQueryAnalyzer
             $sourceMode,
             $normalized,
         );
+        if ($clarification !== null) {
+            $answerMode = 'product_clarification';
+        }
         if ($this->isSensitiveRequest($normalized)) {
             $answerMode = 'sensitive';
         }
@@ -127,6 +134,9 @@ class AiHelperKnowledgeQueryAnalyzer
             answerMode: $answerMode,
             entityKeys: $entityKeys,
             evidenceRequired: $this->answerModes->evidenceRequired($answerMode),
+            clarificationRequired: $clarification !== null,
+            clarificationReason: $clarification['reason'] ?? null,
+            clarificationOptionKeys: $clarification['option_keys'] ?? [],
         );
 
         return $plan->toArray();
@@ -193,6 +203,12 @@ class AiHelperKnowledgeQueryAnalyzer
                 'scba_inspection',
                 'hydraulic_rescue_inspection',
                 'height_rescue',
+                'erco',
+                'drill',
+                'fitness',
+                'report_management',
+                'payment',
+                'workflow_setting',
             ])
             ->values()
             ->all();
@@ -281,7 +297,7 @@ class AiHelperKnowledgeQueryAnalyzer
     private function standaloneAnswerMode(string $message): string
     {
         $topicKeys = $this->topics->topicKeys($message);
-        $operationKeys = $this->operationKeys($message);
+        $operationKeys = $this->operationKeys($message, $topicKeys);
         $intent = $this->intent($message);
         $taskKeys = $this->taskKeys($message, $topicKeys, $operationKeys, $intent);
         $sourceMode = $this->sourceMode($message);
@@ -536,25 +552,50 @@ class AiHelperKnowledgeQueryAnalyzer
     }
 
     /** @return array<int, string> */
-    private function operationKeys(string $message): array
+    private function operationKeys(string $message, array $topicKeys): array
     {
         $patterns = [
             'view' => '/\b(?:view|find|search|read|check status|where is|where can i find|what is my|lihat|cari|semak|papar|di mana|kat mana)\b/u',
-            'create' => '/\b(?:create|add|new|register|record|apply|buat|tambah|baharu|daftar|rekod|mohon)\b/u',
+            'create' => '/\b(?:create|add|new|register|record|apply|write|prepare|fill in|start|buat|tambah|baharu|daftar|rekod|mohon|tulis|sediakan|isi|mula)\b/u',
+            'edit' => '/\b(?:edit|revise|update|amend|correct|change|kemas kini|semak semula|pinda|betulkan|ubah|tukar)\b/u',
             'inspect' => '/\b(?:inspect|inspection|checklist|check|conduct|pemeriksaan|periksa)\b/u',
             'maintain' => '/\b(?:maintain|maintenance|service|servicing|lifecycle|selenggara|penyelenggaraan|servis)\b/u',
-            'submit' => '/\b(?:submit|send|hantar)\b/u',
-            'approve' => '/\b(?:approve|approved|approval|review|reviewed|verify|verified|reject|rejected|lulus|diluluskan|semak|sahkan|disahkan|tolak|ditolak)\b/u',
-            'configure' => '/\b(?:configure|setting|settings|enable|disable|tetapan|konfigurasi|aktifkan|nyahaktif)\b/u',
+            'submit' => '/\b(?:submit|send for review|send|hantar|serah untuk semakan|serah)\b/u',
+            'cancel' => '/\b(?:cancel|withdraw|batal|tarik balik)\b/u',
+            'review' => '/\b(?:review|reviewed|assess|assessment|semak laporan|semakan|nilai|penilaian)\b/u',
+            'approve' => '/\b(?:approve|approved|approval|verify|verified|verification|lulus|luluskan|diluluskan|sahkan|disahkan|pengesahan)\b/u',
+            'reject' => '/\b(?:reject|rejected|return for correction|tolak|ditolak|kembalikan untuk pembetulan)\b/u',
+            'configure' => '/\b(?:configure|setting|settings|set up|enable|disable|tetapan|tetapkan|konfigurasi|aktifkan|nyahaktif)\b/u',
+            'download' => '/\b(?:download|export|muat turun|eksport)\b/u',
+            'pay' => '/\b(?:mark\b.{0,45}\bas paid|unmark(?: a)? paid|record payment|tanda\b.{0,35}\bdibayar|batalkan tanda dibayar|rekod bayaran)\b/u',
             'troubleshoot' => '/\b(?:error|problem|failed|cannot|can\x{2019}t|stuck|ralat|masalah|gagal|tak boleh|tersangkut)\b/u',
             'list' => '/\b(?:list|how many|count|senarai|berapa)\b/u',
         ];
 
-        return collect($patterns)
+        $operations = collect($patterns)
             ->filter(fn (string $pattern) => preg_match($pattern, $message) === 1)
             ->keys()
             ->values()
             ->all();
+
+        $configurationTopics = [
+            'role_permission',
+            'module_activation',
+            'dashboard_visibility',
+            'workflow_rule',
+            'workflow_setting',
+            'overtime_rate',
+            'statutory_rate',
+            'salary_assignment',
+            'company_profile',
+            'notification',
+        ];
+        if (array_intersect($topicKeys, $configurationTopics) !== []
+            && preg_match('/\b(?:edit|revise|update|amend|change|save|ubah|kemas kini|pinda|simpan|tetapkan|tukar)\b/u', $message) === 1) {
+            $operations[] = 'configure';
+        }
+
+        return array_values(array_unique($operations));
     }
 
     /**
@@ -570,6 +611,11 @@ class AiHelperKnowledgeQueryAnalyzer
     {
         if ($intent === 'capability_catalogue') {
             return ['inspection.types.list'];
+        }
+
+        if (in_array('workflow_setting', $topicKeys, true)
+            && in_array('configure', $operationKeys, true)) {
+            return ['inspection.workflow.configure'];
         }
 
         $inspectionDomain = array_intersect(
@@ -616,13 +662,85 @@ class AiHelperKnowledgeQueryAnalyzer
         return [];
     }
 
+    /**
+     * @param  array<int, string>  $topicKeys
+     * @param  array<int, string>  $operationKeys
+     * @param  array<int, string>  $taskKeys
+     * @return array{reason: string, option_keys: array<int, string>}|null
+     */
+    private function clarification(
+        string $message,
+        array $topicKeys,
+        array $operationKeys,
+        array $taskKeys,
+    ): ?array {
+        $hasTopic = fn (string $topic): bool => in_array($topic, $topicKeys, true);
+        $specificReport = array_intersect($topicKeys, [
+            'erco',
+            'drill',
+            'fitness',
+            'inspection',
+            'hse_inspection',
+            'fire_truck',
+            'extinguisher',
+            'scba_inspection',
+            'hydraulic_rescue_inspection',
+        ]) !== [];
+
+        if ($hasTopic('report')
+            && ! $specificReport
+            && array_intersect($operationKeys, ['edit', 'submit', 'download']) !== []) {
+            return [
+                'reason' => 'missing_report_type',
+                'option_keys' => ['erco', 'drill', 'fitness', 'inspection'],
+            ];
+        }
+
+        if (preg_match('/\b(?:semak|check)(?:\s+(?:a|the|this|that|satu))?\s+(?:report|laporan)\b/u', $message) === 1) {
+            return [
+                'reason' => 'ambiguous_action',
+                'option_keys' => ['view', 'review'],
+            ];
+        }
+
+        if ($topicKeys === []
+            && preg_match('/\b(?:approve|review|reject|edit|sahkan|luluskan|semak|tolak|kemas kini)\s+(?:this|it|ini)\b/u', $message) === 1) {
+            return [
+                'reason' => 'missing_record_context',
+                'option_keys' => [],
+            ];
+        }
+
+        if (($hasTopic('report') || $specificReport)
+            && preg_match('/\b(?:delete|remove|padam|hapus)\b/u', $message) === 1) {
+            return [
+                'reason' => 'unsupported_action',
+                'option_keys' => [],
+            ];
+        }
+
+        if (in_array('inspection.conduct', $taskKeys, true)
+            && in_array('inspection.physical.maintain', $taskKeys, true)) {
+            return [
+                'reason' => 'compound_request',
+                'option_keys' => ['inspection_workflow', 'physical_maintenance'],
+            ];
+        }
+
+        return null;
+    }
+
     /** @param array<int, string> $topicKeys @return array<int, string> */
     private function productTaskKeys(string $message, array $topicKeys): array
     {
         $hasTopic = fn (string $topic): bool => in_array($topic, $topicKeys, true);
 
+        if ($hasTopic('payment')
+            && preg_match('/\b(?:mark\b.{0,45}\bas paid|unmark(?: a)? paid|record payment|tanda\b.{0,35}\bdibayar|batalkan tanda dibayar|rekod bayaran)\b/u', $message) === 1) {
+            return ['payroll.payment.manage'];
+        }
         if (($hasTopic('leave') || $hasTopic('leave_entitlement'))
-            && preg_match('/\b(?:apply|mohon|submit|hantar|save draft|edit|cancel|batal|view balance|check balance|semak baki)\b/u', $message) === 1) {
+            && preg_match('/\b(?:apply|mohon|submit|hantar|save draft|edit|cancel|withdraw|batal|tarik balik|view balance|check balance|semak baki)\b/u', $message) === 1) {
             return ['leave.self_service'];
         }
         if ($hasTopic('overtime')
@@ -634,7 +752,7 @@ class AiHelperKnowledgeQueryAnalyzer
             return ['payroll.payslip.view'];
         }
         if ($hasTopic('salary_claim')
-            && preg_match('/\b(?:create|new|submit|save|edit|cancel|buat|baharu|hantar|simpan|kemas kini|batal|how|cara)\b/u', $message) === 1) {
+            && preg_match('/\b(?:create|new|submit|save|edit|cancel|buat|baharu|hantar|simpan|kemas kini|batal)\b/u', $message) === 1) {
             return ['payroll.claim.submit'];
         }
         if ($hasTopic('roster')
@@ -653,8 +771,21 @@ class AiHelperKnowledgeQueryAnalyzer
             && preg_match('/\b(?:edit|assign|change|save|manage|configure|kemas kini|tetapkan|ubah|simpan|urus|konfigurasi)\b/u', $message) === 1) {
             return ['roles.permissions.manage'];
         }
-        if ($hasTopic('report')
-            && preg_match('/\b(?:open|view|find|create|new report|buka|lihat|cari|buat|laporan baharu)\b/u', $message) === 1) {
+        $reportLifecycle = preg_match('/\b(?:open|view|find|create|write|prepare|edit|revise|update|submit|download|export|buka|lihat|cari|buat|tulis|sediakan|kemas kini|pinda|hantar|muat turun|laporan baharu)\b/u', $message) === 1;
+        $reportReview = preg_match('/\b(?:review|approve|verify|reject|return for correction|semak laporan|luluskan|sahkan|tolak|kembalikan)\b/u', $message) === 1;
+        if (($hasTopic('report_management') || ($hasTopic('report') && $reportReview))) {
+            return ['reports.review'];
+        }
+        if ($hasTopic('erco') && $reportLifecycle) {
+            return ['reports.erco.manage'];
+        }
+        if ($hasTopic('drill') && $reportLifecycle) {
+            return ['reports.drill.manage'];
+        }
+        if ($hasTopic('fitness') && $reportLifecycle) {
+            return ['reports.fitness.manage'];
+        }
+        if ($hasTopic('report') && $reportLifecycle) {
             return ['reports.navigate'];
         }
         if ($hasTopic('module_activation')

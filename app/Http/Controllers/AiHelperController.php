@@ -26,6 +26,10 @@ use App\Services\AiHelperConversationService;
 use App\Services\AiHelperDocumentQuotaService;
 use App\Services\AiHelperEmbeddedTaskService;
 use App\Services\AiHelperEmbeddingService;
+use App\Services\AiHelperInputAssessment;
+use App\Services\AiHelperInputQualityAssessor;
+use App\Services\AiHelperInputResponseService;
+use App\Services\AiHelperInputSemanticClassifier;
 use App\Services\AiHelperKnowledgeLifecycleService;
 use App\Services\AiHelperKnowledgeProcessingService;
 use App\Services\AiHelperKnowledgeQueryAnalyzer;
@@ -73,6 +77,9 @@ class AiHelperController extends Controller
         private readonly AiHelperConcurrencyGuard $concurrencyGuard,
         private readonly AiHelperRequestDeduplicator $requestDeduplicator,
         private readonly AiHelperSensitiveDataGuard $sensitiveDataGuard,
+        private readonly AiHelperInputQualityAssessor $inputQuality,
+        private readonly AiHelperInputSemanticClassifier $inputSemanticClassifier,
+        private readonly AiHelperInputResponseService $inputResponses,
         private readonly AiHelperResponsePipeline $responsePipeline,
         private readonly AiHelperReliabilityMetrics $reliabilityMetrics,
         private readonly AiHelperApiResponder $responder,
@@ -1068,24 +1075,21 @@ class AiHelperController extends Controller
         $requestId = $this->responder->requestId($request);
         $requestUuid = isset($validated['request_uuid']) ? (string) $validated['request_uuid'] : null;
 
-        if (! $this->openAi->isAvailable()) {
-            return $this->responder->error(
-                $request,
-                'Ask AI is not ready yet. Please contact an administrator.',
-                'AI_HELPER_UNAVAILABLE',
-                503,
-            );
-        }
-
         $actor = $request->user();
         $conversationPurpose = $this->normalizeConversationPurpose($validated['conversation_purpose'] ?? null);
         $embeddedTask = $conversationPurpose === self::CONVERSATION_PURPOSE_EMBEDDED_HELPER
             ? (trim((string) ($validated['embedded_task'] ?? '')) ?: null)
             : null;
         if ($this->sensitiveDataGuard->categories((string) $validated['message']) !== []) {
+            $assessment = $this->inputQuality->assess((string) $validated['message']);
+            $this->recordRejectedInputRun($actor, $requestUuid, $conversationPurpose, $assessment);
+
             return $this->responder->error(
                 $request,
-                'Remove passwords, tokens, identity numbers, or bank account values before sending this question.',
+                $this->inputResponses->message(
+                    $assessment,
+                    $this->inputResponseIsMalay($validated),
+                ),
                 'AI_HELPER_SENSITIVE_DATA_BLOCKED',
                 422,
             );
@@ -1102,6 +1106,12 @@ class AiHelperController extends Controller
         $previousUserMessages = [];
         $knowledgeRequired = false;
         $preflightAnalysis = [];
+        $deadline = AiHelperRequestDeadline::fromConfig();
+        $inputAssessment = new AiHelperInputAssessment(
+            AiHelperInputAssessment::ALLOW,
+            ['embedded_task'],
+            1.0,
+        );
         if ($embeddedTask === null) {
             try {
                 if ($conversationPurpose === self::CONVERSATION_PURPOSE_CHAT && ! (bool) ($validated['new_thread'] ?? false)) {
@@ -1111,6 +1121,50 @@ class AiHelperController extends Controller
                         : $this->latestRegularThreadForUser($actor->id);
                 }
                 $previousUserMessages = $this->conversation->recentUserMessages($retrievalThread);
+                $inputAssessment = $this->inputQuality->assess(
+                    (string) $validated['message'],
+                    $previousUserMessages,
+                );
+                if ($inputAssessment->decision === AiHelperInputAssessment::SEMANTIC_REVIEW) {
+                    $assessmentLease = $this->concurrencyGuard->acquire($actor->id);
+                    if (! $assessmentLease) {
+                        return $this->responder->error(
+                            $request,
+                            'Ask AI is busy. Wait briefly and try again.',
+                            'AI_HELPER_BUSY_RETRY',
+                            429,
+                            ['retry_after' => 5],
+                        );
+                    }
+                    try {
+                        $inputAssessment = $this->inputSemanticClassifier->classify(
+                            (string) $validated['message'],
+                            'vmecc-user-'.$actor->id,
+                            $deadline,
+                        );
+                    } finally {
+                        $assessmentLease->release();
+                    }
+                }
+                if ($this->inputDecisionStopsPipeline($inputAssessment)) {
+                    $this->recordRejectedInputRun(
+                        $actor,
+                        $requestUuid,
+                        $conversationPurpose,
+                        $inputAssessment,
+                        $deadline->providerCalls(),
+                    );
+
+                    return $this->responder->error(
+                        $request,
+                        $this->inputResponses->message(
+                            $inputAssessment,
+                            $this->inputResponseIsMalay($validated),
+                        ),
+                        $this->inputDecisionCode($inputAssessment),
+                        422,
+                    );
+                }
                 $preflightAnalysis = $this->queryAnalyzer->analyze(
                     (string) $validated['message'],
                     $previousUserMessages,
@@ -1119,6 +1173,14 @@ class AiHelperController extends Controller
             } catch (Throwable $e) {
                 return $this->safeFailure($request, $e, 'stream_preflight');
             }
+        }
+        if (! $this->openAi->isAvailable()) {
+            return $this->responder->error(
+                $request,
+                'Ask AI is not ready yet. Please contact an administrator.',
+                'AI_HELPER_UNAVAILABLE',
+                503,
+            );
         }
         $corpus = match (true) {
             $embeddedTask !== null => ['ready' => true, 'release_gate' => 'not_required_for_embedded_task'],
@@ -1177,8 +1239,6 @@ class AiHelperController extends Controller
             );
         }
         $run = $this->startAiHelperRun($actor, $requestUuid, $conversationPurpose);
-        $deadline = AiHelperRequestDeadline::fromConfig();
-
         try {
             $pageContext = $embeddedTask !== null
                 ? [
@@ -1210,6 +1270,7 @@ class AiHelperController extends Controller
                 );
             $pageContext['page']['conversation_purpose'] = $conversationPurpose;
             $pageContext['page']['assistant_surface'] = $conversationPurpose;
+            $pageContext['input_assessment'] = $inputAssessment->toArray();
             $this->recordRunRetrieval($run, $pageContext);
             $evidenceRequired = $conversationPurpose === self::CONVERSATION_PURPOSE_CHAT
                 && (bool) ($pageContext['query_analysis']['evidence_required'] ?? true);
@@ -1659,6 +1720,79 @@ class AiHelperController extends Controller
         }
     }
 
+    private function recordRejectedInputRun(
+        User $actor,
+        ?string $requestUuid,
+        string $surface,
+        AiHelperInputAssessment $assessment,
+        int $providerCalls = 0,
+    ): void {
+        $run = $this->startAiHelperRun($actor, $requestUuid, $surface);
+        if (! $run) {
+            return;
+        }
+
+        try {
+            $run->forceFill([
+                'status' => AiHelperRun::STATUS_COMPLETED,
+                'result_code' => $this->inputDecisionCode($assessment),
+                'input_decision' => $assessment->decision,
+                'input_reason_codes' => $assessment->reasonCodes,
+                'input_confidence' => $assessment->confidence,
+                'input_recoverable' => $assessment->recoverable,
+                'input_semantic_fallback' => $assessment->semanticFallbackUsed,
+                'provider_calls' => max(0, $providerCalls),
+                'completed_at' => now(),
+            ])->save();
+        } catch (Throwable $e) {
+            Log::warning('Ask AI rejected-input telemetry could not be recorded.', [
+                'request_uuid' => $requestUuid,
+                'exception_class' => $e::class,
+            ]);
+        }
+    }
+
+    private function inputDecisionStopsPipeline(AiHelperInputAssessment $assessment): bool
+    {
+        if ($assessment->decision === AiHelperInputAssessment::CLARIFY
+            && in_array('structured_product_clarification', $assessment->reasonCodes, true)) {
+            return false;
+        }
+
+        return in_array($assessment->decision, [
+            AiHelperInputAssessment::CLARIFY,
+            AiHelperInputAssessment::REPHRASE,
+            AiHelperInputAssessment::REFUSE_SENSITIVE,
+            AiHelperInputAssessment::REFUSE_EXFILTRATION,
+        ], true);
+    }
+
+    private function inputDecisionCode(AiHelperInputAssessment $assessment): string
+    {
+        return match ($assessment->decision) {
+            AiHelperInputAssessment::REFUSE_SENSITIVE => 'AI_HELPER_SENSITIVE_DATA_BLOCKED',
+            AiHelperInputAssessment::REFUSE_EXFILTRATION => 'AI_HELPER_RESTRICTED_REQUEST',
+            AiHelperInputAssessment::REPHRASE => 'AI_HELPER_INPUT_REPHRASE',
+            default => 'AI_HELPER_INPUT_CLARIFICATION',
+        };
+    }
+
+    private function inputResponseIsMalay(array $validated): bool
+    {
+        $requested = (string) ($validated['response_language'] ?? 'auto');
+        if ($requested === 'bm') {
+            return true;
+        }
+        if ($requested === 'en') {
+            return false;
+        }
+
+        return preg_match(
+            '/\b(?:saya|nak|cara|macam mana|bagaimana|tolong|laporan|pemeriksaan|kata laluan|akaun)\b/iu',
+            (string) ($validated['message'] ?? ''),
+        ) === 1;
+    }
+
     private function recordRunRetrieval(?AiHelperRun $run, array $context): void
     {
         if (! $run) {
@@ -1667,6 +1801,7 @@ class AiHelperController extends Controller
 
         $trace = (array) ($context['retrieval'] ?? []);
         $analysis = (array) ($context['query_analysis'] ?? []);
+        $inputAssessment = (array) ($context['input_assessment'] ?? []);
         $rerankStatus = (string) data_get($trace, 'rerank.status', '');
         try {
             $run->forceFill([
@@ -1679,6 +1814,27 @@ class AiHelperController extends Controller
                 'workflow_key' => Str::limit((string) data_get($context, 'product_context.workflow.key', ''), 96, '') ?: null,
                 'topic_keys' => array_values((array) ($analysis['topic_keys'] ?? [])),
                 'operation_keys' => array_values((array) ($analysis['operation_keys'] ?? [])),
+                'task_keys' => array_values((array) ($analysis['task_keys'] ?? [])),
+                'guide_keys' => collect($context['guidance'] ?? [])
+                    ->pluck('guide_key')
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->all(),
+                'clarification_required' => (bool) ($analysis['clarification_required'] ?? false),
+                'clarification_reason' => Str::limit((string) ($analysis['clarification_reason'] ?? ''), 64, '') ?: null,
+                'record_state_used' => Str::limit(
+                    (string) data_get($context, 'product_context.ui_state.record_status', ''),
+                    64,
+                    '',
+                ) ?: null,
+                'input_decision' => Str::limit((string) ($inputAssessment['decision'] ?? ''), 32, '') ?: null,
+                'input_reason_codes' => array_values((array) ($inputAssessment['reason_codes'] ?? [])),
+                'input_confidence' => isset($inputAssessment['confidence'])
+                    ? max(0, min(1, (float) $inputAssessment['confidence']))
+                    : null,
+                'input_recoverable' => (bool) ($inputAssessment['recoverable'] ?? false),
+                'input_semantic_fallback' => (bool) ($inputAssessment['semantic_fallback_used'] ?? false),
                 'candidate_documents' => min(65535, max(0, (int) ($trace['documents_selected'] ?? 0))),
                 'candidate_chunks' => min(65535, max(0, (int) ($trace['candidate_chunks'] ?? 0))),
                 'evidence_sources' => min(65535, collect($context['guidance'] ?? [])->pluck('source_id')->filter()->unique()->count()),

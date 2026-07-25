@@ -22,6 +22,8 @@ class AiHelperReliabilityMetricsTest extends TestCase
                 'output_tokens' => 10,
                 'retrieval_recovered' => true,
                 'semantic_fallback' => true,
+                'input_decision' => 'allow',
+                'input_semantic_fallback' => true,
                 'verification_attempts' => 2,
             ]),
             $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_VERIFIED', 'verified', 200, [
@@ -33,6 +35,8 @@ class AiHelperReliabilityMetricsTest extends TestCase
             ]),
             $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_VALIDATION_FAILED', 'rejected', 300, [
                 'answer_mode' => 'product_navigation',
+                'clarification_required' => true,
+                'input_decision' => 'clarify',
                 'provider_calls' => 2,
             ]),
             $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_VERIFICATION_SHADOW_FAILED', 'shadow_failed', 350, [
@@ -42,6 +46,7 @@ class AiHelperReliabilityMetricsTest extends TestCase
             ]),
             $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_NO_AUTHORIZED_EVIDENCE', 'rejected', 400, [
                 'answer_mode' => 'operational_knowledge',
+                'input_decision' => 'refuse_sensitive',
             ]),
             $this->makeRun(AiHelperRun::STATUS_COMPLETED, 'AI_HELPER_PROVIDER_TIMEOUT', 'fallback_extractive', 500, [
                 'provider_calls' => 1,
@@ -77,6 +82,13 @@ class AiHelperReliabilityMetricsTest extends TestCase
         $this->assertSame(1, $metrics['product_workflow_answers']);
         $this->assertSame(1, $metrics['operational_knowledge_answers']);
         $this->assertSame(1, $metrics['deterministic_workflow_answers']);
+        $this->assertSame(1, $metrics['clarification_answers']);
+        $this->assertSame(0.1667, $metrics['clarification_rate']);
+        $this->assertSame(1, $metrics['input_allowed']);
+        $this->assertSame(1, $metrics['input_clarified']);
+        $this->assertSame(0, $metrics['input_rephrased']);
+        $this->assertSame(1, $metrics['input_policy_refusals']);
+        $this->assertSame(1, $metrics['input_semantic_fallbacks']);
         $this->assertSame(0.3333, $metrics['verification_pass_rate']);
         $this->assertSame(0.6667, $metrics['completion_rate']);
         $this->assertSame(0.1111, $metrics['failure_rate']);

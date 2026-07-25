@@ -2,7 +2,6 @@
 
 namespace App\Http\Requests\AiHelper;
 
-
 class ReportAiHelperMessageRequest extends AiHelperRequest
 {
     protected function prepareForValidation(): void

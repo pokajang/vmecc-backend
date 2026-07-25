@@ -38,10 +38,10 @@ class RouteServiceProvider extends ServiceProvider
             $identity = $request->user()?->id ?: $request->ip();
 
             return [
-                Limit::perMinute(max(1, (int) config('ai_helper.rate_limit_per_minute', 4)))
+                Limit::perMinute(max(1, (int) config('ai_helper.rate_limit_per_minute', 8)))
                     ->by('user-minute:'.$identity)
                     ->response($response),
-                Limit::perHour(max(1, (int) config('ai_helper.rate_limit_per_hour', 30)))
+                Limit::perHour(max(1, (int) config('ai_helper.rate_limit_per_hour', 60)))
                     ->by('user-hour:'.$identity)
                     ->response($response),
                 Limit::perMinute(max(1, (int) config('ai_helper.ip_rate_limit_per_minute', 12)))

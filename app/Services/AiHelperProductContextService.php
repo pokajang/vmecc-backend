@@ -23,7 +23,7 @@ final class AiHelperProductContextService
         }
 
         $answerMode = (string) ($analysis['answer_mode'] ?? 'operational_knowledge');
-        if (! in_array($answerMode, ['product_capability', 'product_navigation', 'product_workflow'], true)) {
+        if (! in_array($answerMode, ['product_capability', 'product_navigation', 'product_workflow', 'product_clarification'], true)) {
             return null;
         }
 
@@ -45,6 +45,7 @@ final class AiHelperProductContextService
         $workflowAnalysis = $this->analysisWithUiState($analysis, $uiState, $context['current_page']);
         $workflow = $this->workflowFor($workflowAnalysis, $audience);
         if ($workflow !== null) {
+            $workflow['requested_operations'] = array_values((array) ($analysis['operation_keys'] ?? []));
             $context['target'] = [
                 'module' => $workflow['module'],
                 'action' => $workflow['action'],
@@ -86,10 +87,8 @@ final class AiHelperProductContextService
             );
         }
 
-        if (($context['clarification'] ?? null) === 'inspection_or_physical_maintenance') {
-            return $malay
-                ? 'Untuk merekod pemeriksaan dalam VMECC, buka menu **Inspection**. Adakah anda mahu langkah merekod pemeriksaan dalam sistem atau prosedur penyelenggaraan fizikal peralatan?'
-                : 'To record an inspection in VMECC, open the **Inspection** menu. Do you want the system inspection workflow or the physical equipment maintenance procedure?';
+        if (is_array($context['clarification'] ?? null)) {
+            return $this->renderClarification($context['clarification'], $malay);
         }
 
         if (($context['answer_mode'] ?? null) === 'product_capability') {
@@ -198,17 +197,126 @@ final class AiHelperProductContextService
         ];
     }
 
-    private function clarificationFor(array $analysis, AiHelperKnowledgeAudience $audience): ?string
+    /** @return array{reason: string, options: array<int, array{key: string, label: string}>}|null */
+    private function clarificationFor(array $analysis, AiHelperKnowledgeAudience $audience): ?array
     {
-        $tasks = collect($analysis['task_keys'] ?? []);
-        if (! $tasks->contains('inspection.conduct') || ! $tasks->contains('inspection.physical.maintain')) {
+        if (! ($analysis['clarification_required'] ?? false)) {
             return null;
         }
-        $definition = $this->guides->definition('inspection-manage');
 
-        return is_array($definition) && $this->allowsDefinition($definition, $audience)
-            ? 'inspection_or_physical_maintenance'
-            : null;
+        $reason = (string) ($analysis['clarification_reason'] ?? '');
+        $options = collect($analysis['clarification_option_keys'] ?? [])
+            ->map(function (string $key) use ($analysis, $reason, $audience): ?array {
+                $option = $this->clarificationOption(
+                    $reason,
+                    $key,
+                    (array) ($analysis['operation_keys'] ?? []),
+                );
+                if ($option === null) {
+                    return null;
+                }
+                $guideKey = $option['guide_key'] ?? null;
+                if ($guideKey !== null) {
+                    $definition = $this->guides->definition($guideKey);
+                    if (! is_array($definition) || ! $this->allowsDefinition($definition, $audience)) {
+                        return null;
+                    }
+                }
+
+                return ['key' => $key, 'label' => $option['label']];
+            })
+            ->filter()
+            ->values()
+            ->all();
+
+        return $reason === '' ? null : ['reason' => $reason, 'options' => $options];
+    }
+
+    /** @return array{label: string, guide_key?: string}|null */
+    private function clarificationOption(string $reason, string $key, array $operationKeys): ?array
+    {
+        return match ($reason.'.'.$key) {
+            'missing_report_type.erco' => ['label' => 'ERCO', 'guide_key' => 'erco-reports'],
+            'missing_report_type.drill' => ['label' => 'Drill', 'guide_key' => 'drill-reports'],
+            'missing_report_type.fitness' => ['label' => 'Fitness Test', 'guide_key' => 'fitness-reports'],
+            'missing_report_type.inspection' => [
+                'label' => 'Inspection',
+                'guide_key' => array_intersect($operationKeys, ['edit', 'submit']) !== []
+                    ? 'inspection-manage'
+                    : 'inspection-view',
+            ],
+            'ambiguous_action.view' => ['label' => 'View or check the report', 'guide_key' => 'reports-navigation'],
+            'ambiguous_action.review' => ['label' => 'Perform a formal review', 'guide_key' => 'report-management'],
+            'compound_request.inspection_workflow' => ['label' => 'System inspection workflow', 'guide_key' => 'inspection-manage'],
+            'compound_request.physical_maintenance' => ['label' => 'Physical equipment maintenance'],
+            default => null,
+        };
+    }
+
+    private function renderClarification(array $clarification, bool $malay): string
+    {
+        $reason = (string) ($clarification['reason'] ?? '');
+        $rawOptions = collect($clarification['options'] ?? [])->values();
+        $options = $rawOptions
+            ->pluck('label')
+            ->filter()
+            ->map(fn (string $label): string => "**{$label}**")
+            ->values();
+        $optionText = $options->isEmpty() ? '' : $options->join($malay ? ' atau ' : ' or ');
+
+        return match ($reason) {
+            'missing_report_type' => $options->isEmpty()
+                ? ($malay
+                    ? 'Saya tidak menemui jenis laporan yang boleh diakses oleh akaun anda. Minta pentadbir menyemak akses laporan anda.'
+                    : 'I could not find a report type available to your account. Ask an administrator to check your report access.')
+                : ($malay
+                    ? "Jenis laporan menentukan langkah yang betul. Adakah anda maksudkan {$optionText}?"
+                    : "The report type determines the correct steps. Do you mean {$optionText}?"),
+            'ambiguous_action' => $options->isEmpty()
+                ? ($malay
+                    ? 'Saya tidak menemui tindakan laporan yang tersedia untuk akaun anda. Minta pentadbir menyemak akses laporan anda.'
+                    : 'I could not find a report action available to your account. Ask an administrator to check your report access.')
+                : ($malay
+                    ? "Tindakan manakah yang anda maksudkan: {$optionText}?"
+                    : "Which action do you mean: {$optionText}?"),
+            'missing_record_context' => $malay
+                ? 'Rekod manakah yang anda maksudkan? Beritahu jenis rekod atau buka rekod tersebut supaya saya boleh beri langkah yang betul.'
+                : 'Which record do you mean? Name the record type or open that record so I can give the correct steps.',
+            'unsupported_action' => $malay
+                ? 'Tindakan itu tidak didokumenkan sebagai aliran kerja yang disokong. Beritahu jenis rekod dan status semasa supaya saya boleh terangkan tindakan yang tersedia.'
+                : 'That action is not documented as a supported workflow. Tell me the record type and current status so I can explain the available actions.',
+            'compound_request' => $this->renderCompoundClarification($rawOptions, $malay),
+            default => $malay
+                ? 'Sila berikan sedikit lagi maklumat supaya saya boleh beri langkah yang betul.'
+                : 'Please provide a little more information so I can give the correct steps.',
+        };
+    }
+
+    private function renderCompoundClarification($options, bool $malay): string
+    {
+        $keys = $options->pluck('key');
+        $inspection = $keys->contains('inspection_workflow');
+        $maintenance = $keys->contains('physical_maintenance');
+
+        if ($inspection && $maintenance) {
+            return $malay
+                ? 'Untuk merekod pemeriksaan dalam VMECC, buka menu **Inspection**. Adakah anda mahu langkah merekod pemeriksaan dalam sistem atau prosedur penyelenggaraan fizikal peralatan?'
+                : 'To record an inspection in VMECC, open the **Inspection** menu. Do you want the system inspection workflow or the physical equipment maintenance procedure?';
+        }
+        if ($inspection) {
+            return $malay
+                ? 'Akaun anda mempunyai akses kepada aliran kerja pemeriksaan sistem. Adakah anda mahu langkah merekod pemeriksaan dalam menu **Inspection**?'
+                : 'Your account has access to the system inspection workflow. Do you want the steps for recording an inspection in the **Inspection** menu?';
+        }
+        if ($maintenance) {
+            return $malay
+                ? 'Akaun anda tidak mempunyai akses kepada aliran kerja pemeriksaan sistem. Adakah anda maksudkan prosedur penyelenggaraan fizikal peralatan?'
+                : 'Your account does not have access to the system inspection workflow. Do you mean the physical equipment maintenance procedure?';
+        }
+
+        return $malay
+            ? 'Saya tidak menemui pilihan pemeriksaan atau penyelenggaraan yang tersedia untuk akaun anda.'
+            : 'I could not find an inspection or maintenance option available to your account.';
     }
 
     private function allowsDefinition(array $definition, AiHelperKnowledgeAudience $audience): bool

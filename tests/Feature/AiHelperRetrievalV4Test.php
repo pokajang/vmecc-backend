@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\AiHelperKnowledgeRetriever;
 use App\Services\AiHelperKnowledgeService;
 use App\Services\AiHelperOpenAiService;
+use App\Services\AiHelperSystemGuideCatalog;
 use Database\Seeders\AiHelperSystemGuideSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
@@ -160,6 +161,32 @@ class AiHelperRetrievalV4Test extends TestCase
         $this->assertSame('inspection.conduct.fire_truck', $run->workflow_key);
     }
 
+    public function test_erco_authoring_and_payment_requests_select_specific_guides_and_workflows(): void
+    {
+        $ercoUser = $this->userWithPermissions(['reports.erco.view']);
+        $ercoGuide = $this->systemGuide('erco-reports');
+        $erco = app(AiHelperKnowledgeService::class)->buildContext(
+            ['path' => '/dashboard'],
+            $ercoUser,
+            'macam mana nak tulis report erco',
+        );
+
+        $paymentUser = $this->userWithPermissions(['staff.salary.pay']);
+        $paymentGuide = $this->systemGuide('payment-actions');
+        $payment = app(AiHelperKnowledgeService::class)->buildContext(
+            ['path' => '/payroll'],
+            $paymentUser,
+            'How do I mark an approved salary claim as paid?',
+        );
+
+        $this->assertSame(['reports.erco.manage'], $erco['query_analysis']['task_keys']);
+        $this->assertSame('reports.erco.manage', $erco['product_context']['workflow']['key']);
+        $this->assertContains($ercoGuide->id, $erco['retrieval']['document_ids']);
+        $this->assertSame(['payroll.payment.manage'], $payment['query_analysis']['task_keys']);
+        $this->assertSame('payroll.payment.manage', $payment['product_context']['workflow']['key']);
+        $this->assertContains($paymentGuide->id, $payment['retrieval']['document_ids']);
+    }
+
     public function test_view_only_user_does_not_receive_a_conduct_workflow_from_product_context(): void
     {
         $context = app(AiHelperKnowledgeService::class)->buildContext(
@@ -274,6 +301,136 @@ class AiHelperRetrievalV4Test extends TestCase
         $this->assertStringContainsString('system inspection workflow or the physical equipment maintenance procedure?', $content);
         $message = AiHelperMessage::query()->where('role', AiHelperMessage::ROLE_ASSISTANT)->latest('id')->firstOrFail();
         $this->assertSame(1, substr_count($message->content, '?'));
+
+        $run = AiHelperRun::query()->latest('id')->firstOrFail();
+        $this->assertTrue($run->clarification_required);
+        $this->assertSame('compound_request', $run->clarification_reason);
+        $this->assertSame([], $run->task_keys);
+        $this->assertIsArray($run->guide_keys);
+    }
+
+    public function test_report_clarification_options_are_filtered_by_live_permissions(): void
+    {
+        $ercoOnly = $this->userWithPermissions(['reports.erco.view']);
+        $authorized = app(AiHelperKnowledgeService::class)->buildContext(
+            ['path' => '/dashboard'],
+            $ercoOnly,
+            'How do I submit a report?',
+        );
+        $clarification = $authorized['product_context']['clarification'];
+
+        $this->assertSame('missing_report_type', $authorized['query_analysis']['clarification_reason']);
+        $this->assertSame(['ERCO'], collect($clarification['options'])->pluck('label')->all());
+        $this->assertStringContainsString(
+            '**ERCO**',
+            app(AiHelperKnowledgeService::class)->deterministicResponseFor($authorized, 'en'),
+        );
+
+        $withoutReportAccess = $this->userWithPermissions(['self.dashboard']);
+        $restricted = app(AiHelperKnowledgeService::class)->buildContext(
+            ['path' => '/dashboard'],
+            $withoutReportAccess,
+            'How do I submit a report?',
+        );
+
+        $this->assertSame([], $restricted['product_context']['clarification']['options']);
+        $this->assertStringContainsString(
+            'could not find a report type available to your account',
+            app(AiHelperKnowledgeService::class)->deterministicResponseFor($restricted, 'en'),
+        );
+
+        $inspectionViewer = $this->userWithPermissions(['reports.inspection.view']);
+        $viewerContext = app(AiHelperKnowledgeService::class)->buildContext(
+            ['path' => '/dashboard'],
+            $inspectionViewer,
+            'How do I submit a report?',
+        );
+        $this->assertNotContains(
+            'Inspection',
+            collect($viewerContext['product_context']['clarification']['options'])->pluck('label')->all(),
+        );
+
+        $inspectionOperator = $this->userWithPermissions(['reports.inspection.conduct']);
+        $operatorContext = app(AiHelperKnowledgeService::class)->buildContext(
+            ['path' => '/dashboard'],
+            $inspectionOperator,
+            'How do I submit a report?',
+        );
+        $this->assertContains(
+            'Inspection',
+            collect($operatorContext['product_context']['clarification']['options'])->pluck('label')->all(),
+        );
+    }
+
+    public function test_permission_filtered_clarifications_never_render_empty_or_unauthorized_choices(): void
+    {
+        $user = $this->userWithPermissions(['self.dashboard']);
+
+        $ambiguous = app(AiHelperKnowledgeService::class)->buildContext(
+            ['path' => '/dashboard'],
+            $user,
+            'How do I check a report?',
+        );
+        $ambiguousAnswer = app(AiHelperKnowledgeService::class)->deterministicResponseFor($ambiguous, 'en');
+        $this->assertStringContainsString('could not find a report action available to your account', $ambiguousAnswer);
+        $this->assertStringNotContainsString('Which action do you mean: ?', $ambiguousAnswer);
+
+        $compound = app(AiHelperKnowledgeService::class)->buildContext(
+            ['path' => '/dashboard'],
+            $user,
+            'What are the steps for fire extinguisher inspection or maintenance?',
+        );
+        $compoundAnswer = app(AiHelperKnowledgeService::class)->deterministicResponseFor($compound, 'en');
+        $this->assertStringContainsString('does not have access to the system inspection workflow', $compoundAnswer);
+        $this->assertStringContainsString('physical equipment maintenance procedure', $compoundAnswer);
+        $this->assertStringNotContainsString('open the **Inspection** menu', $compoundAnswer);
+    }
+
+    public function test_every_phase_three_workflow_is_guide_grounded_and_permission_filtered(): void
+    {
+        $catalog = app(AiHelperSystemGuideCatalog::class);
+        $cases = collect(config('ai_helper_answer_quality.cases'))
+            ->filter(fn (array $case) => isset($case['expected_workflow']))
+            ->unique('expected_workflow')
+            ->values();
+        $permissions = $cases
+            ->flatMap(fn (array $case) => $catalog->definition($case['expected_guide'])['permissions'] ?? [])
+            ->reject(fn (string $permission) => $permission === '*')
+            ->unique()
+            ->values()
+            ->all();
+        $authorized = $this->userWithPermissions($permissions);
+        $unauthorized = $this->userWithPermissions(['self.dashboard']);
+
+        foreach ($cases as $case) {
+            $allowed = app(AiHelperKnowledgeService::class)->buildContext(
+                ['path' => '/dashboard'],
+                $authorized,
+                $case['message'],
+            );
+            $denied = app(AiHelperKnowledgeService::class)->buildContext(
+                ['path' => '/dashboard'],
+                $unauthorized,
+                $case['message'],
+            );
+
+            $this->assertSame(
+                $case['expected_workflow'],
+                data_get($allowed, 'product_context.workflow.key'),
+                $case['id'],
+            );
+            $this->assertContains(
+                $case['expected_guide'],
+                collect($allowed['guidance'])->pluck('guide_key')->filter()->all(),
+                $case['id'],
+            );
+            $this->assertNull(data_get($denied, 'product_context.workflow'), $case['id']);
+            $this->assertNotContains(
+                $case['expected_guide'],
+                collect($denied['guidance'])->pluck('guide_key')->filter()->all(),
+                $case['id'],
+            );
+        }
     }
 
     public function test_ui_state_rejects_free_form_values_before_the_ai_pipeline(): void
@@ -465,10 +622,9 @@ class AiHelperRetrievalV4Test extends TestCase
         $this->assertSame('mixed', $result['analysis']['source_mode']);
         $this->assertNotEmpty($result['guidance']);
         $this->assertContains('maintain', $result['trace']['query_plan']['operation_keys']);
-        $this->assertSame(
-            ['inspection.conduct', 'inspection.physical.maintain'],
-            $result['trace']['query_plan']['task_keys'],
-        );
+        $this->assertSame([], $result['trace']['query_plan']['task_keys']);
+        $this->assertTrue($result['trace']['query_plan']['clarification_required']);
+        $this->assertSame('compound_request', $result['trace']['query_plan']['clarification_reason']);
         $this->assertTrue($result['trace']['recovery_attempted']);
         $this->assertContains('pemadam', $result['trace']['recovery_expansion_terms']);
     }
