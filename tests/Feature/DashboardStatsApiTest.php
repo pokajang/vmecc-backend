@@ -331,7 +331,7 @@ class DashboardStatsApiTest extends TestCase
     {
         return PayrollClaim::query()->create(array_merge([
             'user_id' => $user->id,
-            'display_id' => 'PC-' . uniqid(),
+            'display_id' => 'PC-'.uniqid(),
             'claim_type' => 'expense',
             'amount' => 0,
             'approved_overtime_payout' => 0,
@@ -349,7 +349,7 @@ class DashboardStatsApiTest extends TestCase
     {
         return OvertimeRecord::query()->create(array_merge([
             'user_id' => $user->id,
-            'display_id' => 'OT-' . uniqid(),
+            'display_id' => 'OT-'.uniqid(),
             'overtime_type' => 'weekday',
             'claim_date' => now()->toDateString(),
             'start_time' => '09:00',

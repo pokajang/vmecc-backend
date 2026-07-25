@@ -9,9 +9,7 @@ use Illuminate\Http\Request;
 
 class SessionAuth
 {
-    public function __construct(private readonly AuthSessionService $sessions)
-    {
-    }
+    public function __construct(private readonly AuthSessionService $sessions) {}
 
     public function handle(Request $request, Closure $next)
     {

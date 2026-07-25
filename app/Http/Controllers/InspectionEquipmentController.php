@@ -18,8 +18,7 @@ class InspectionEquipmentController extends Controller
 
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -180,7 +179,7 @@ class InspectionEquipmentController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      * @return array{key: string, label: string}
      */
     private function resolveInspectionType(Request $request, array $payload = []): array
@@ -255,6 +254,7 @@ class InspectionEquipmentController extends Controller
     private function canManageSeedEquipment(Request $request): bool
     {
         $user = $request->user();
+
         return (bool) ($user && $this->authorizationService->hasPermission($user, 'reports.manage'));
     }
 

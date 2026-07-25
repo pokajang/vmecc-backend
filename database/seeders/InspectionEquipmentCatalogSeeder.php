@@ -10,6 +10,7 @@ use Illuminate\Support\Str;
 class InspectionEquipmentCatalogSeeder extends Seeder
 {
     private const HYDRAULIC_TYPE_KEY = 'hydraulic-rescue-tools-inspection';
+
     private const HYDRAULIC_TYPE_LABEL = 'Hydraulic Rescue Tools Inspection';
 
     private const HYDRAULIC_EQUIPMENT = [

@@ -2,15 +2,16 @@
 
 namespace Tests\Feature;
 
+use App\Models\OvertimeRecord;
 use App\Models\PayrollClaim;
 use App\Models\PayrollClaimDraft;
 use App\Models\PayrollClaimItem;
-use App\Models\OvertimeRecord;
 use App\Models\SalaryAssignment;
 use App\Models\Setting;
 use App\Models\User;
 use App\Models\WorkflowAttachment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -1372,7 +1373,7 @@ class PayrollHardeningApiTest extends TestCase
         $base = [
             'user_id' => $user->id,
             'claim_type' => 'salary',
-            'draft_id' => 'draft-'.strtolower((string) \Illuminate\Support\Str::uuid()),
+            'draft_id' => 'draft-'.strtolower((string) Str::uuid()),
             'payload' => [
                 'id' => 'draft-test',
                 'claimType' => 'salary',

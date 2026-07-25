@@ -5,7 +5,9 @@ namespace App\Support\Inspection;
 final class FrtDailyReference
 {
     public const INSPECTION_TYPE = 'Fire Truck Daily Readiness';
+
     public const LEGACY_INSPECTION_TYPE = 'FRT Daily Inspection';
+
     public const MAIN_LOCATION = 'FIRE TRUCK';
 
     public const TRUCK_REFERENCE = [

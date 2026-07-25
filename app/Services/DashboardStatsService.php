@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\DB;
 class DashboardStatsService
 {
     public const PERIODS = ['this_month', 'last_month', '3m', '6m', 'ytd'];
+
     private const ACTIVE_STATUS_VALUES = ['Active', 'active', 'ACTIVE'];
 
     public function stats(string $module, string $period): array
@@ -293,6 +294,7 @@ class DashboardStatsService
                     return false;
                 }
                 $date = $value instanceof Carbon ? $value : Carbon::parse($value);
+
                 return $date->isSameMonth($month);
             })->count();
 
@@ -362,6 +364,7 @@ class DashboardStatsService
         foreach ($statuses as $status) {
             $counts[lcfirst($status)] = $records->where('status', $status)->count();
         }
+
         return $counts;
     }
 
@@ -427,6 +430,7 @@ class DashboardStatsService
     {
         $payload = $report->payload ?? [];
         $snakeKey = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $key));
+
         return trim((string) ($payload[$key] ?? $payload[$snakeKey] ?? $payload[strtolower($key)] ?? $fallback)) ?: $fallback;
     }
 

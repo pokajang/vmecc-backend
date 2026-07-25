@@ -11,8 +11,7 @@ class OvertimeDraftController extends Controller
 {
     public function __construct(
         private readonly OvertimeEligibilityService $overtimeEligibilityService,
-    ) {
-    }
+    ) {}
 
     public function show(Request $request): JsonResponse
     {

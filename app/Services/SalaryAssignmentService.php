@@ -13,7 +13,7 @@ class SalaryAssignmentService
         $allowances = collect(Arr::get($payload, 'allowances', []))
             ->filter(fn ($row) => is_array($row))
             ->map(fn (array $row, int $index) => [
-                'id' => trim((string) ($row['id'] ?? '')) ?: 'allow-' . ($index + 1),
+                'id' => trim((string) ($row['id'] ?? '')) ?: 'allow-'.($index + 1),
                 'name' => trim((string) ($row['name'] ?? '')),
                 'amount' => $this->toAmount($row['amount'] ?? 0),
             ])

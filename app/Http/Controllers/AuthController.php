@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\LoginAttempt;
 use App\Models\User;
 use App\Models\UserOnboardingState;
 use App\Models\UserSession;
-use App\Models\LoginAttempt;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuthSessionService;
 use App\Services\RoleCatalog;
@@ -21,9 +21,7 @@ class AuthController extends Controller
 {
     private const MAX_FAILED_ATTEMPTS = 5;
 
-    public function __construct(private readonly AuthSessionService $sessions)
-    {
-    }
+    public function __construct(private readonly AuthSessionService $sessions) {}
 
     public function login(Request $request): JsonResponse
     {
@@ -279,7 +277,7 @@ class AuthController extends Controller
             'ic_number' => ['sometimes', 'nullable', 'string', 'max:100'],
             'phone' => ['sometimes', 'nullable', 'string', 'max:50'],
             'address' => ['sometimes', 'nullable', 'string', 'max:500'],
-            'state' => ['sometimes', 'nullable', 'string', 'max:100', 'in:' . implode(',', MalaysiaStateCatalog::values())],
+            'state' => ['sometimes', 'nullable', 'string', 'max:100', 'in:'.implode(',', MalaysiaStateCatalog::values())],
             'emergency_contact' => ['sometimes', 'array'],
             'emergency_contact.name' => ['nullable', 'string', 'max:255'],
             'emergency_contact.relationship' => ['nullable', 'string', 'max:100'],

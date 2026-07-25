@@ -10,27 +10,27 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (!Schema::hasColumn('report_drafts', 'draft_id')) {
+        if (! Schema::hasColumn('report_drafts', 'draft_id')) {
             Schema::table('report_drafts', function (Blueprint $table) {
                 $table->string('draft_id', 80)->nullable()->after('user_id');
             });
         }
-        if (!Schema::hasColumn('report_drafts', 'title')) {
+        if (! Schema::hasColumn('report_drafts', 'title')) {
             Schema::table('report_drafts', function (Blueprint $table) {
                 $table->string('title', 190)->nullable()->after('report_type');
             });
         }
-        if (!Schema::hasColumn('report_drafts', 'origin_mode')) {
+        if (! Schema::hasColumn('report_drafts', 'origin_mode')) {
             Schema::table('report_drafts', function (Blueprint $table) {
                 $table->string('origin_mode', 16)->nullable()->after('title');
             });
         }
-        if (!Schema::hasColumn('report_drafts', 'source_report_uid')) {
+        if (! Schema::hasColumn('report_drafts', 'source_report_uid')) {
             Schema::table('report_drafts', function (Blueprint $table) {
                 $table->string('source_report_uid', 190)->nullable()->after('origin_mode');
             });
         }
-        if (!Schema::hasColumn('report_drafts', 'saved_at')) {
+        if (! Schema::hasColumn('report_drafts', 'saved_at')) {
             Schema::table('report_drafts', function (Blueprint $table) {
                 $table->timestamp('saved_at')->nullable()->after('payload');
             });
@@ -43,7 +43,7 @@ return new class extends Migration
                     DB::table('report_drafts')
                         ->where('id', $row->id)
                         ->update([
-                            'draft_id' => $row->draft_id ?: ('drf_' . Str::lower(Str::random(20))),
+                            'draft_id' => $row->draft_id ?: ('drf_'.Str::lower(Str::random(20))),
                             'saved_at' => $row->saved_at ?: $row->updated_at ?: now(),
                         ]);
                 }

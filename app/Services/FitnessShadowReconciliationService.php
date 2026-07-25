@@ -154,6 +154,7 @@ final class FitnessShadowReconciliationService
                         'index' => $groupIndex,
                     ],
                 );
+
                 continue;
             }
 
@@ -192,7 +193,7 @@ final class FitnessShadowReconciliationService
                     );
                 }
             } else {
-                if (($this->normalizeString($payloadAssessor['name'] ?? null) !== '') {
+                if ($this->normalizeString($payloadAssessor['name'] ?? null) !== '') {
                     $this->addMismatch(
                         $mismatchTypes,
                         $mismatchDetails,
@@ -258,6 +259,7 @@ final class FitnessShadowReconciliationService
                         'participantIndex' => $participantIndex,
                     ],
                 );
+
                 continue;
             }
 
@@ -345,6 +347,7 @@ final class FitnessShadowReconciliationService
         }
 
         $assessor = is_array($group['assessor'] ?? null) ? $group['assessor'] : [];
+
         return [
             'id' => $this->normalizeString($group['id'] ?? null, "group-{$groupIndex}"),
             'teamId' => $this->normalizeInteger($group['teamId'] ?? null),
@@ -362,6 +365,7 @@ final class FitnessShadowReconciliationService
         $proficiency = is_array($participant['proficiency'] ?? null) ? $participant['proficiency'] : [];
         $fitnessResult = $this->normalizeResult($fitness['result'] ?? null);
         $proficiencyResult = $this->normalizeResult($proficiency['result'] ?? null);
+
         return [
             'id' => $this->normalizeString($participant['id'] ?? null, "participant-{$index}"),
             'userId' => $this->normalizeInteger($participant['userId'] ?? $participant['memberId'] ?? null),
@@ -548,6 +552,7 @@ final class FitnessShadowReconciliationService
             if ($fitnessResult === 'failed' || $proficiencyResult === 'failed') {
                 return 'failed';
             }
+
             return 'passed';
         }
         if ($fitnessResult === 'failed' || $proficiencyResult === 'failed') {
@@ -581,9 +586,9 @@ final class FitnessShadowReconciliationService
         return FitnessTestReport::query()
             ->where('report_id', $reportId)
             ->with([
-                'shiftGroups' => fn ($query): void => $query->orderBy('display_order')->orderBy('id'),
-                'shiftGroups.participants' => fn ($query): void => $query->orderBy('display_order')->orderBy('id'),
-                'shiftGroups.participants.checkpointResults' => fn ($query): void => $query->orderBy('display_order')->orderBy('id'),
+                'shiftGroups' => fn ($query) => $query->orderBy('display_order')->orderBy('id'),
+                'shiftGroups.participants' => fn ($query) => $query->orderBy('display_order')->orderBy('id'),
+                'shiftGroups.participants.checkpointResults' => fn ($query) => $query->orderBy('display_order')->orderBy('id'),
             ])
             ->first();
     }
@@ -623,6 +628,7 @@ final class FitnessShadowReconciliationService
         if ($text === '') {
             return $fallback === null ? '' : $fallback;
         }
+
         return $text;
     }
 
@@ -663,4 +669,3 @@ final class FitnessShadowReconciliationService
         return 9999;
     }
 }
-

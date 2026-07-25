@@ -186,7 +186,7 @@ final class FitnessTestReportViewBuilder
     }
 
     /**
-     * @param array<FitnessTestShiftGroup> $shiftGroups
+     * @param  array<FitnessTestShiftGroup>  $shiftGroups
      * @return array<int, mixed>
      */
     private function buildShiftGroups(array $shiftGroups): array

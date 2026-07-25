@@ -4,6 +4,7 @@ use App\Services\RoleCatalog;
 use Illuminate\Database\Migrations\Migration;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 return new class extends Migration
 {
@@ -17,7 +18,7 @@ return new class extends Migration
 
     public function up(): void
     {
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
         foreach (self::PERMISSIONS as $permissionName) {
             Permission::firstOrCreate([
@@ -37,6 +38,7 @@ return new class extends Migration
                 if (! empty($missing)) {
                     $role->givePermissionTo($missing);
                 }
+
                 continue;
             }
 
@@ -59,12 +61,12 @@ return new class extends Migration
             }
         }
 
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
     }
 
     public function down(): void
     {
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
         foreach (Role::query()->where('guard_name', 'web')->get() as $role) {
             $assigned = array_values(array_intersect($role->permissions->pluck('name')->all(), self::PERMISSIONS));
@@ -78,7 +80,6 @@ return new class extends Migration
             ->whereIn('name', self::PERMISSIONS)
             ->delete();
 
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
     }
 };
-

@@ -31,6 +31,7 @@ class LeaveAssignmentNotificationTest extends TestCase
         ]);
 
         $this->actingAs($manager);
+
         return $manager;
     }
 

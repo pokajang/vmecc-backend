@@ -9,9 +9,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class PermissionAssignmentScopeMiddleware
 {
-    public function __construct(private readonly AssignmentAuthorizationService $authorizationService)
-    {
-    }
+    public function __construct(private readonly AssignmentAuthorizationService $authorizationService) {}
 
     public function handle(Request $request, Closure $next, string $permissions, string $teamParam = 'team'): Response
     {

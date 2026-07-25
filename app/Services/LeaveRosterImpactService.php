@@ -14,6 +14,7 @@ use Illuminate\Support\Collection;
 class LeaveRosterImpactService
 {
     private ?array $shiftWindows = null;
+
     private ?array $customShiftWindows = null;
 
     private const DEFAULT_WINDOWS = [
@@ -61,7 +62,7 @@ class LeaveRosterImpactService
                     && $this->intervalsOverlap($range, $this->rosterRange($roster));
             })
             ->map(fn (Roster $roster) => $this->formatImpactItem($roster, $range))
-            ->sortBy(fn (array $item) => $item['date'] . ':' . $item['shift'])
+            ->sortBy(fn (array $item) => $item['date'].':'.$item['shift'])
             ->values()
             ->all();
 
@@ -160,9 +161,9 @@ class LeaveRosterImpactService
         ];
         $config = $slots[$workShift] ?? $slots['normal'];
         $startTime = data_get($leave, 'start_time_slot') === 'midpoint' ? $config['midpoint'] : $config['start'];
-        $start = Carbon::parse($startDate . ' ' . $startTime);
+        $start = Carbon::parse($startDate.' '.$startTime);
         $endTime = data_get($leave, 'end_time_slot') === 'midpoint' ? $config['midpoint'] : $config['end'];
-        $end = Carbon::parse($endDate . ' ' . $endTime);
+        $end = Carbon::parse($endDate.' '.$endTime);
         if ($config['overnight'] || $end->lte($start)) {
             $end->addDay();
         }
@@ -173,8 +174,8 @@ class LeaveRosterImpactService
     private function rosterRange(Roster $roster): array
     {
         [$startTime, $endTime] = $this->shiftWindow((string) $roster->shift);
-        $start = Carbon::parse($roster->date->toDateString() . ' ' . $startTime);
-        $end = Carbon::parse($roster->date->toDateString() . ' ' . $endTime);
+        $start = Carbon::parse($roster->date->toDateString().' '.$startTime);
+        $end = Carbon::parse($roster->date->toDateString().' '.$endTime);
         if ($end->lte($start)) {
             $end->addDay();
         }
@@ -185,8 +186,12 @@ class LeaveRosterImpactService
     private function shiftWindow(string $shift): array
     {
         $windows = $this->shiftWindows ??= (Setting::query()->where('key', 'shift_windows')->first()?->value ?: self::DEFAULT_WINDOWS);
-        if ($shift === 'day') return [$windows['day_start'] ?? '07:00', $windows['day_end'] ?? '19:00'];
-        if ($shift === 'night') return [$windows['night_start'] ?? '19:00', $windows['night_end'] ?? '07:00'];
+        if ($shift === 'day') {
+            return [$windows['day_start'] ?? '07:00', $windows['day_end'] ?? '19:00'];
+        }
+        if ($shift === 'night') {
+            return [$windows['night_start'] ?? '19:00', $windows['night_end'] ?? '07:00'];
+        }
         $customWindows = $this->customShiftWindows ??= CustomShift::query()
             ->get(['name', 'start', 'end'])
             ->mapWithKeys(fn (CustomShift $custom) => [$custom->name => [$custom->start, $custom->end]])

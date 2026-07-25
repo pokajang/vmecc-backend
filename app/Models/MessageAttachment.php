@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 class MessageAttachment extends Model
 {
     use SoftDeletes;
+
     protected $fillable = [
         'message_id',
         'owner_user_id',

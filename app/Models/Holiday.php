@@ -21,8 +21,8 @@ class Holiday extends Model
     ];
 
     protected $casts = [
-        'date'                => 'date:Y-m-d',
-        'year'                => 'integer',
+        'date' => 'date:Y-m-d',
+        'year' => 'integer',
         'is_default_national' => 'boolean',
     ];
 

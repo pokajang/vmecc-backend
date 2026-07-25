@@ -7,9 +7,7 @@ use Illuminate\Support\Collection;
 
 class LeaveNotificationService
 {
-    public function __construct(private readonly WorkflowNotificationService $notificationService)
-    {
-    }
+    public function __construct(private readonly WorkflowNotificationService $notificationService) {}
 
     public function emit(
         string $eventType,

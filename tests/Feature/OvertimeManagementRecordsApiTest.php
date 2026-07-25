@@ -114,7 +114,7 @@ class OvertimeManagementRecordsApiTest extends TestCase
         ]);
 
         $response = $this->getJson(
-            '/api/staff/overtime/records?' .
+            '/api/staff/overtime/records?'.
             http_build_query([
                 'status' => 'Pending',
                 'overtime_type' => 'weekend',
@@ -133,7 +133,7 @@ class OvertimeManagementRecordsApiTest extends TestCase
         $response->assertJsonPath('data.0.duration_minutes', 240);
 
         $pageTwo = $this->getJson(
-            '/api/staff/overtime/records?' .
+            '/api/staff/overtime/records?'.
             http_build_query([
                 'status' => 'Pending',
                 'overtime_type' => 'weekend',
@@ -280,7 +280,7 @@ class OvertimeManagementRecordsApiTest extends TestCase
     {
         return OvertimeRecord::query()->create(array_merge([
             'user_id' => $user->id,
-            'display_id' => 'OT-TEST-' . str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT),
+            'display_id' => 'OT-TEST-'.str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT),
             'overtime_type' => 'weekday',
             'claim_date' => now()->toDateString(),
             'start_time' => '09:00',

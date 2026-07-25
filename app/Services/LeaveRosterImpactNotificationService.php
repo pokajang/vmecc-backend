@@ -5,14 +5,14 @@ namespace App\Services;
 use App\Models\Leave;
 use App\Models\Team;
 use App\Models\User;
+use App\Models\UserRoleAssignment;
 
 class LeaveRosterImpactNotificationService
 {
     public function __construct(
         private readonly LeaveRosterImpactService $impactService,
         private readonly WorkflowNotificationService $notifications,
-    ) {
-    }
+    ) {}
 
     public function emit(Leave $leave, array $actor, string $change): void
     {
@@ -35,7 +35,7 @@ class LeaveRosterImpactNotificationService
             ->values()
             ->all();
         $today = now()->toDateString();
-        $rosterManagerIds = \App\Models\UserRoleAssignment::query()
+        $rosterManagerIds = UserRoleAssignment::query()
             ->with('role.permissions:id,name')
             ->where(function ($query) use ($today) {
                 $query->whereNull('start_date')->orWhereDate('start_date', '<=', $today);

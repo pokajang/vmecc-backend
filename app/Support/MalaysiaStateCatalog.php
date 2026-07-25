@@ -49,4 +49,3 @@ class MalaysiaStateCatalog
         return self::normalize($value) !== null;
     }
 }
-

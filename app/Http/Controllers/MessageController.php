@@ -5,8 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Message;
 use App\Models\MessageAttachment;
 use App\Models\User;
-use App\Services\AuditLogger;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -14,9 +14,7 @@ use Illuminate\Validation\Rule;
 
 class MessageController extends Controller
 {
-    public function __construct(private readonly AssignmentAuthorizationService $authorizationService)
-    {
-    }
+    public function __construct(private readonly AssignmentAuthorizationService $authorizationService) {}
 
     public function contacts(Request $request): JsonResponse
     {
@@ -105,7 +103,7 @@ class MessageController extends Controller
                     ],
                     'last_message' => $this->formatMessage($message),
                     'unread_count' => 0,
-                    'is_starter'   => false,
+                    'is_starter' => false,
                 ];
             }
 
@@ -354,7 +352,7 @@ class MessageController extends Controller
 
         AuditLogger::log($request, 'staff_thread_deleted_for_everyone', $actor, [
             'other_user_id' => $userId,
-            'count'         => $count,
+            'count' => $count,
         ]);
 
         return response()->json(['message' => 'Thread deleted for everyone.', 'count' => $count]);
@@ -373,8 +371,8 @@ class MessageController extends Controller
                 'integer',
                 Rule::exists('users', 'id')->whereNull('deleted_at'),
             ],
-            'subject'       => ['nullable', 'string', 'max:255'],
-            'body'          => ['nullable', 'string', 'max:2000'],
+            'subject' => ['nullable', 'string', 'max:255'],
+            'body' => ['nullable', 'string', 'max:2000'],
             'attachment_id' => ['nullable', 'integer', 'exists:message_attachments,id'],
         ]);
 
@@ -386,11 +384,11 @@ class MessageController extends Controller
         $recipient = User::findOrFail($data['to_user_id']);
 
         $message = Message::create([
-            'sender_user_id'    => $actor->id,
+            'sender_user_id' => $actor->id,
             'recipient_user_id' => $recipient->id,
-            'subject'           => $data['subject'] ?? null,
-            'body'              => $data['body'] ?? '',
-            'attachment_id'     => $data['attachment_id'] ?? null,
+            'subject' => $data['subject'] ?? null,
+            'body' => $data['body'] ?? '',
+            'attachment_id' => $data['attachment_id'] ?? null,
         ]);
 
         // Link the attachment back to this message
@@ -403,16 +401,16 @@ class MessageController extends Controller
         $message->load('attachment');
 
         AuditLogger::log($request, 'staff_message_sent', $recipient, [
-            'message_id'    => $message->id,
-            'to_user_id'    => $recipient->id,
-            'subject'       => $message->subject,
-            'body_length'   => strlen($message->body),
+            'message_id' => $message->id,
+            'to_user_id' => $recipient->id,
+            'subject' => $message->subject,
+            'body_length' => strlen($message->body),
             'has_attachment' => isset($data['attachment_id']),
         ]);
 
         return response()->json([
             'message' => 'Message sent.',
-            'data'    => $this->formatMessage($message),
+            'data' => $this->formatMessage($message),
         ], 201);
     }
 
@@ -422,31 +420,31 @@ class MessageController extends Controller
         $attachment = $message->relationLoaded('attachment') ? $message->attachment : null;
 
         return [
-            'id'         => $message->id,
-            'subject'    => $message->subject,
-            'body'       => $message->body,
-            'read_at'    => optional($message->read_at)->toIso8601String(),
+            'id' => $message->id,
+            'subject' => $message->subject,
+            'body' => $message->body,
+            'read_at' => optional($message->read_at)->toIso8601String(),
             'created_at' => optional($message->created_at)->toIso8601String(),
-            'sender'     => $message->sender
+            'sender' => $message->sender
                 ? [
-                    'id'    => $message->sender->id,
-                    'name'  => $message->sender->name,
+                    'id' => $message->sender->id,
+                    'name' => $message->sender->name,
                     'email' => $message->sender->email,
                 ]
                 : null,
             'recipient' => $message->recipient
                 ? [
-                    'id'    => $message->recipient->id,
-                    'name'  => $message->recipient->name,
+                    'id' => $message->recipient->id,
+                    'name' => $message->recipient->name,
                     'email' => $message->recipient->email,
                 ]
                 : null,
             'attachment' => $attachment
                 ? [
-                    'id'            => $attachment->id,
+                    'id' => $attachment->id,
                     'original_name' => $attachment->original_name,
-                    'mime_type'     => $attachment->mime_type,
-                    'size'          => (int) $attachment->size,
+                    'mime_type' => $attachment->mime_type,
+                    'size' => (int) $attachment->size,
                 ]
                 : null,
         ];

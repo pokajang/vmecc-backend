@@ -16,8 +16,7 @@ class SystemMaintenanceMiddleware
     public function __construct(
         private readonly SystemMaintenanceService $maintenanceService,
         private readonly AssignmentAuthorizationService $authorizationService,
-    ) {
-    }
+    ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
@@ -49,6 +48,7 @@ class SystemMaintenanceMiddleware
 
         if ($isSystemAdministrator || $hasWildcardPermission || $phase === SystemMaintenanceService::PHASE_GRACE) {
             $response = $next($request);
+
             return $this->attachMaintenanceHeaders($response, $setting);
         }
 
@@ -65,6 +65,7 @@ class SystemMaintenanceMiddleware
             'code' => 'SYSTEM_MAINTENANCE',
             'data' => $setting,
         ], 503);
+
         return $this->attachMaintenanceHeaders($response, $setting);
     }
 
@@ -80,6 +81,7 @@ class SystemMaintenanceMiddleware
         if (! empty($setting['graceEndsAt'])) {
             $response->headers->set('X-System-Maintenance-Grace-Ends-At', (string) $setting['graceEndsAt']);
         }
+
         return $response;
     }
 

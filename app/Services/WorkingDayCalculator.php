@@ -9,8 +9,7 @@ class WorkingDayCalculator
 {
     public function __construct(
         private readonly HolidayResolver $holidayResolver,
-    ) {
-    }
+    ) {}
 
     public function computeLeaveDays(
         User $user,
@@ -33,7 +32,7 @@ class WorkingDayCalculator
         $cursor = $start->copy();
         while ($cursor->lte($end)) {
             $isoDate = $cursor->toDateString();
-            if (!$cursor->isWeekend() && !$holidayDates->has($isoDate)) {
+            if (! $cursor->isWeekend() && ! $holidayDates->has($isoDate)) {
                 $businessDays++;
             }
             $cursor->addDay();
@@ -73,4 +72,3 @@ class WorkingDayCalculator
         return $slot === 'midpoint' ? 0.5 : 1.0;
     }
 }
-

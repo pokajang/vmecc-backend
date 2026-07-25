@@ -26,6 +26,7 @@ class RolesAndPermissionsSeeder extends Seeder
 
             if ($roleName === 'System Administrator') {
                 $role->syncPermissions(Permission::query()->pluck('name')->values()->all());
+
                 continue;
             }
             $role->syncPermissions(RoleCatalog::ROLE_PERMISSIONS[$roleName] ?? []);

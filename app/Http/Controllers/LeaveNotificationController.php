@@ -14,10 +14,10 @@ class LeaveNotificationController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $user   = $request->user();
+        $user = $request->user();
         $unread = $request->boolean('unread_only');
         $action = $request->boolean('action_required_only');
-        $limit  = min((int) ($request->input('limit') ?? 50), 100);
+        $limit = min((int) ($request->input('limit') ?? 50), 100);
 
         $items = $this->notificationService->forViewer($user->id, $unread, $action, $limit, 'leave');
 
@@ -26,7 +26,7 @@ class LeaveNotificationController extends Controller
 
     public function unreadCount(Request $request): JsonResponse
     {
-        $user  = $request->user();
+        $user = $request->user();
         $count = $this->notificationService->unreadCount($user->id, 'leave');
 
         return response()->json(['data' => ['count' => $count]]);

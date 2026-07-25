@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 
 use Illuminate\Database\Migrations\Migration;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 return new class extends Migration
 {
@@ -10,7 +11,7 @@ return new class extends Migration
 
     public function up(): void
     {
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
         $permission = Permission::firstOrCreate([
             'name' => self::PERMISSION,
@@ -18,21 +19,21 @@ return new class extends Migration
         ]);
 
         $financeRole = Role::where('name', 'Finance')->where('guard_name', 'web')->first();
-        if ($financeRole && !$financeRole->hasPermissionTo($permission)) {
+        if ($financeRole && ! $financeRole->hasPermissionTo($permission)) {
             $financeRole->givePermissionTo($permission);
         }
 
         $sysAdminRole = Role::where('name', 'System Administrator')->where('guard_name', 'web')->first();
-        if ($sysAdminRole && !$sysAdminRole->hasPermissionTo($permission)) {
+        if ($sysAdminRole && ! $sysAdminRole->hasPermissionTo($permission)) {
             $sysAdminRole->givePermissionTo($permission);
         }
 
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
     }
 
     public function down(): void
     {
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
         $permission = Permission::where('name', self::PERMISSION)
             ->where('guard_name', 'web')
@@ -43,6 +44,6 @@ return new class extends Migration
             $permission->delete();
         }
 
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
     }
 };

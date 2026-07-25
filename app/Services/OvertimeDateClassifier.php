@@ -9,8 +9,7 @@ class OvertimeDateClassifier
 {
     public function __construct(
         private readonly HolidayResolver $holidayResolver,
-    ) {
-    }
+    ) {}
 
     public function classify(User $user, string $claimDate): string
     {
@@ -23,4 +22,3 @@ class OvertimeDateClassifier
         return Carbon::parse($date)->isWeekend() ? 'weekend' : 'weekday';
     }
 }
-

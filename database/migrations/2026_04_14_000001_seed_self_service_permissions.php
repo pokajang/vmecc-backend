@@ -4,6 +4,7 @@ use App\Services\RoleCatalog;
 use Illuminate\Database\Migrations\Migration;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 return new class extends Migration
 {
@@ -21,6 +22,7 @@ return new class extends Migration
                 // Ensure SysAdmin has every permission (including newly added ones)
                 $role = Role::firstOrCreate(['name' => $roleName, 'guard_name' => 'web']);
                 $role->syncPermissions(Permission::query()->pluck('name')->values()->all());
+
                 continue;
             }
 
@@ -32,16 +34,16 @@ return new class extends Migration
             $existingNames = $role->permissions->pluck('name')->all();
             $newPerms = array_filter(
                 $catalogPerms,
-                fn ($p) => str_starts_with($p, 'self.') && !in_array($p, $existingNames, true)
+                fn ($p) => str_starts_with($p, 'self.') && ! in_array($p, $existingNames, true)
             );
 
-            if (!empty($newPerms)) {
+            if (! empty($newPerms)) {
                 $role->givePermissionTo($newPerms);
             }
         }
 
         // Clear Spatie permission cache
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
     }
 
     public function down(): void
@@ -58,6 +60,6 @@ return new class extends Migration
             Permission::where('name', $permName)->where('guard_name', 'web')->delete();
         }
 
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
     }
 };

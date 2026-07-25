@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\FitnessTestCheckpointResult;
-use App\Models\FitnessTestParticipantResult;
 use App\Models\FitnessTestReport;
 use App\Models\FitnessTestShiftGroup;
 use App\Models\Report;
@@ -184,6 +183,7 @@ final class FitnessTestProjectionService
         if (! is_array($assessor)) {
             return '';
         }
+
         return $this->normalizeText(
             $assessor['name']
             ?? $assessor['assessorName']
@@ -222,6 +222,7 @@ final class FitnessTestProjectionService
             return $value ? 'passed' : 'failed';
         }
         $text = strtolower(trim((string) $value));
+
         return match ($text) {
             'passed', 'pass', 'passes', 'pass/fail' => 'passed',
             'failed', 'fail', 'failed result' => 'failed',
@@ -235,6 +236,7 @@ final class FitnessTestProjectionService
         if ($text === '') {
             return '';
         }
+
         return mb_strlen($text) > $maxLength ? mb_substr($text, 0, $maxLength) : $text;
     }
 

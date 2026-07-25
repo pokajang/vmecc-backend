@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -19,14 +20,14 @@ return new class extends Migration
     public function up(): void
     {
         // Clear any dangling lead_id values that reference deleted or non-existent users
-        \Illuminate\Support\Facades\DB::statement("
+        DB::statement('
             UPDATE teams
             SET lead_id = NULL
             WHERE lead_id IS NOT NULL
               AND NOT EXISTS (
                   SELECT 1 FROM users WHERE users.id = teams.lead_id
               )
-        ");
+        ');
 
         Schema::table('teams', function (Blueprint $table) {
             $table->foreign('lead_id')

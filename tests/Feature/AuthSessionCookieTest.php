@@ -274,10 +274,9 @@ class AuthSessionCookieTest extends TestCase
             'status' => 'active',
         ]);
 
-        $googleUser = new class ($user->email) {
-            public function __construct(private string $email)
-            {
-            }
+        $googleUser = new class($user->email)
+        {
+            public function __construct(private string $email) {}
 
             public function getEmail(): string
             {
@@ -291,7 +290,7 @@ class AuthSessionCookieTest extends TestCase
         Socialite::shouldReceive('driver')->once()->with('google')->andReturn($provider);
 
         $state = Crypt::encryptString(json_encode(['remember' => true, 'client_mode' => 'pwa']));
-        $response = $this->get('/api/auth/google/callback?state=' . urlencode($state));
+        $response = $this->get('/api/auth/google/callback?state='.urlencode($state));
 
         $response->assertRedirect('https://vmecc.amiosh.com/login?status=success');
         $cookie = $this->findSessionCookie($response->headers->getCookies());
@@ -311,7 +310,7 @@ class AuthSessionCookieTest extends TestCase
     }
 
     /**
-     * @param array<int, Cookie> $cookies
+     * @param  array<int, Cookie>  $cookies
      */
     private function findSessionCookie(array $cookies): ?Cookie
     {
@@ -325,7 +324,7 @@ class AuthSessionCookieTest extends TestCase
     }
 
     /**
-     * @param array<int, Cookie> $cookies
+     * @param  array<int, Cookie>  $cookies
      */
     private function findRememberCookie(array $cookies): ?Cookie
     {

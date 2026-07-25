@@ -22,7 +22,7 @@ class DeletedTeam extends Model
 
     protected $casts = [
         'members_snapshot' => 'array',
-        'deleted_at'       => 'datetime',
+        'deleted_at' => 'datetime',
     ];
 
     public function deletedBy(): BelongsTo

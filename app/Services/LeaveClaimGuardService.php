@@ -12,14 +12,15 @@ use Illuminate\Validation\ValidationException;
 class LeaveClaimGuardService
 {
     private const WORK_SHIFTS = ['normal', 'day12', 'night12'];
+
     private const START_SLOTS = ['shift-start', 'midpoint'];
+
     private const END_SLOTS = ['midpoint', 'shift-end'];
 
     public function __construct(
         private readonly LeavePolicyService $policyService,
         private readonly WorkingDayCalculator $workingDayCalculator,
-    ) {
-    }
+    ) {}
 
     /**
      * Returns a normalized payload whose days value is calculated by the server.

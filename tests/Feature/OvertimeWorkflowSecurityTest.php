@@ -158,7 +158,7 @@ class OvertimeWorkflowSecurityTest extends TestCase
     {
         return OvertimeRecord::query()->create(array_merge([
             'user_id' => $user->id,
-            'display_id' => 'OT-SEC-' . random_int(1000, 9999),
+            'display_id' => 'OT-SEC-'.random_int(1000, 9999),
             'overtime_type' => 'weekday',
             'claim_date' => now()->subDay()->toDateString(),
             'start_time' => '09:00',

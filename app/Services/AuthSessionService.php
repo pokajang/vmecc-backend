@@ -12,6 +12,7 @@ use Symfony\Component\HttpFoundation\Cookie;
 class AuthSessionService
 {
     public const SESSION_COOKIE = 'vmecc_session';
+
     public const REMEMBER_COOKIE = 'vmecc_remember';
 
     /**

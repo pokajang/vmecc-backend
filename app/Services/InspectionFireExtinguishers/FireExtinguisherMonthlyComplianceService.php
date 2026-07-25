@@ -87,10 +87,18 @@ class FireExtinguisherMonthlyComplianceService
     private function statusFor(InspectionFireExtinguisher $row, int $reportCount): string
     {
         $lifecycleStatus = (string) ($row->lifecycle_status ?: ($row->is_active ? 'active' : 'retired'));
-        if ($lifecycleStatus === 'retired') return 'retired';
-        if ($lifecycleStatus === 'out_of_service') return 'out_of_service';
-        if ($reportCount > 1) return 'repeat_check';
-        if ($reportCount === 1) return 'complete';
+        if ($lifecycleStatus === 'retired') {
+            return 'retired';
+        }
+        if ($lifecycleStatus === 'out_of_service') {
+            return 'out_of_service';
+        }
+        if ($reportCount > 1) {
+            return 'repeat_check';
+        }
+        if ($reportCount === 1) {
+            return 'complete';
+        }
 
         return 'not_inspected';
     }

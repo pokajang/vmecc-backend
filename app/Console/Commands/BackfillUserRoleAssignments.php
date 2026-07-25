@@ -56,6 +56,7 @@ class BackfillUserRoleAssignments extends Command
                         if ($reviewRow->wasRecentlyCreated) {
                             $queued++;
                         }
+
                         continue;
                     }
                 }
@@ -106,6 +107,7 @@ class BackfillUserRoleAssignments extends Command
         }
 
         $teamId = Team::query()->whereRaw('LOWER(name) = ?', [mb_strtolower($teamName)])->value('id');
+
         return $teamId ? (int) $teamId : null;
     }
 }

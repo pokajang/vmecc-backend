@@ -43,8 +43,8 @@ class LeaveManagementController extends Controller
             $search = $request->input('search');
             $query->where(function ($q) use ($search) {
                 $q->where('display_id', 'like', "%{$search}%")
-                  ->orWhere('reason', 'like', "%{$search}%")
-                  ->orWhereHas('user', fn ($uq) => $uq->where('name', 'like', "%{$search}%"));
+                    ->orWhere('reason', 'like', "%{$search}%")
+                    ->orWhereHas('user', fn ($uq) => $uq->where('name', 'like', "%{$search}%"));
             });
         }
         if ($request->filled('year')) {
@@ -88,12 +88,12 @@ class LeaveManagementController extends Controller
         $base = LeaveController::formatLeave($leave);
         $user = $leave->relationLoaded('user') ? $leave->user : null;
 
-        $base['employee']      = $user?->name ?? '';
-        $base['employee_email']= $user?->email ?? '';
-        $base['team']          = $user?->team ?? '';
+        $base['employee'] = $user?->name ?? '';
+        $base['employee_email'] = $user?->email ?? '';
+        $base['team'] = $user?->team ?? '';
         $base['owner_user_id'] = $leave->user_id;
         // record_key mirrors frontend convention: "userId::leaveId"
-        $base['record_key']    = $leave->user_id . '::' . $leave->id;
+        $base['record_key'] = $leave->user_id.'::'.$leave->id;
         $base['permitted_actions'] = $this->permittedActions($leave, $actor);
 
         return $base;

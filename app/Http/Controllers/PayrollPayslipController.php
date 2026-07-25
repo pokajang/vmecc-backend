@@ -10,14 +10,15 @@ use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
-use Illuminate\Database\QueryException;
 
 class PayrollPayslipController extends Controller
 {
     private const PAYROLL_COMPANY_PROFILE_KEY = 'payroll_company_profile';
+
     private const DEFAULT_PAYROLL_COMPANY_PROFILE = [
         'legalName' => '',
         'registrationNumber' => '',
@@ -29,7 +30,9 @@ class PayrollPayslipController extends Controller
         'financeContactEmail' => '',
         'financeContactPhone' => '',
     ];
+
     private ?array $payrollCompanyProfile = null;
+
     private ?AssignmentAuthorizationService $assignmentAuthorization = null;
 
     public function index(Request $request): JsonResponse
@@ -402,10 +405,12 @@ class PayrollPayslipController extends Controller
         foreach ($base as $key => $value) {
             if (is_string($value) && trim($value) !== '') {
                 $merged[$key] = $value;
+
                 continue;
             }
-            if (!is_string($value) && $value !== null) {
+            if (! is_string($value) && $value !== null) {
                 $merged[$key] = $value;
+
                 continue;
             }
             $snapshotValue = $snapshot[$key] ?? null;

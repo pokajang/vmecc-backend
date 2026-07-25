@@ -101,7 +101,7 @@ return new class extends Migration
                     }
                 }
 
-                if (!empty($rows)) {
+                if (! empty($rows)) {
                     DB::table('workflow_notification_recipient_states')->insert($rows);
                 }
             });

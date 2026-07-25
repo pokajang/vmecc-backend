@@ -8,8 +8,8 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DrillReportPdfController;
 use App\Http\Controllers\ErcoReportPdfController;
 use App\Http\Controllers\FeedbackReportController;
-use App\Http\Controllers\FitnessTestAnalyticsController;
 use App\Http\Controllers\FireExtinguisherExceptionExportController;
+use App\Http\Controllers\FitnessTestAnalyticsController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\InspectionDutyContextController;
 use App\Http\Controllers\InspectionEquipmentController;
@@ -327,11 +327,11 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::put('reports/{reportUid}', [ReportController::class, 'update']);
     Route::delete('reports/{reportUid}', [ReportController::class, 'destroy']);
     Route::post('reports/{reportUid}/restore', [ReportController::class, 'restore']);
-        Route::post('reports/{reportUid}/review', [ReportController::class, 'review']);
-        Route::post('reports/{reportUid}/approve', [ReportController::class, 'approve']);
-        Route::post('reports/{reportUid}/reject', [ReportController::class, 'reject']);
-        Route::get('reports/{reportUid}/revisions', [ReportController::class, 'revisions']);
-        Route::get('reports/{reportUid}/revisions/{revision}', [ReportController::class, 'revision']);
+    Route::post('reports/{reportUid}/review', [ReportController::class, 'review']);
+    Route::post('reports/{reportUid}/approve', [ReportController::class, 'approve']);
+    Route::post('reports/{reportUid}/reject', [ReportController::class, 'reject']);
+    Route::get('reports/{reportUid}/revisions', [ReportController::class, 'revisions']);
+    Route::get('reports/{reportUid}/revisions/{revision}', [ReportController::class, 'revision']);
 
     Route::post('migration/ot-payroll/import', [OtPayrollMigrationController::class, 'import'])
         ->middleware('module.enabled:payroll');

@@ -17,8 +17,7 @@ class InspectionScbaCatalogController extends Controller
 {
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {

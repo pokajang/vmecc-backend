@@ -8,9 +8,7 @@ use Illuminate\Http\Request;
 
 class WorkflowNotificationController extends Controller
 {
-    public function __construct(private readonly WorkflowNotificationService $notificationService)
-    {
-    }
+    public function __construct(private readonly WorkflowNotificationService $notificationService) {}
 
     public function index(Request $request): JsonResponse
     {

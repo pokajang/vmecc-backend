@@ -11,7 +11,9 @@ class UserSession extends Model
     use HasFactory;
 
     protected $table = 'user_sessions';
+
     public $incrementing = false;
+
     protected $keyType = 'string';
 
     protected $fillable = [

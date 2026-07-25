@@ -66,12 +66,12 @@ class LeaveAssignmentController extends Controller
         $actor = $request->user();
 
         $data = $request->validate([
-            'user_id'     => ['required', 'integer', 'exists:users,id'],
-            'year'        => ['required', 'integer', 'min:2000', 'max:2100'],
-            'leave_type'  => ['required', 'string', Rule::in(array_keys($this->policyService->types()))],
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+            'year' => ['required', 'integer', 'min:2000', 'max:2100'],
+            'leave_type' => ['required', 'string', Rule::in(array_keys($this->policyService->types()))],
             'entitlement' => ['required', 'numeric', 'min:0', 'max:365'],
-            'used'        => ['nullable', 'numeric', 'min:0'],
-            'pending'     => ['nullable', 'numeric', 'min:0'],
+            'used' => ['nullable', 'numeric', 'min:0'],
+            'pending' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $assignment = DB::transaction(function () use ($data, $actor) {
@@ -79,28 +79,28 @@ class LeaveAssignmentController extends Controller
 
             $assignment = LeaveAssignment::updateOrCreate(
                 [
-                    'user_id'    => $data['user_id'],
-                    'year'       => $data['year'],
+                    'user_id' => $data['user_id'],
+                    'year' => $data['year'],
                     'leave_type' => $data['leave_type'],
                 ],
                 [
                     'entitlement' => $data['entitlement'],
-                    'used'        => $data['used'] ?? 0,
-                    'pending'     => $data['pending'] ?? 0,
+                    'used' => $data['used'] ?? 0,
+                    'pending' => $data['pending'] ?? 0,
                 ]
             );
 
             LeaveAssignmentHistory::create([
                 'assignment_id' => $assignment->id,
-                'user_id'       => $assignment->user_id,
+                'user_id' => $assignment->user_id,
                 'actor_user_id' => $actor->id,
-                'action'        => $assignment->wasRecentlyCreated ? 'created' : 'updated',
-                'changes'       => [
+                'action' => $assignment->wasRecentlyCreated ? 'created' : 'updated',
+                'changes' => [
                     'entitlement' => $assignment->entitlement,
-                    'used'        => $assignment->used,
-                    'pending'     => $assignment->pending,
+                    'used' => $assignment->used,
+                    'pending' => $assignment->pending,
                 ],
-                'created_at'    => now(),
+                'created_at' => now(),
             ]);
 
             return $assignment;
@@ -108,9 +108,9 @@ class LeaveAssignmentController extends Controller
 
         AuditLogger::log($request, 'leave_assignment_saved', null, [
             'assignment_id' => $assignment->id,
-            'user_id'       => $assignment->user_id,
-            'year'          => $assignment->year,
-            'leave_type'    => $assignment->leave_type,
+            'user_id' => $assignment->user_id,
+            'year' => $assignment->year,
+            'leave_type' => $assignment->leave_type,
         ]);
 
         $assignment->load('user');
@@ -131,19 +131,19 @@ class LeaveAssignmentController extends Controller
 
     public function update(Request $request, int $id): JsonResponse
     {
-        $actor      = $request->user();
+        $actor = $request->user();
         $assignment = LeaveAssignment::with('user')->findOrFail($id);
 
         $data = $request->validate([
             'entitlement' => ['sometimes', 'required', 'numeric', 'min:0', 'max:365'],
-            'used'        => ['sometimes', 'required', 'numeric', 'min:0'],
-            'pending'     => ['sometimes', 'required', 'numeric', 'min:0'],
+            'used' => ['sometimes', 'required', 'numeric', 'min:0'],
+            'pending' => ['sometimes', 'required', 'numeric', 'min:0'],
         ]);
 
         $from = [
             'entitlement' => $assignment->entitlement,
-            'used'        => $assignment->used,
-            'pending'     => $assignment->pending,
+            'used' => $assignment->used,
+            'pending' => $assignment->pending,
         ];
 
         DB::transaction(function () use ($assignment, $data, $actor, $from) {
@@ -151,11 +151,11 @@ class LeaveAssignmentController extends Controller
 
             LeaveAssignmentHistory::create([
                 'assignment_id' => $assignment->id,
-                'user_id'       => $assignment->user_id,
+                'user_id' => $assignment->user_id,
                 'actor_user_id' => $actor->id,
-                'action'        => 'updated',
-                'changes'       => ['from' => $from, 'to' => $data],
-                'created_at'    => now(),
+                'action' => 'updated',
+                'changes' => ['from' => $from, 'to' => $data],
+                'created_at' => now(),
             ]);
         });
 
@@ -177,7 +177,7 @@ class LeaveAssignmentController extends Controller
 
     public function destroy(Request $request, int $id): JsonResponse
     {
-        $actor      = $request->user();
+        $actor = $request->user();
         $assignment = LeaveAssignment::with('user')->findOrFail($id);
         $ownerUserId = (int) $assignment->user_id;
         $ownerName = (string) ($assignment->user?->name ?? '');
@@ -187,15 +187,15 @@ class LeaveAssignmentController extends Controller
         DB::transaction(function () use ($assignment, $actor) {
             LeaveAssignmentHistory::create([
                 'assignment_id' => $assignment->id,
-                'user_id'       => $assignment->user_id,
+                'user_id' => $assignment->user_id,
                 'actor_user_id' => $actor->id,
-                'action'        => 'deleted',
-                'changes'       => [
+                'action' => 'deleted',
+                'changes' => [
                     'entitlement' => $assignment->entitlement,
-                    'used'        => $assignment->used,
-                    'pending'     => $assignment->pending,
+                    'used' => $assignment->used,
+                    'pending' => $assignment->pending,
                 ],
-                'created_at'    => now(),
+                'created_at' => now(),
             ]);
 
             $assignment->delete();
@@ -221,15 +221,15 @@ class LeaveAssignmentController extends Controller
     private function formatAssignment(LeaveAssignment $a, ?User $user): array
     {
         return [
-            'id'          => $a->id,
-            'user_id'     => $a->user_id,
-            'year'        => $a->year,
-            'employee'    => $user?->name ?? '',
-            'team'        => $user?->team ?? '',
-            'leave_type'  => $a->leave_type,
+            'id' => $a->id,
+            'user_id' => $a->user_id,
+            'year' => $a->year,
+            'employee' => $user?->name ?? '',
+            'team' => $user?->team ?? '',
+            'leave_type' => $a->leave_type,
             'entitlement' => (float) $a->entitlement,
-            'used'        => (float) $a->used,
-            'pending'     => (float) $a->pending,
+            'used' => (float) $a->used,
+            'pending' => (float) $a->pending,
         ];
     }
 }

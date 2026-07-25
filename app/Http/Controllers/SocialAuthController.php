@@ -14,9 +14,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class SocialAuthController extends Controller
 {
-    public function __construct(private readonly AuthSessionService $sessions)
-    {
-    }
+    public function __construct(private readonly AuthSessionService $sessions) {}
 
     public function redirect(Request $request): JsonResponse
     {
@@ -47,11 +45,13 @@ class SocialAuthController extends Controller
             $googleUser = Socialite::driver('google')->stateless()->user();
         } catch (\Throwable $e) {
             $this->logAttempt(null, $request->input('email', ''), 'Failed', 'Google authentication error', $ip, $ua, $deviceId, $deviceInfo, $clientMode);
+
             return $this->redirectToFrontend('error', 'Unable to authenticate with Google.');
         }
 
         if (! $googleUser->getEmail()) {
             $this->logAttempt(null, '', 'Failed', 'Google account missing email', $ip, $ua, $deviceId, $deviceInfo, $clientMode);
+
             return $this->redirectToFrontend('error', 'Google account does not have an email address.');
         }
 
@@ -60,6 +60,7 @@ class SocialAuthController extends Controller
         if (! $user || strcasecmp((string) $user->status, 'Active') !== 0 || $user->locked_at) {
             $reason = $user && $user->locked_at ? 'Account locked' : 'Account not enabled for Google login';
             $this->logAttempt($user, $googleUser->getEmail(), 'Failed', $reason, $ip, $ua, $deviceId, $deviceInfo, $clientMode);
+
             return $this->redirectToFrontend('error', 'Your account is not enabled for Google sign-in. Please try logging in with your email and password.');
         }
 
@@ -92,6 +93,7 @@ class SocialAuthController extends Controller
     private function rememberRequested(Request $request): bool
     {
         $payload = $this->statePayload($request);
+
         return (bool) ($payload['remember'] ?? false);
     }
 

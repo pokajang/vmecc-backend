@@ -55,7 +55,8 @@ class PayrollClaimManagementController extends Controller
             $data['owner_id'] = $row->user_id;
             $data['owner_label'] = $row->user?->name ?? ($row->submitted_by_name ?: "User {$row->user_id}");
             $data['owner_email'] = $row->user?->email ?? '';
-            $data['record_key'] = $row->user_id . '::' . $row->id;
+            $data['record_key'] = $row->user_id.'::'.$row->id;
+
             return $data;
         });
 
@@ -73,7 +74,7 @@ class PayrollClaimManagementController extends Controller
         $data['owner_id'] = $row->user_id;
         $data['owner_label'] = $row->user?->name ?? ($row->submitted_by_name ?: "User {$row->user_id}");
         $data['owner_email'] = $row->user?->email ?? '';
-        $data['record_key'] = $row->user_id . '::' . $row->id;
+        $data['record_key'] = $row->user_id.'::'.$row->id;
 
         return response()->json(['data' => $data]);
     }

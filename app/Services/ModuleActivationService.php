@@ -28,6 +28,7 @@ class ModuleActivationService
         }
 
         $configured = $this->normalizeConfigured($raw['configured'] ?? $raw);
+
         return $this->payload($configured, false);
     }
 
@@ -102,6 +103,7 @@ class ModuleActivationService
 
             if (is_bool($value)) {
                 $configured[$key] = $value;
+
                 continue;
             }
 

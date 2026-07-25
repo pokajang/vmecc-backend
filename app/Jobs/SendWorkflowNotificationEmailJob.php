@@ -20,11 +20,10 @@ class SendWorkflowNotificationEmailJob implements ShouldQueue
     use SerializesModels;
 
     public int $tries = 3;
+
     public array $backoff = [30, 120, 300];
 
-    public function __construct(private readonly int $notificationId)
-    {
-    }
+    public function __construct(private readonly int $notificationId) {}
 
     public function handle(): void
     {

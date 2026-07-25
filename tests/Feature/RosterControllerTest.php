@@ -29,18 +29,19 @@ class RosterControllerTest extends TestCase
         Permission::firstOrCreate(['name' => 'rosters.manage', 'guard_name' => 'web']);
         $role->givePermissionTo('rosters.manage');
         UserRoleAssignment::create([
-            'user_id'    => $user->id,
-            'role_id'    => $role->id,
+            'user_id' => $user->id,
+            'role_id' => $role->id,
             'scope_type' => RoleCatalog::GLOBAL,
             'is_primary' => true,
         ]);
         $this->actingAs($user);
+
         return $user;
     }
 
-    private function makeTeam(string $name = null): Team
+    private function makeTeam(?string $name = null): Team
     {
-        return Team::factory()->create(['name' => $name ?? 'Team ' . uniqid()]);
+        return Team::factory()->create(['name' => $name ?? 'Team '.uniqid()]);
     }
 
     private function rosterEntry(string $date, array $shifts): array
@@ -85,7 +86,7 @@ class RosterControllerTest extends TestCase
         $team = $this->makeTeam();
         $this->actingAs($user);
         $this->postJson('/api/rosters/publish', [
-            'entries'     => [$this->rosterEntry('2026-05-01', [$this->shift('day', $team->id)])],
+            'entries' => [$this->rosterEntry('2026-05-01', [$this->shift('day', $team->id)])],
             'scope_label' => 'May 2026',
         ])->assertStatus(403);
     }
@@ -187,10 +188,10 @@ class RosterControllerTest extends TestCase
         ])->assertOk()->assertJsonPath('message', 'Roster draft saved.');
 
         $this->assertDatabaseHas('rosters', [
-            'date'    => '2026-06-01',
-            'shift'   => 'day',
+            'date' => '2026-06-01',
+            'shift' => 'day',
             'team_id' => $team->id,
-            'status'  => 'draft',
+            'status' => 'draft',
         ]);
     }
 
@@ -251,13 +252,13 @@ class RosterControllerTest extends TestCase
         $team = $this->makeTeam();
 
         $this->postJson('/api/rosters/publish', [
-            'entries'     => [$this->rosterEntry('2026-07-01', [$this->shift('day', $team->id)])],
+            'entries' => [$this->rosterEntry('2026-07-01', [$this->shift('day', $team->id)])],
             'scope_label' => 'July 2026',
         ])->assertOk()->assertJsonPath('message', 'Roster published and teams notified.');
 
         $this->assertDatabaseHas('rosters', [
-            'date'   => '2026-07-01',
-            'shift'  => 'day',
+            'date' => '2026-07-01',
+            'shift' => 'day',
             'status' => 'published',
         ]);
     }
@@ -271,7 +272,7 @@ class RosterControllerTest extends TestCase
         Roster::create(['date' => '2026-07-01', 'shift' => 'day', 'team_id' => $team->id, 'status' => 'draft']);
 
         $this->postJson('/api/rosters/publish', [
-            'entries'     => [$this->rosterEntry('2026-07-01', [$this->shift('day', $team->id)])],
+            'entries' => [$this->rosterEntry('2026-07-01', [$this->shift('day', $team->id)])],
             'scope_label' => 'July 2026',
         ])->assertOk();
 
@@ -284,12 +285,12 @@ class RosterControllerTest extends TestCase
         config(['mail.workflow_notifications.enabled' => true, 'mail.workflow_notifications.modules.roster' => true]);
 
         $this->actingAsRosterManager();
-        $team   = $this->makeTeam('Bravo');
+        $team = $this->makeTeam('Bravo');
         $member = User::factory()->create(['email' => 'member@example.com']);
         TeamMember::create(['team_id' => $team->id, 'user_id' => $member->id, 'name' => $member->name, 'ended_at' => null]);
 
         $this->postJson('/api/rosters/publish', [
-            'entries'     => [$this->rosterEntry('2026-07-10', [$this->shift('day', $team->id)])],
+            'entries' => [$this->rosterEntry('2026-07-10', [$this->shift('day', $team->id)])],
             'scope_label' => 'July 2026',
         ])->assertOk();
 
@@ -310,17 +311,17 @@ class RosterControllerTest extends TestCase
         config(['mail.workflow_notifications.enabled' => true, 'mail.workflow_notifications.modules.roster' => true]);
 
         $this->actingAsRosterManager();
-        $team   = $this->makeTeam('Charlie');
+        $team = $this->makeTeam('Charlie');
         $member = User::factory()->create(['email' => 'ended@example.com']);
         TeamMember::create([
-            'team_id'  => $team->id,
-            'user_id'  => $member->id,
-            'name'     => $member->name,
+            'team_id' => $team->id,
+            'user_id' => $member->id,
+            'name' => $member->name,
             'ended_at' => Carbon::yesterday(),
         ]);
 
         $this->postJson('/api/rosters/publish', [
-            'entries'     => [$this->rosterEntry('2026-07-10', [$this->shift('day', $team->id)])],
+            'entries' => [$this->rosterEntry('2026-07-10', [$this->shift('day', $team->id)])],
             'scope_label' => 'July 2026',
         ])->assertOk();
 
@@ -340,12 +341,12 @@ class RosterControllerTest extends TestCase
         config(['mail.workflow_notifications.enabled' => false]);
 
         $this->actingAsRosterManager();
-        $team   = $this->makeTeam('Delta');
+        $team = $this->makeTeam('Delta');
         $member = User::factory()->create(['email' => 'delta@example.com']);
         TeamMember::create(['team_id' => $team->id, 'user_id' => $member->id, 'name' => $member->name, 'ended_at' => null]);
 
         $this->postJson('/api/rosters/publish', [
-            'entries'     => [$this->rosterEntry('2026-07-10', [$this->shift('day', $team->id)])],
+            'entries' => [$this->rosterEntry('2026-07-10', [$this->shift('day', $team->id)])],
             'scope_label' => 'July 2026',
         ])->assertOk();
 
@@ -364,7 +365,7 @@ class RosterControllerTest extends TestCase
         $team = $this->makeTeam();
 
         $this->postJson('/api/rosters/publish', [
-            'entries'     => [
+            'entries' => [
                 $this->rosterEntry('2026-07-01', [
                     $this->shift('day', $team->id),
                     $this->shift('night', $team->id),
@@ -393,7 +394,7 @@ class RosterControllerTest extends TestCase
         // No roster rows in DB — query with a date range that has no data.
         // We verify via the logic path by creating an entry, then deleting it.
         $team = $this->makeTeam();
-        $r    = Roster::create(['date' => '2026-08-01', 'shift' => 'day', 'team_id' => $team->id, 'status' => 'draft']);
+        $r = Roster::create(['date' => '2026-08-01', 'shift' => 'day', 'team_id' => $team->id, 'status' => 'draft']);
         $r->delete();
 
         $res = $this->getJson('/api/rosters?from=2026-08-01&to=2026-08-01');

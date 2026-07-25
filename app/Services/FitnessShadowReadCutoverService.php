@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\Report;
-use Illuminate\Support\Facades\DB;
 
 final class FitnessShadowReadCutoverService
 {

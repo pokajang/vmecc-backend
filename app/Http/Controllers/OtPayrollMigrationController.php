@@ -15,13 +15,11 @@ use Illuminate\Support\Facades\DB;
 
 class OtPayrollMigrationController extends Controller
 {
-    public function __construct(private readonly AssignmentAuthorizationService $authorizationService)
-    {
-    }
+    public function __construct(private readonly AssignmentAuthorizationService $authorizationService) {}
 
     public function import(Request $request): JsonResponse
     {
-        if (!config('features.ot_payroll_migration_enabled', true)) {
+        if (! config('features.ot_payroll_migration_enabled', true)) {
             return response()->json([
                 'message' => 'OT/Payroll migration is disabled by feature flag.',
             ], 403);
@@ -55,7 +53,7 @@ class OtPayrollMigrationController extends Controller
             $this->importPayrollClaims($user->id, $payload['payroll']['claims'] ?? [], $report);
             $this->importPayrollDrafts($user->id, $payload['payroll']['drafts'] ?? [], $report);
 
-            if (!empty($payload['settings']) && is_array($payload['settings'])) {
+            if (! empty($payload['settings']) && is_array($payload['settings'])) {
                 $this->importSettings($user, $payload['settings'], $report);
             }
         });
@@ -69,14 +67,16 @@ class OtPayrollMigrationController extends Controller
     private function importOvertimeRecords(int $userId, array $rows, array &$report): void
     {
         foreach ($rows as $row) {
-            if (!is_array($row)) {
+            if (! is_array($row)) {
                 $report['overtime']['skipped']++;
+
                 continue;
             }
 
             $displayId = trim((string) ($row['id'] ?? $row['display_id'] ?? ''));
             if ($displayId === '') {
                 $report['overtime']['skipped']++;
+
                 continue;
             }
 
@@ -105,8 +105,11 @@ class OtPayrollMigrationController extends Controller
                 ->first();
             if ($existing) {
                 $existing->fill($updatePayload)->save();
-                if ($existing->trashed()) $existing->restore();
+                if ($existing->trashed()) {
+                    $existing->restore();
+                }
                 $report['overtime']['updated']++;
+
                 continue;
             }
 
@@ -121,8 +124,9 @@ class OtPayrollMigrationController extends Controller
 
     private function importOvertimeDraft(int $userId, mixed $draft, array &$report): void
     {
-        if (!is_array($draft) || $draft === []) {
+        if (! is_array($draft) || $draft === []) {
             $report['overtimeDraft']['skipped']++;
+
             return;
         }
 
@@ -133,6 +137,7 @@ class OtPayrollMigrationController extends Controller
                 'saved_at' => now(),
             ]);
             $report['overtimeDraft']['updated']++;
+
             return;
         }
 
@@ -147,19 +152,25 @@ class OtPayrollMigrationController extends Controller
     private function importPayrollClaims(int $userId, array $rows, array &$report): void
     {
         foreach ($rows as $row) {
-            if (!is_array($row)) {
+            if (! is_array($row)) {
                 $report['payrollClaims']['skipped']++;
+
                 continue;
             }
             $displayId = trim((string) ($row['id'] ?? $row['display_id'] ?? ''));
             if ($displayId === '') {
                 $report['payrollClaims']['skipped']++;
+
                 continue;
             }
 
             $claimType = strtolower(trim((string) ($row['type'] ?? $row['claim_type'] ?? 'expense')));
-            if ($claimType === 'other') $claimType = 'exceptional';
-            if (!in_array($claimType, ['expense', 'salary', 'exceptional'], true)) $claimType = 'expense';
+            if ($claimType === 'other') {
+                $claimType = 'exceptional';
+            }
+            if (! in_array($claimType, ['expense', 'salary', 'exceptional'], true)) {
+                $claimType = 'expense';
+            }
 
             $updatePayload = [
                 'claim_type' => $claimType,
@@ -195,7 +206,9 @@ class OtPayrollMigrationController extends Controller
 
             if ($existing) {
                 $existing->fill($updatePayload)->save();
-                if ($existing->trashed()) $existing->restore();
+                if ($existing->trashed()) {
+                    $existing->restore();
+                }
                 PayrollClaimItem::query()->where('payroll_claim_id', $existing->id)->delete();
                 foreach ($items as $item) {
                     PayrollClaimItem::query()->create([
@@ -210,6 +223,7 @@ class OtPayrollMigrationController extends Controller
                     ]);
                 }
                 $report['payrollClaims']['updated']++;
+
                 continue;
             }
 
@@ -237,19 +251,23 @@ class OtPayrollMigrationController extends Controller
     private function importPayrollDrafts(int $userId, array $rows, array &$report): void
     {
         foreach ($rows as $row) {
-            if (!is_array($row)) {
+            if (! is_array($row)) {
                 $report['payrollDrafts']['skipped']++;
+
                 continue;
             }
 
             $claimType = strtolower(trim((string) ($row['claimType'] ?? $row['claim_type'] ?? 'expense')));
-            if ($claimType === 'other') $claimType = 'exceptional';
-            if (!in_array($claimType, ['expense', 'salary', 'exceptional'], true)) {
+            if ($claimType === 'other') {
+                $claimType = 'exceptional';
+            }
+            if (! in_array($claimType, ['expense', 'salary', 'exceptional'], true)) {
                 $claimType = 'expense';
             }
             $draftId = trim((string) ($row['id'] ?? $row['draft_id'] ?? ''));
             if ($draftId === '') {
                 $report['payrollDrafts']['skipped']++;
+
                 continue;
             }
 
@@ -264,6 +282,7 @@ class OtPayrollMigrationController extends Controller
                     'saved_at' => now(),
                 ]);
                 $report['payrollDrafts']['updated']++;
+
                 continue;
             }
 
@@ -281,8 +300,9 @@ class OtPayrollMigrationController extends Controller
     private function importSettings($user, array $settings, array &$report): void
     {
         $canManageSettings = $this->authorizationService->hasPermission($user, 'settings.manage');
-        if (!$canManageSettings) {
+        if (! $canManageSettings) {
             $report['settings']['skipped']++;
+
             return;
         }
 
@@ -294,8 +314,9 @@ class OtPayrollMigrationController extends Controller
 
         foreach ($map as $inputKey => $settingKey) {
             $value = $settings[$inputKey] ?? null;
-            if (!is_array($value)) {
+            if (! is_array($value)) {
                 $report['settings']['skipped']++;
+
                 continue;
             }
             Setting::query()->updateOrCreate(

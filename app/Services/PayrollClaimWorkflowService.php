@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\OvertimeRecord;
+use App\Models\PayrollClaim;
 use App\Models\Setting;
 use Illuminate\Support\Str;
 
@@ -299,7 +300,7 @@ class PayrollClaimWorkflowService
     public function generateDisplayId(int $userId, int $year): string
     {
         $prefix = "CLM-{$year}-";
-        $last = \App\Models\PayrollClaim::withTrashed()
+        $last = PayrollClaim::withTrashed()
             ->where('user_id', $userId)
             ->where('display_id', 'like', $prefix.'%')
             ->orderByDesc('id')

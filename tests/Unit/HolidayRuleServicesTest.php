@@ -126,4 +126,3 @@ class HolidayRuleServicesTest extends TestCase
         $this->assertSame('weekday', $classifier->classify($user, '2026-04-14'));
     }
 }
-

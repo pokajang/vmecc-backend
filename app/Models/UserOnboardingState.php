@@ -11,6 +11,7 @@ class UserOnboardingState extends Model
     use HasFactory;
 
     public const PROFILE_COMPLETION_TRT = 'profile_completion_trt';
+
     public const INSPECTION_QUICK_TOUR_TRT = 'inspection_quick_tour_trt';
 
     public const CURRENT_VERSIONS = [

@@ -9,9 +9,7 @@ class InspectionWorkflowService
 {
     private const MODULE_KEY = 'inspection';
 
-    public function __construct(private readonly ReportingWorkflowService $reportingWorkflowService)
-    {
-    }
+    public function __construct(private readonly ReportingWorkflowService $reportingWorkflowService) {}
 
     public function loadWorkflowRules(): array
     {

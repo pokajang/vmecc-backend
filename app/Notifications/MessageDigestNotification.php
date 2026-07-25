@@ -11,8 +11,7 @@ class MessageDigestNotification extends Notification
         private readonly int $count,
         private readonly array $topSenders,
         private readonly array $items,
-    ) {
-    }
+    ) {}
 
     public function via(object $notifiable): array
     {

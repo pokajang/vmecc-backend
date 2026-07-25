@@ -39,6 +39,7 @@ class ListWorkflowEmailDeliveries extends Command
             ->when($user !== '', function (Builder $builder) use ($user) {
                 if (ctype_digit($user)) {
                     $builder->where('user_id', (int) $user);
+
                     return;
                 }
 
@@ -55,6 +56,7 @@ class ListWorkflowEmailDeliveries extends Command
         $rows = $query->get();
         if ($rows->isEmpty()) {
             $this->info('No workflow email deliveries matched the filters.');
+
             return self::SUCCESS;
         }
 

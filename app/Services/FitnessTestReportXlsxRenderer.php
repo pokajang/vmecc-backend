@@ -19,7 +19,7 @@ final class FitnessTestReportXlsxRenderer
             return '';
         }
 
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         $opened = $zip->open($tempPath, ZipArchive::OVERWRITE | ZipArchive::CREATE);
         if ($opened !== true) {
             @unlink($tempPath);
@@ -98,6 +98,7 @@ XML;
             $rowNumber = $rowIndex + 1;
             if (count($row) === 0) {
                 $rowTags[] = '<row r="'.$rowNumber.'"/>';
+
                 continue;
             }
 
@@ -188,6 +189,7 @@ XML;
         $shiftGroups = is_array($payload['shiftGroups'] ?? null) ? $payload['shiftGroups'] : [];
         if (! $shiftGroups) {
             $rows[] = ['No grouped participants found for this report.'];
+
             return $rows;
         }
 
@@ -212,6 +214,7 @@ XML;
                     '',
                     'No participants in this shift group.',
                 ];
+
                 continue;
             }
 
@@ -349,6 +352,7 @@ XML;
             if ($leftOrder === $rightOrder) {
                 $leftCode = strtoupper(trim((string) ($left['checkpointCode'] ?? '')));
                 $rightCode = strtoupper(trim((string) ($right['checkpointCode'] ?? '')));
+
                 return strcasecmp($leftCode, $rightCode);
             }
 

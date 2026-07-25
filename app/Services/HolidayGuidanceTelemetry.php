@@ -34,4 +34,3 @@ class HolidayGuidanceTelemetry
         Cache::put($counterKey, (int) Cache::get($counterKey, 0), now()->addDays(30));
     }
 }
-

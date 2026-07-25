@@ -20,8 +20,8 @@ class OvertimeClaimGuardService
             ]);
         }
 
-        $startAt = CarbonImmutable::parse($claimDate->toDateString() . ' ' . $data['start_time']);
-        $endAt = CarbonImmutable::parse($claimDate->toDateString() . ' ' . $data['end_time']);
+        $startAt = CarbonImmutable::parse($claimDate->toDateString().' '.$data['start_time']);
+        $endAt = CarbonImmutable::parse($claimDate->toDateString().' '.$data['end_time']);
         $isOvernight = (bool) ($data['is_overnight'] ?? false);
         $requiresOvernight = $endAt->lessThanOrEqualTo($startAt);
 
@@ -60,8 +60,8 @@ class OvertimeClaimGuardService
             if (! $record->claim_date || ! $record->start_time || ! $record->end_time) {
                 continue;
             }
-            $recordStart = CarbonImmutable::parse($record->claim_date->toDateString() . ' ' . $record->start_time);
-            $recordEnd = CarbonImmutable::parse($record->claim_date->toDateString() . ' ' . $record->end_time);
+            $recordStart = CarbonImmutable::parse($record->claim_date->toDateString().' '.$record->start_time);
+            $recordEnd = CarbonImmutable::parse($record->claim_date->toDateString().' '.$record->end_time);
             if ((bool) $record->is_overnight) {
                 $recordEnd = $recordEnd->addDay();
             }

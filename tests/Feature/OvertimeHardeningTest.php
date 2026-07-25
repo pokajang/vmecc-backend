@@ -98,7 +98,7 @@ class OvertimeHardeningTest extends TestCase
     {
         return OvertimeRecord::query()->create(array_merge([
             'user_id' => $user->id,
-            'display_id' => 'OT-2026-' . random_int(100, 999),
+            'display_id' => 'OT-2026-'.random_int(100, 999),
             'overtime_type' => 'weekday',
             'claim_date' => '2026-04-13',
             'start_time' => '09:00',
@@ -135,6 +135,7 @@ class OvertimeHardeningTest extends TestCase
             'scope_type' => RoleCatalog::GLOBAL,
             'is_primary' => true,
         ]);
+
         return $user;
     }
 
@@ -150,6 +151,7 @@ class OvertimeHardeningTest extends TestCase
             'scope_type' => RoleCatalog::GLOBAL,
             'is_primary' => true,
         ]);
+
         return $user;
     }
 }

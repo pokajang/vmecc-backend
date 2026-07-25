@@ -10,11 +10,17 @@ use Illuminate\Support\Facades\Cache;
 class SystemMaintenanceService
 {
     private const SETTINGS_KEY = 'system_maintenance';
+
     private const CACHE_KEY = 'settings.system_maintenance';
+
     private const CACHE_TTL_SECONDS = 10;
+
     private const DEFAULT_MESSAGE = 'System is under maintenance. Please try again later.';
+
     public const PHASE_OFF = 'off';
+
     public const PHASE_GRACE = 'grace';
+
     public const PHASE_ENFORCED = 'enforced';
 
     public function load(): array
@@ -30,6 +36,7 @@ class SystemMaintenanceService
         $normalized = $this->normalizeForSave($value, $current, $updatedBy?->id);
 
         $this->persist($normalized);
+
         return $normalized;
     }
 
@@ -50,6 +57,7 @@ class SystemMaintenanceService
         ], $setting, null);
 
         $this->persist($next);
+
         return [
             'setting' => $next,
             'autoTransitioned' => true,
@@ -59,6 +67,7 @@ class SystemMaintenanceService
     public function loadFresh(): array
     {
         $setting = Setting::query()->where('key', self::SETTINGS_KEY)->first();
+
         return $this->normalizeStored($setting?->value ?? []);
     }
 
@@ -70,6 +79,7 @@ class SystemMaintenanceService
     public function graceSeconds(): int
     {
         $raw = (int) env('SYSTEM_MAINTENANCE_GRACE_SECONDS', 10);
+
         return max(5, min(3600, $raw));
     }
 
@@ -184,6 +194,7 @@ class SystemMaintenanceService
 
         if (is_numeric($value)) {
             $cast = (int) $value;
+
             return $cast > 0 ? $cast : null;
         }
 

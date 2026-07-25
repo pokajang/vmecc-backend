@@ -8,9 +8,7 @@ use App\Services\AssignmentAuthorizationService;
 
 class WorkflowNotificationLinkResolver
 {
-    public function __construct(private readonly AssignmentAuthorizationService $authorizationService)
-    {
-    }
+    public function __construct(private readonly AssignmentAuthorizationService $authorizationService) {}
 
     public function resolveRelative(WorkflowNotification $notification, ?User $recipient = null): string
     {
@@ -28,23 +26,24 @@ class WorkflowNotificationLinkResolver
 
         if ($module === 'report' || $recordType === 'report') {
             if ($reportType === 'inspection') {
-                return $reportUid !== '' ? '/inspection/' . rawurlencode($reportUid) : '/reports?reportType=inspection';
+                return $reportUid !== '' ? '/inspection/'.rawurlencode($reportUid) : '/reports?reportType=inspection';
             }
 
             if ($reportType !== '' && $reportUid !== '') {
-                return '/report/' . rawurlencode($reportType) . '/' . rawurlencode($reportUid);
+                return '/report/'.rawurlencode($reportType).'/'.rawurlencode($reportUid);
             }
 
             return '/reports';
         }
 
         if ($module === 'inspection') {
-            return $reportUid !== '' ? '/inspection/' . rawurlencode($reportUid) : '/reports?reportType=inspection';
+            return $reportUid !== '' ? '/inspection/'.rawurlencode($reportUid) : '/reports?reportType=inspection';
         }
 
         if ($recordType === 'team' || $module === 'team') {
             $teamId = $detailRouteKey !== '' ? $detailRouteKey : $recordId;
-            return $teamId !== '' ? '/team/details/' . rawurlencode($teamId) : '/team';
+
+            return $teamId !== '' ? '/team/details/'.rawurlencode($teamId) : '/team';
         }
 
         if ($recordType === 'roster' || $module === 'roster') {
@@ -54,40 +53,45 @@ class WorkflowNotificationLinkResolver
         if ($recordType === 'overtime' || $module === 'overtime') {
             if ($actionRequiredForViewer) {
                 $routeKey = $detailRouteKey !== '' ? $detailRouteKey : ($ownerUserId !== '' && $recordId !== '' ? "{$ownerUserId}::{$recordId}" : '');
-                return $routeKey !== '' ? '/staff/overtime-management/record/' . rawurlencode($routeKey) : '/staff/overtime-management/records';
+
+                return $routeKey !== '' ? '/staff/overtime-management/record/'.rawurlencode($routeKey) : '/staff/overtime-management/records';
             }
 
-            return $displayId !== '' ? '/overtime/' . rawurlencode($displayId) : '/overtime';
+            return $displayId !== '' ? '/overtime/'.rawurlencode($displayId) : '/overtime';
         }
 
         if ($recordType === 'leave' || $module === 'leave') {
             if ($actionRequiredForViewer) {
                 $routeKey = $detailRouteKey !== '' ? $detailRouteKey : ($ownerUserId !== '' && $recordId !== '' ? "{$ownerUserId}::{$recordId}" : '');
-                return $routeKey !== '' ? '/staff/leave-management/record/' . rawurlencode($routeKey) : '/staff/leave-management/records';
+
+                return $routeKey !== '' ? '/staff/leave-management/record/'.rawurlencode($routeKey) : '/staff/leave-management/records';
             }
 
-            return $recordId !== '' ? '/leave/' . rawurlencode($recordId) : '/leave';
+            return $recordId !== '' ? '/leave/'.rawurlencode($recordId) : '/leave';
         }
 
         if ($recordType === 'salary_assignment') {
             if ($actionRequiredForViewer && $recordId !== '') {
-                return '/staff/set-salary/assignment/' . rawurlencode($recordId) . '/view';
+                return '/staff/set-salary/assignment/'.rawurlencode($recordId).'/view';
             }
 
             $assignmentId = $detailRouteKey !== '' ? $detailRouteKey : $recordId;
+
             return $assignmentId !== ''
-                ? '/staff/set-salary/set-salary?assignmentId=' . rawurlencode($assignmentId)
+                ? '/staff/set-salary/set-salary?assignmentId='.rawurlencode($assignmentId)
                 : '/staff/set-salary/set-salary';
         }
 
         if (in_array($module, ['salary', 'expense', 'exceptional'], true) || $recordType === 'payroll_claim') {
             if ($actionRequiredForViewer) {
                 $staffKey = $ownerUserId !== '' && $recordId !== '' ? "{$ownerUserId}::{$recordId}" : ($detailRouteKey !== '' ? $detailRouteKey : $displayId);
-                return $staffKey !== '' ? '/staff/salary-claims/claim/' . rawurlencode($staffKey) : '/staff/salary-claims/claims';
+
+                return $staffKey !== '' ? '/staff/salary-claims/claim/'.rawurlencode($staffKey) : '/staff/salary-claims/claims';
             }
 
             $claimKey = $displayId !== '' ? $displayId : ($detailRouteKey !== '' ? $detailRouteKey : $recordId);
-            return $claimKey !== '' ? '/payroll/claims/' . rawurlencode($claimKey) : '/payroll/claims';
+
+            return $claimKey !== '' ? '/payroll/claims/'.rawurlencode($claimKey) : '/payroll/claims';
         }
 
         return '/notifications/workflow';

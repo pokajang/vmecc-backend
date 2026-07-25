@@ -8,12 +8,11 @@ use App\Services\ModuleCatalog;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class ModuleActivationController extends Controller
 {
-    public function __construct(private readonly ModuleActivationService $moduleActivationService)
-    {
-    }
+    public function __construct(private readonly ModuleActivationService $moduleActivationService) {}
 
     public function show(): JsonResponse
     {
@@ -32,14 +31,14 @@ class ModuleActivationController extends Controller
         $configured = $request->input('configured');
 
         if (! is_array($configured)) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
+            throw ValidationException::withMessages([
                 'configured' => ['The configured field must be an object.'],
             ]);
         }
 
         foreach ($configured as $module => $enabled) {
             if (! is_string($module) || ! is_bool($enabled)) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
+                throw ValidationException::withMessages([
                     'configured' => ['Module overrides must be keyed by module and set to true or false.'],
                 ]);
             }

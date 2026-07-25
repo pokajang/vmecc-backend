@@ -17,8 +17,7 @@ class WorkflowImmediateNotificationMail extends Mailable
         public readonly WorkflowNotification $notification,
         public readonly User $recipient,
         public readonly string $actionUrl,
-    ) {
-    }
+    ) {}
 
     public function build(): self
     {

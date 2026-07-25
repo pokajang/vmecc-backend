@@ -6,14 +6,11 @@ use App\Models\Team;
 use App\Models\TeamMember;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
-use App\Services\WorkflowNotificationService;
 use Illuminate\Support\Facades\DB;
 
 class TeamMemberSyncService
 {
-    public function __construct(private readonly WorkflowNotificationService $workflowNotifications)
-    {
-    }
+    public function __construct(private readonly WorkflowNotificationService $workflowNotifications) {}
 
     /**
      * Sync team_members from a user's active role assignments.
@@ -26,8 +23,7 @@ class TeamMemberSyncService
         User $user,
         bool $notifyAssignedUser = true,
         bool $notifyLeaders = true,
-    ): void
-    {
+    ): void {
         $today = now()->toDateString();
 
         $activeAssignments = UserRoleAssignment::query()
@@ -42,13 +38,13 @@ class TeamMemberSyncService
             ->with('role')
             ->get();
 
-        $assignmentMap = $activeAssignments->mapWithKeys(fn($a) => [
+        $assignmentMap = $activeAssignments->mapWithKeys(fn ($a) => [
             $a->team_id => $a->role?->name ?? '',
         ]);
 
         // Bulk-fetch all existing team_member rows for this user in one query
         // rather than issuing a separate SELECT per assignment.
-        $activeTeamIds   = $activeAssignments->pluck('team_id')->all();
+        $activeTeamIds = $activeAssignments->pluck('team_id')->all();
         $existingMembers = TeamMember::query()
             ->where('user_id', $user->id)
             ->whereIn('team_id', $activeTeamIds)
@@ -64,7 +60,7 @@ class TeamMemberSyncService
         ) {
             foreach ($activeAssignments as $assignment) {
                 $existing = $existingMembers->get($assignment->team_id);
-                $isNew    = ! $existing || $existing->ended_at !== null;
+                $isNew = ! $existing || $existing->ended_at !== null;
 
                 TeamMember::updateOrCreate(
                     [
@@ -72,17 +68,17 @@ class TeamMemberSyncService
                         'user_id' => $user->id,
                     ],
                     [
-                        'name'       => $user->name,
-                        'role'       => $assignment->role?->name ?? '',
+                        'name' => $user->name,
+                        'role' => $assignment->role?->name ?? '',
                         'is_primary' => $assignment->is_primary,
                         'started_at' => $assignment->start_date?->toDateString() ?? $today,
-                        'ended_at'   => null,
+                        'ended_at' => null,
                     ]
                 );
 
                 if ($isNew) {
                     $newAssignments[] = [
-                        'teamId'   => $assignment->team_id,
+                        'teamId' => $assignment->team_id,
                         'roleName' => $assignment->role?->name ?? '',
                     ];
                 }
@@ -123,8 +119,7 @@ class TeamMemberSyncService
         string $roleName,
         bool $notifyAssignedUser = true,
         bool $notifyLeaders = true,
-    ): void
-    {
+    ): void {
         $team = Team::with(['members' => function ($q) {
             $q->whereNull('ended_at');
         }])->find($teamId);
@@ -146,9 +141,9 @@ class TeamMemberSyncService
                 actor: $actor,
                 targetUserIds: [$newMember->id],
                 metadata: [
-                    'teamId'   => $team->id,
+                    'teamId' => $team->id,
                     'teamName' => $team->name,
-                    'role'     => $roleName,
+                    'role' => $roleName,
                 ],
             );
         }
@@ -160,10 +155,9 @@ class TeamMemberSyncService
         $leaderRoles = ['incident commander', 'assistant incident commander'];
         $memberCount = $team->members->count();
 
-        $leaders = $team->members->filter(fn($m) =>
-            $m->user_id &&
+        $leaders = $team->members->filter(fn ($m) => $m->user_id &&
             $m->user_id !== $newMember->id &&
-            collect($leaderRoles)->contains(fn($r) => str_contains(strtolower($m->role ?? ''), $r))
+            collect($leaderRoles)->contains(fn ($r) => str_contains(strtolower($m->role ?? ''), $r))
         );
 
         if ($leaders->isNotEmpty()) {
@@ -179,11 +173,11 @@ class TeamMemberSyncService
                 actor: $actor,
                 targetUserIds: $leaderUserIds,
                 metadata: [
-                    'teamId'        => $team->id,
-                    'teamName'      => $team->name,
+                    'teamId' => $team->id,
+                    'teamName' => $team->name,
                     'newMemberName' => $newMember->name,
                     'newMemberRole' => $roleName,
-                    'memberCount'   => $memberCount,
+                    'memberCount' => $memberCount,
                 ],
             );
         }

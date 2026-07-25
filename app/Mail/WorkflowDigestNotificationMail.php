@@ -20,8 +20,7 @@ class WorkflowDigestNotificationMail extends Mailable
         public readonly Collection $reminderItems,
         public readonly CarbonInterface $windowStart,
         public readonly CarbonInterface $windowEnd,
-    ) {
-    }
+    ) {}
 
     public function build(): self
     {

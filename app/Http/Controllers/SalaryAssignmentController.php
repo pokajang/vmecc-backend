@@ -170,7 +170,7 @@ class SalaryAssignmentController extends Controller
 
         $validator->after(function ($validator) {
             $allowances = $validator->getData()['allowances'] ?? [];
-            if (!is_array($allowances)) {
+            if (! is_array($allowances)) {
                 return;
             }
             foreach ($allowances as $index => $allowance) {
@@ -244,7 +244,7 @@ class SalaryAssignmentController extends Controller
     {
         $beforeData = is_array($row->before_data) ? $row->before_data : [];
         $afterData = is_array($row->after_data) ? $row->after_data : [];
-        $snapshot = !empty($afterData) ? $afterData : $beforeData;
+        $snapshot = ! empty($afterData) ? $afterData : $beforeData;
         $employeeContributions = is_array($snapshot['employee_contributions'] ?? null)
             ? $snapshot['employee_contributions']
             : [];

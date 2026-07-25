@@ -12,8 +12,7 @@ class OvertimeEligibilityService
     public function __construct(
         private readonly OvertimeWorkflowService $overtimeWorkflowService,
         private readonly AssignmentAuthorizationService $authorizationService,
-    ) {
-    }
+    ) {}
 
     public function resolveForUser(?User $user): array
     {
@@ -69,6 +68,7 @@ class OvertimeEligibilityService
     {
         return collect($roles)->contains(function ($role) {
             $normalized = mb_strtolower(trim((string) $role));
+
             return in_array($normalized, self::SYSTEM_ADMIN_ROLE_KEYS, true);
         });
     }

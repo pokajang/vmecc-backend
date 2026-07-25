@@ -27,12 +27,14 @@ class BackfillFitnessTestDomain extends Command
     {
         if ($this->option('module') !== 'fitness-test') {
             $this->error('Only --module=fitness-test is supported.');
+
             return self::INVALID;
         }
 
         $adapter = $registry->for('fitness-test');
         if ($adapter === null) {
             $this->error('Fitness Test module adapter is unavailable.');
+
             return self::FAILURE;
         }
 
@@ -57,6 +59,7 @@ class BackfillFitnessTestDomain extends Command
                 $counts['scanned']++;
                 if (! $this->option('force') && FitnessTestReport::query()->where('report_id', $report->id)->exists()) {
                     $counts['skipped']++;
+
                     continue;
                 }
                 try {

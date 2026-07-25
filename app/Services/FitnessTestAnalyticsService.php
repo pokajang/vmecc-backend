@@ -92,7 +92,7 @@ final class FitnessTestAnalyticsService
     {
         $rows = $this->query($filters)
             ->where('fpr.user_id', $userId)
-            ->selectRaw("r.report_uid as reportUid, r.status as reportStatus, ftr.reporting_month as reportingMonth, ftr.protocol_revision as protocolRevision, t.name as teamName, ftg.shift_name_snapshot as shift, fpr.fitness_result as fitnessResult, fpr.proficiency_result as proficiencyResult, fpr.fitness_tested_on as fitnessTestedOn, fpr.proficiency_tested_on as proficiencyTestedOn")
+            ->selectRaw('r.report_uid as reportUid, r.status as reportStatus, ftr.reporting_month as reportingMonth, ftr.protocol_revision as protocolRevision, t.name as teamName, ftg.shift_name_snapshot as shift, fpr.fitness_result as fitnessResult, fpr.proficiency_result as proficiencyResult, fpr.fitness_tested_on as fitnessTestedOn, fpr.proficiency_tested_on as proficiencyTestedOn')
             ->orderByDesc('ftr.reporting_month')
             ->get();
 
@@ -127,6 +127,7 @@ final class FitnessTestAnalyticsService
         $combined = $this->combinedResultExpression();
         $row = $query->selectRaw("COUNT(*) as totalParticipants, SUM(CASE WHEN fpr.fitness_result IN ('passed','failed') OR fpr.proficiency_result IN ('passed','failed') THEN 1 ELSE 0 END) as assessedParticipants, SUM(CASE WHEN {$combined} = 'passed' THEN 1 ELSE 0 END) as passed, SUM(CASE WHEN {$combined} = 'failed' THEN 1 ELSE 0 END) as failed, SUM(CASE WHEN {$combined} = 'incomplete' THEN 1 ELSE 0 END) as incomplete, SUM(CASE WHEN fpr.fitness_result = 'passed' THEN 1 ELSE 0 END) as fitnessPassed, SUM(CASE WHEN fpr.proficiency_result = 'passed' THEN 1 ELSE 0 END) as proficiencyPassed")->first();
         $total = (int) ($row->totalParticipants ?? 0);
+
         return [
             'totalParticipants' => $total, 'assessedParticipants' => (int) ($row->assessedParticipants ?? 0),
             'participationCoverageRate' => $this->rate((int) ($row->assessedParticipants ?? 0), $total),
@@ -138,6 +139,7 @@ final class FitnessTestAnalyticsService
     private function grouped(array $filters, string $column, string $label): array
     {
         $combined = $this->combinedResultExpression();
+
         return $this->query($filters)
             ->selectRaw("{$column} as {$label}, COUNT(*) as participants, SUM(CASE WHEN {$combined} = 'passed' THEN 1 ELSE 0 END) as passed, SUM(CASE WHEN {$combined} = 'failed' THEN 1 ELSE 0 END) as failed")
             ->groupByRaw($column)
@@ -151,6 +153,7 @@ final class FitnessTestAnalyticsService
     private function overdueCount(array $filters): int
     {
         $combined = $this->combinedResultExpression();
+
         return $this->query($filters)->where('ftr.reporting_month', '<', Carbon::now()->format('Y-m'))->whereRaw("{$combined} = 'incomplete'")->count();
     }
 

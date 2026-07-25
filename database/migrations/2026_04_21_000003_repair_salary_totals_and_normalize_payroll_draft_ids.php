@@ -87,4 +87,3 @@ return new class extends Migration
         // Irreversible data repair migration.
     }
 };
-

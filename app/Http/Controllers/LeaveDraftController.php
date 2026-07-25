@@ -10,10 +10,10 @@ class LeaveDraftController extends Controller
 {
     public function show(Request $request): JsonResponse
     {
-        $user  = $request->user();
+        $user = $request->user();
         $draft = LeaveDraft::where('user_id', $user->id)->first();
 
-        if (!$draft) {
+        if (! $draft) {
             return response()->json(['data' => null]);
         }
 
@@ -32,7 +32,7 @@ class LeaveDraftController extends Controller
             ['user_id' => $user->id],
             [
                 'draft_data' => $data['draft_data'],
-                'saved_at'   => now(),
+                'saved_at' => now(),
             ]
         );
 
@@ -51,10 +51,10 @@ class LeaveDraftController extends Controller
     private function formatDraft(LeaveDraft $draft): array
     {
         return [
-            'id'         => $draft->id,
-            'user_id'    => $draft->user_id,
+            'id' => $draft->id,
+            'user_id' => $draft->user_id,
             'draft_data' => $draft->draft_data,
-            'saved_at'   => optional($draft->saved_at)->toIso8601String(),
+            'saved_at' => optional($draft->saved_at)->toIso8601String(),
         ];
     }
 }

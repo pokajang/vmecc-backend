@@ -61,7 +61,7 @@ class SmokeScenarioSeeder extends Seeder
 
     private function seedRoster(User $actor, ?Team $siteAlpha, ?Team $siteBeta): void
     {
-        if (!$siteAlpha || !$siteBeta) {
+        if (! $siteAlpha || ! $siteBeta) {
             return;
         }
 
@@ -237,7 +237,7 @@ class SmokeScenarioSeeder extends Seeder
             Report::updateOrCreate(
                 ['report_uid' => "smoke-{$type}-uid"],
                 [
-                    'display_id' => 'SMK-' . strtoupper(str_replace('-', '', $type)),
+                    'display_id' => 'SMK-'.strtoupper(str_replace('-', '', $type)),
                     'submission_key' => "smoke-{$type}-submission",
                     'owner_user_id' => $owner->id,
                     'report_type' => $type,
@@ -372,7 +372,7 @@ class SmokeScenarioSeeder extends Seeder
                     'recordDisplayId' => 'SMK-LV-1',
                     'status' => 'pending',
                     'nextActionRole' => 'Human Resource',
-                    'detailRouteKey' => $owner->id . '::' . $leaveId,
+                    'detailRouteKey' => $owner->id.'::'.$leaveId,
                 ],
                 'created_at' => now(),
             ],

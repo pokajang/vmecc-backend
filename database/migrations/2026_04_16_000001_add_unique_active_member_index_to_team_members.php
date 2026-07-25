@@ -2,7 +2,6 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Prevent duplicate active memberships for the same (team_id, user_id).
@@ -18,12 +17,12 @@ return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement("
+        DB::statement('
             CREATE UNIQUE INDEX uq_team_members_active_user
             ON team_members (user_id, team_id)
             WHERE ended_at IS NULL
               AND user_id IS NOT NULL
-        ");
+        ');
     }
 
     public function down(): void

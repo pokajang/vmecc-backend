@@ -11,7 +11,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        if (!Schema::hasTable('message_attachments')) {
+        if (! Schema::hasTable('message_attachments')) {
             return;
         }
         if (Schema::hasColumn('message_attachments', 'deleted_at')) {
@@ -25,10 +25,10 @@ return new class extends Migration
 
     public function down(): void
     {
-        if (!Schema::hasTable('message_attachments')) {
+        if (! Schema::hasTable('message_attachments')) {
             return;
         }
-        if (!Schema::hasColumn('message_attachments', 'deleted_at')) {
+        if (! Schema::hasColumn('message_attachments', 'deleted_at')) {
             return;
         }
 

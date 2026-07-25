@@ -15,7 +15,9 @@ return new class extends Migration
 
     public function up(): void
     {
-        if (! Schema::hasTable('permissions')) return;
+        if (! Schema::hasTable('permissions')) {
+            return;
+        }
         foreach (self::PERMISSIONS as $permission) {
             DB::table('permissions')->updateOrInsert(['name' => $permission, 'guard_name' => 'web'], ['updated_at' => now(), 'created_at' => now()]);
         }
@@ -23,6 +25,8 @@ return new class extends Migration
 
     public function down(): void
     {
-        if (Schema::hasTable('permissions')) DB::table('permissions')->whereIn('name', self::PERMISSIONS)->delete();
+        if (Schema::hasTable('permissions')) {
+            DB::table('permissions')->whereIn('name', self::PERMISSIONS)->delete();
+        }
     }
 };

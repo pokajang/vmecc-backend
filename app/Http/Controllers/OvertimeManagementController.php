@@ -257,6 +257,7 @@ class OvertimeManagementController extends Controller
                         $teamQuery->whereNull('team')->orWhere('team', '');
                     });
                 });
+
             return;
         }
 
@@ -365,7 +366,7 @@ class OvertimeManagementController extends Controller
         $base['employee_email'] = $row->user?->email ?? '';
         $base['avatar_url'] = $this->resolveProfileImageUrl($row->user?->profile_image_url);
         $base['team'] = $teamByUserId[$ownerId] ?? 'Unassigned';
-        $base['record_key'] = $ownerId . '::' . $row->id;
+        $base['record_key'] = $ownerId.'::'.$row->id;
         $base['permitted_actions'] = $this->resolvePermittedActions($row, $actor);
 
         return $base;
@@ -495,6 +496,7 @@ class OvertimeManagementController extends Controller
         if ($normalized === 'weekday') {
             return 'Weekday';
         }
+
         return $normalized !== '' ? ucfirst($normalized) : 'Unknown';
     }
 
@@ -507,6 +509,7 @@ class OvertimeManagementController extends Controller
         if (str_starts_with($raw, 'http://') || str_starts_with($raw, 'https://')) {
             return $raw;
         }
+
         return Storage::disk(config('filesystems.public_uploads_disk', 'public'))->url($raw);
     }
 }

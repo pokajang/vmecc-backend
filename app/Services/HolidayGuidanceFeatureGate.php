@@ -32,7 +32,7 @@ class HolidayGuidanceFeatureGate
 
     private function enabledForUser(bool $baseFlagEnabled, ?User $user): bool
     {
-        if (!$baseFlagEnabled) {
+        if (! $baseFlagEnabled) {
             return false;
         }
 
@@ -46,7 +46,7 @@ class HolidayGuidanceFeatureGate
             return true;
         }
 
-        if (!$user) {
+        if (! $user) {
             return false;
         }
 
@@ -56,7 +56,7 @@ class HolidayGuidanceFeatureGate
         }
 
         $userEmail = mb_strtolower(trim((string) ($user->email ?? '')));
+
         return $userEmail !== '' && $cohortEmails->contains($userEmail);
     }
 }
-

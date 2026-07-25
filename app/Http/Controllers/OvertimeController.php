@@ -9,18 +9,19 @@ use App\Services\AuditLogger;
 use App\Services\HolidayGuidanceFeatureGate;
 use App\Services\HolidayGuidanceTelemetry;
 use App\Services\HolidayResolver;
+use App\Services\OvertimeClaimGuardService;
 use App\Services\OvertimeDateClassifier;
 use App\Services\OvertimeEligibilityService;
-use App\Services\OvertimeClaimGuardService;
 use App\Services\OvertimeWorkflowService;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Database\QueryException;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class OvertimeController extends Controller
@@ -35,8 +36,7 @@ class OvertimeController extends Controller
         private readonly HolidayResolver $holidayResolver,
         private readonly HolidayGuidanceFeatureGate $guidanceGate,
         private readonly HolidayGuidanceTelemetry $guidanceTelemetry,
-    ) {
-    }
+    ) {}
 
     public function policy(Request $request): JsonResponse
     {
@@ -134,7 +134,7 @@ class OvertimeController extends Controller
         $workflow = $this->workflowService->buildWorkflowForSubmission($roles);
 
         $entry = [
-            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'id' => (string) Str::uuid(),
             'at' => now()->toIso8601String(),
             'action' => 'Submitted',
             'by' => (string) ($user->name ?? ''),
@@ -142,7 +142,7 @@ class OvertimeController extends Controller
             'remarks' => '',
         ];
 
-        $row = DB::transaction(function () use ($data, $user, $displayId, $workflow, $entry, $derivedOvertimeType) {
+        $row = DB::transaction(function () use ($data, $user, $displayId, $workflow, $entry) {
             return OvertimeRecord::query()->create([
                 'user_id' => $user->id,
                 'display_id' => $displayId,
@@ -197,6 +197,7 @@ class OvertimeController extends Controller
             $data['overtime_type'] ?? null,
             'store',
         );
+
         return response()->json(['data' => self::formatRecord($row), 'meta' => $meta], 201);
     }
 
@@ -229,7 +230,7 @@ class OvertimeController extends Controller
             $derivedOvertimeType = (string) ($data['overtime_type'] ?? $row->overtime_type ?? 'weekday');
         }
         $entry = [
-            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'id' => (string) Str::uuid(),
             'at' => now()->toIso8601String(),
             'action' => $row->status === 'Needs Correction' ? 'Resubmitted' : 'Edited',
             'by' => (string) ($user->name ?? ''),
@@ -293,6 +294,7 @@ class OvertimeController extends Controller
             $data['overtime_type'] ?? null,
             'update',
         );
+
         return response()->json(['data' => self::formatRecord($row), 'meta' => $meta]);
     }
 
@@ -317,7 +319,7 @@ class OvertimeController extends Controller
         $expectedVersion = $this->validateExpectedVersion($request);
         $this->assertExpectedVersion($row, $expectedVersion);
 
-        if (!in_array($row->status, ['Draft', 'Cancelled'], true)) {
+        if (! in_array($row->status, ['Draft', 'Cancelled'], true)) {
             throw ValidationException::withMessages([
                 'status' => ['Only draft or cancelled overtime records can be deleted.'],
             ]);
@@ -344,7 +346,7 @@ class OvertimeController extends Controller
         $user = $request->user();
         $row = OvertimeRecord::query()->where('user_id', $user->id)->with('attachment')->findOrFail($id);
 
-        if (!in_array($row->status, ['Pending', 'Approved'], true)) {
+        if (! in_array($row->status, ['Pending', 'Approved'], true)) {
             throw ValidationException::withMessages([
                 'status' => ['Only pending or approved overtime records can be cancelled.'],
             ]);
@@ -412,7 +414,7 @@ class OvertimeController extends Controller
         ])->validate();
         $this->claimGuardService->validateWindow($validated, $userId, $excludingRecordId);
 
-        if (!empty($validated['attachment_id']) && !WorkflowAttachment::query()
+        if (! empty($validated['attachment_id']) && ! WorkflowAttachment::query()
             ->whereKey($validated['attachment_id'])
             ->where('owner_user_id', $userId)
             ->exists()) {
@@ -484,7 +486,7 @@ class OvertimeController extends Controller
         ];
 
         foreach ($formats as $format) {
-            $parsed = \DateTime::createFromFormat('!' . $format, $raw);
+            $parsed = \DateTime::createFromFormat('!'.$format, $raw);
             $errors = \DateTime::getLastErrors();
             $hasErrors = is_array($errors) && (($errors['warning_count'] ?? 0) > 0 || ($errors['error_count'] ?? 0) > 0);
             if ($parsed !== false && ! $hasErrors) {
@@ -570,6 +572,7 @@ class OvertimeController extends Controller
         $payload = $request->validate([
             'expected_version' => ['nullable', 'integer', 'min:1'],
         ]);
+
         return array_key_exists('expected_version', $payload) ? (int) $payload['expected_version'] : null;
     }
 
@@ -637,7 +640,7 @@ class OvertimeController extends Controller
         ];
 
         foreach ($formats as $format) {
-            $parsed = \DateTime::createFromFormat('!' . $format, $raw);
+            $parsed = \DateTime::createFromFormat('!'.$format, $raw);
             $errors = \DateTime::getLastErrors();
             $hasErrors = is_array($errors) && (($errors['warning_count'] ?? 0) > 0 || ($errors['error_count'] ?? 0) > 0);
             if ($parsed !== false && ! $hasErrors) {
@@ -653,17 +656,16 @@ class OvertimeController extends Controller
         string $derivedOvertimeType,
         mixed $clientOvertimeType,
         string $endpoint,
-    ): array
-    {
+    ): array {
         $guidanceEnabled = $this->guidanceGate->overtimeEnabledForUser($user);
-        if (!$guidanceEnabled) {
+        if (! $guidanceEnabled) {
             return [
                 'guidance_enabled' => false,
             ];
         }
 
         $effectiveState = $this->holidayResolver->resolveEmployeeState($user);
-        if (!$effectiveState) {
+        if (! $effectiveState) {
             $context = [
                 'module' => 'overtime',
                 'endpoint' => $endpoint,

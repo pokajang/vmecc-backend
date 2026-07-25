@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Models\WorkflowNotification;
 use App\Services\RoleCatalog;
+use App\Services\TeamMemberSyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Notification;
@@ -25,17 +26,18 @@ class TeamControllerTest extends TestCase
     private function actingAsAdmin(): User
     {
         $admin = User::factory()->create(['status' => 'active']);
-        $role  = Role::firstOrCreate(['name' => 'Admin', 'guard_name' => 'web']);
+        $role = Role::firstOrCreate(['name' => 'Admin', 'guard_name' => 'web']);
         Permission::firstOrCreate(['name' => 'teams.manage', 'guard_name' => 'web']);
         Permission::firstOrCreate(['name' => 'teams.view', 'guard_name' => 'web']);
         $role->givePermissionTo(['teams.manage', 'teams.view']);
         UserRoleAssignment::create([
-            'user_id'    => $admin->id,
-            'role_id'    => $role->id,
+            'user_id' => $admin->id,
+            'role_id' => $role->id,
             'scope_type' => RoleCatalog::GLOBAL,
             'is_primary' => true,
         ]);
         $this->actingAs($admin);
+
         return $admin;
     }
 
@@ -57,8 +59,8 @@ class TeamControllerTest extends TestCase
         Team::factory()->create(['name' => 'Alpha Team']);
 
         $this->postJson('/api/teams', ['name' => 'Alpha Team'])
-             ->assertUnprocessable()
-             ->assertJsonValidationErrors(['name']);
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['name']);
     }
 
     // ─── UPDATE — dual-team guard ────────────────────────────────────────────
@@ -68,25 +70,25 @@ class TeamControllerTest extends TestCase
         $this->actingAsAdmin();
 
         $otherTeam = Team::factory()->create();
-        $user      = User::factory()->create(['status' => 'active']);
+        $user = User::factory()->create(['status' => 'active']);
 
         // User is already an active member of $otherTeam
         TeamMember::factory()->create([
-            'team_id'  => $otherTeam->id,
-            'user_id'  => $user->id,
-            'name'     => $user->name,
+            'team_id' => $otherTeam->id,
+            'user_id' => $user->id,
+            'name' => $user->name,
             'ended_at' => null,
         ]);
 
         $targetTeam = Team::factory()->create();
 
         $response = $this->putJson("/api/teams/{$targetTeam->id}", [
-            'name'    => $targetTeam->name,
+            'name' => $targetTeam->name,
             'members' => [
                 [
-                    'user_id'    => $user->id,
-                    'name'       => $user->name,
-                    'role'       => 'tactical response team',
+                    'user_id' => $user->id,
+                    'name' => $user->name,
+                    'role' => 'tactical response team',
                     'is_primary' => false,
                     'started_at' => now()->toDateString(),
                 ],
@@ -94,7 +96,7 @@ class TeamControllerTest extends TestCase
         ]);
 
         $response->assertUnprocessable()
-                 ->assertJsonPath('errors.members.0', fn ($msg) => str_contains($msg, $otherTeam->name));
+            ->assertJsonPath('errors.members.0', fn ($msg) => str_contains($msg, $otherTeam->name));
     }
 
     public function test_update_allows_user_already_on_same_team(): void
@@ -106,19 +108,19 @@ class TeamControllerTest extends TestCase
 
         // User is an active member of the same team being updated — should be fine
         TeamMember::factory()->create([
-            'team_id'  => $team->id,
-            'user_id'  => $user->id,
-            'name'     => $user->name,
+            'team_id' => $team->id,
+            'user_id' => $user->id,
+            'name' => $user->name,
             'ended_at' => null,
         ]);
 
         $this->putJson("/api/teams/{$team->id}", [
-            'name'    => $team->name,
+            'name' => $team->name,
             'members' => [
                 [
-                    'user_id'    => $user->id,
-                    'name'       => $user->name,
-                    'role'       => 'tactical response team',
+                    'user_id' => $user->id,
+                    'name' => $user->name,
+                    'role' => 'tactical response team',
                     'is_primary' => false,
                     'started_at' => now()->toDateString(),
                 ],
@@ -132,18 +134,18 @@ class TeamControllerTest extends TestCase
     {
         $this->actingAsAdmin();
 
-        $team       = Team::factory()->create();
-        $user       = User::factory()->create(['status' => 'active']);
+        $team = Team::factory()->create();
+        $user = User::factory()->create(['status' => 'active']);
         $membership = TeamMember::factory()->create([
-            'team_id'  => $team->id,
-            'user_id'  => $user->id,
-            'name'     => $user->name,
+            'team_id' => $team->id,
+            'user_id' => $user->id,
+            'name' => $user->name,
             'ended_at' => null,
         ]);
 
         // Update with an empty members list — should close the existing membership
         $this->putJson("/api/teams/{$team->id}", [
-            'name'    => $team->name,
+            'name' => $team->name,
             'members' => [],
         ])->assertOk();
 
@@ -160,12 +162,12 @@ class TeamControllerTest extends TestCase
         $user = User::factory()->create(['status' => 'active']);
 
         $this->putJson("/api/teams/{$team->id}", [
-            'name'    => $team->name,
+            'name' => $team->name,
             'members' => [
                 [
-                    'user_id'    => $user->id,
-                    'name'       => $user->name,
-                    'role'       => 'tactical response team',
+                    'user_id' => $user->id,
+                    'name' => $user->name,
+                    'role' => 'tactical response team',
                     'is_primary' => false,
                     'started_at' => now()->toDateString(),
                 ],
@@ -173,9 +175,9 @@ class TeamControllerTest extends TestCase
         ])->assertOk();
 
         $this->assertDatabaseHas('workflow_notifications', [
-            'module'     => 'team',
+            'module' => 'team',
             'event_type' => 'member_assigned',
-            'record_id'  => $team->id,
+            'record_id' => $team->id,
         ]);
 
         $notification = WorkflowNotification::where('module', 'team')
@@ -207,9 +209,9 @@ class TeamControllerTest extends TestCase
         $user = User::factory()->create(['status' => 'active']);
 
         TeamMember::factory()->create([
-            'team_id'  => $team->id,
-            'user_id'  => $user->id,
-            'name'     => $user->name,
+            'team_id' => $team->id,
+            'user_id' => $user->id,
+            'name' => $user->name,
             'ended_at' => null,
         ]);
 
@@ -231,10 +233,10 @@ class TeamControllerTest extends TestCase
         $user = User::factory()->create(['status' => 'active']);
 
         TeamMember::factory()->create([
-            'team_id'  => $team->id,
-            'user_id'  => $user->id,
-            'name'     => $user->name,
-            'role'     => 'tactical response team',
+            'team_id' => $team->id,
+            'user_id' => $user->id,
+            'name' => $user->name,
+            'role' => 'tactical response team',
             'ended_at' => null,
         ]);
 
@@ -260,7 +262,7 @@ class TeamControllerTest extends TestCase
         $team = Team::factory()->create();
 
         $this->putJson("/api/teams/{$team->id}", [
-            'name'    => $team->name,
+            'name' => $team->name,
             'members' => [],
         ])->assertOk();
 
@@ -305,8 +307,8 @@ class TeamControllerTest extends TestCase
         $file = UploadedFile::fake()->create('document.pdf', 100, 'application/pdf');
 
         $this->postJson("/api/teams/{$team->id}/image", ['image' => $file])
-             ->assertUnprocessable()
-             ->assertJsonValidationErrors(['image']);
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['image']);
     }
 
     public function test_upload_image_rejects_file_over_4mb(): void
@@ -319,8 +321,8 @@ class TeamControllerTest extends TestCase
         $file = UploadedFile::fake()->image('big.jpg')->size(5000); // 5 MB
 
         $this->postJson("/api/teams/{$team->id}/image", ['image' => $file])
-             ->assertUnprocessable()
-             ->assertJsonValidationErrors(['image']);
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['image']);
     }
 
     // ─── Atomic image + members (multipart PUT via method spoofing) ───────────
@@ -335,16 +337,16 @@ class TeamControllerTest extends TestCase
         $file = UploadedFile::fake()->image('team.png', 80, 80);
 
         $members = json_encode([[
-            'user_id'    => $user->id,
-            'name'       => $user->name,
-            'role'       => 'tactical response team',
+            'user_id' => $user->id,
+            'name' => $user->name,
+            'role' => 'tactical response team',
             'is_primary' => false,
             'started_at' => now()->toDateString(),
         ]]);
 
         $response = $this->call('POST', "/api/teams/{$team->id}", [
             '_method' => 'PUT',
-            'name'    => $team->name,
+            'name' => $team->name,
             'members' => $members,
         ], $this->prepareCookiesForRequest(), ['image' => $file], [
             'CONTENT_TYPE' => 'multipart/form-data',
@@ -376,7 +378,7 @@ class TeamControllerTest extends TestCase
 
         $response = $this->call('POST', "/api/teams/{$team->id}", [
             '_method' => 'PUT',
-            'name'    => $team->name,
+            'name' => $team->name,
             'members' => '[]',
         ], $this->prepareCookiesForRequest(), ['image' => $file], [
             'CONTENT_TYPE' => 'multipart/form-data',
@@ -406,8 +408,8 @@ class TeamControllerTest extends TestCase
         Permission::firstOrCreate(['name' => 'teams.view', 'guard_name' => 'web']);
         $role->givePermissionTo('teams.view');
         UserRoleAssignment::create([
-            'user_id'    => $user->id,
-            'role_id'    => $role->id,
+            'user_id' => $user->id,
+            'role_id' => $role->id,
             'scope_type' => RoleCatalog::GLOBAL,
             'is_primary' => true,
         ]);
@@ -423,8 +425,8 @@ class TeamControllerTest extends TestCase
         Permission::firstOrCreate(['name' => 'teams.view', 'guard_name' => 'web']);
         $role->givePermissionTo('teams.view');
         UserRoleAssignment::create([
-            'user_id'    => $user->id,
-            'role_id'    => $role->id,
+            'user_id' => $user->id,
+            'role_id' => $role->id,
             'scope_type' => RoleCatalog::GLOBAL,
             'is_primary' => true,
         ]);
@@ -487,9 +489,9 @@ class TeamControllerTest extends TestCase
         $team = Team::factory()->create();
         $user = User::factory()->create(['status' => 'active']);
         TeamMember::factory()->create([
-            'team_id'  => $team->id,
-            'user_id'  => $user->id,
-            'name'     => $user->name,
+            'team_id' => $team->id,
+            'user_id' => $user->id,
+            'name' => $user->name,
             'ended_at' => null,
         ]);
 
@@ -509,20 +511,20 @@ class TeamControllerTest extends TestCase
     {
         $this->actingAsAdmin();
 
-        $team       = Team::factory()->create();
-        $active     = User::factory()->create(['status' => 'active']);
-        $pastUser   = User::factory()->create(['status' => 'active']);
+        $team = Team::factory()->create();
+        $active = User::factory()->create(['status' => 'active']);
+        $pastUser = User::factory()->create(['status' => 'active']);
 
         TeamMember::factory()->create([
-            'team_id'  => $team->id,
-            'user_id'  => $active->id,
-            'name'     => $active->name,
+            'team_id' => $team->id,
+            'user_id' => $active->id,
+            'name' => $active->name,
             'ended_at' => null,
         ]);
         TeamMember::factory()->ended()->create([
             'team_id' => $team->id,
             'user_id' => $pastUser->id,
-            'name'    => $pastUser->name,
+            'name' => $pastUser->name,
         ]);
 
         $response = $this->getJson("/api/teams/{$team->id}")->assertOk();
@@ -543,11 +545,11 @@ class TeamControllerTest extends TestCase
         $team = Team::factory()->create();
 
         $this->putJson("/api/teams/{$team->id}", [
-            'name'      => $team->name,
-            'members'   => [],
+            'name' => $team->name,
+            'members' => [],
             'image_url' => '../../../etc/passwd',
         ])->assertUnprocessable()
-          ->assertJsonValidationErrors(['image_url']);
+            ->assertJsonValidationErrors(['image_url']);
     }
 
     public function test_update_accepts_valid_preset_image_url(): void
@@ -556,8 +558,8 @@ class TeamControllerTest extends TestCase
         $team = Team::factory()->create();
 
         $this->putJson("/api/teams/{$team->id}", [
-            'name'      => $team->name,
-            'members'   => [],
+            'name' => $team->name,
+            'members' => [],
             'image_url' => 'preset:alpha',
         ])->assertOk();
 
@@ -570,8 +572,8 @@ class TeamControllerTest extends TestCase
         $team = Team::factory()->create();
 
         $this->putJson("/api/teams/{$team->id}", [
-            'name'      => $team->name,
-            'members'   => [],
+            'name' => $team->name,
+            'members' => [],
             'image_url' => 'teams/abc123.jpg',
         ])->assertOk();
 
@@ -590,24 +592,24 @@ class TeamControllerTest extends TestCase
         // Create a role assignment pointing to the team
         $role = Role::firstOrCreate(['name' => 'Tactical Response Team', 'guard_name' => 'web']);
         $assignment = UserRoleAssignment::create([
-            'user_id'    => $user->id,
-            'role_id'    => $role->id,
+            'user_id' => $user->id,
+            'role_id' => $role->id,
             'scope_type' => 'site',
-            'team_id'    => $team->id,
+            'team_id' => $team->id,
             'is_primary' => false,
         ]);
 
         // Pre-existing member row so the sync knows this is not new (avoids notification path)
         TeamMember::factory()->create([
-            'team_id'  => $team->id,
-            'user_id'  => $user->id,
-            'name'     => $user->name,
+            'team_id' => $team->id,
+            'user_id' => $user->id,
+            'name' => $user->name,
             'ended_at' => null,
         ]);
 
         // Force a DB error mid-transaction by deleting the team between query and write
         // Use a mock to intercept the updateOrCreate and delete the team to cause a FK error
-        $service = app(\App\Services\TeamMemberSyncService::class);
+        $service = app(TeamMemberSyncService::class);
 
         // Delete the team so the FK on team_members.team_id fails during upsert
         $team->delete();

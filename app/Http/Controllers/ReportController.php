@@ -2,30 +2,30 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ReconcileFitnessShadowRead;
 use App\Models\Report;
 use App\Models\ReportTimelineEntry;
-use App\Jobs\ReconcileFitnessShadowRead;
-use App\Services\FitnessShadowReadCutoverService;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\DrillPayloadService;
 use App\Services\ErcoPayloadService;
+use App\Services\FitnessShadowReadCutoverService;
+use App\Services\FitnessTestReportXlsxRenderer;
 use App\Services\InspectionCheckRowSyncService;
 use App\Services\InspectionDutyConfirmationService;
 use App\Services\InspectionDutyContextResolver;
 use App\Services\InspectionPayloadService;
 use App\Services\InspectionPolicy;
 use App\Services\InspectionSessionReportPayloadBuilder;
-use Barryvdh\DomPDF\Facade\Pdf;
 use App\Services\ReportDraftConsumptionService;
-use App\Services\ReportModuleAdapter;
-use App\Services\FitnessTestReportXlsxRenderer;
 use App\Services\ReportingWorkflowService;
 use App\Services\ReportMediaService;
-use App\Services\ReportReadAuthorizationService;
+use App\Services\ReportModuleAdapter;
 use App\Services\ReportModuleRegistry;
+use App\Services\ReportReadAuthorizationService;
 use App\Services\RoleCatalog;
 use App\Services\WorkflowNotificationService;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -439,31 +439,31 @@ class ReportController extends Controller
                     meta: $isInspection ? $this->inspectionWorkflowActorMeta($user) : null,
                 );
 
-            if ($isInspection) {
-                $report->refresh();
-                $this->inspectionCheckRowSyncService->syncForReport($report, (int) $user->id);
-            }
-            if ($reportModuleAdapter !== null) {
-                $reportModuleAdapter->project($report, (array) $report->payload);
-            }
-            $this->reportMediaService->syncPayloadLinks(
-                (array) $report->payload,
-                'report',
-                (string) $report->report_uid,
-                (int) $user->id,
-                $reportType,
-            );
-            if ($status === self::STATUS_SUBMITTED) {
-                $this->reportDraftConsumptionService->consumeOwnedDraft(
+                if ($isInspection) {
+                    $report->refresh();
+                    $this->inspectionCheckRowSyncService->syncForReport($report, (int) $user->id);
+                }
+                if ($reportModuleAdapter !== null) {
+                    $reportModuleAdapter->project($report, (array) $report->payload);
+                }
+                $this->reportMediaService->syncPayloadLinks(
+                    (array) $report->payload,
+                    'report',
+                    (string) $report->report_uid,
                     (int) $user->id,
-                    $sourceDraftId,
                     $reportType,
                 );
-            }
+                if ($status === self::STATUS_SUBMITTED) {
+                    $this->reportDraftConsumptionService->consumeOwnedDraft(
+                        (int) $user->id,
+                        $sourceDraftId,
+                        $reportType,
+                    );
+                }
 
-            return $report->load('timelineEntries');
-        });
-        $this->dispatchFitnessShadowReconciliation($report);
+                return $report->load('timelineEntries');
+            });
+            $this->dispatchFitnessShadowReconciliation($report);
         } catch (QueryException $exception) {
             if ($submissionKey !== '' && $this->isSubmissionKeyDuplicateException($exception)) {
                 $existing = Report::query()

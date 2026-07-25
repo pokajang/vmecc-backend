@@ -25,16 +25,16 @@ class MessageAttachmentController extends Controller
 
         $file = $request->file('file');
         $disk = config('filesystems.default', 'local');
-        $path = $file->store('message-attachments/' . $user->id, ['disk' => $disk]);
+        $path = $file->store('message-attachments/'.$user->id, ['disk' => $disk]);
 
         $attachment = MessageAttachment::create([
-            'message_id'     => null,
-            'owner_user_id'  => $user->id,
-            'disk'           => $disk,
-            'path'           => $path,
-            'original_name'  => $file->getClientOriginalName(),
-            'mime_type'      => $file->getClientMimeType(),
-            'size'           => $file->getSize() ?: 0,
+            'message_id' => null,
+            'owner_user_id' => $user->id,
+            'disk' => $disk,
+            'path' => $path,
+            'original_name' => $file->getClientOriginalName(),
+            'mime_type' => $file->getClientMimeType(),
+            'size' => $file->getSize() ?: 0,
         ]);
 
         return response()->json(['data' => ['id' => $attachment->id]], 201);
@@ -69,7 +69,7 @@ class MessageAttachmentController extends Controller
         }
 
         return Storage::disk($attachment->disk)->response($attachment->path, $attachment->original_name, [
-            'Content-Type'  => $attachment->mime_type ?: 'image/jpeg',
+            'Content-Type' => $attachment->mime_type ?: 'image/jpeg',
             'Cache-Control' => 'private, max-age=86400',
         ]);
     }
@@ -92,7 +92,7 @@ class MessageAttachmentController extends Controller
 
         AuditLogger::log($request, 'message_attachment_deleted', $user, [
             'attachment_id' => $attachment->id,
-            'message_id'    => $attachment->message_id,
+            'message_id' => $attachment->message_id,
         ]);
 
         return response()->json(['message' => 'Attachment deleted.']);

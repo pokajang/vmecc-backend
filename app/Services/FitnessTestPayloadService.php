@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 final class FitnessTestPayloadService
 {
@@ -148,7 +149,7 @@ final class FitnessTestPayloadService
 
                 $fitness = is_array($participant['fitness'] ?? null) ? $participant['fitness'] : [];
                 foreach (['sitUps', 'jumpingJacks', 'pushUps'] as $field) {
-                    if (! isset($fitness[$field]) && ! isset($fitness[\Illuminate\Support\Str::snake($field)])) {
+                    if (! isset($fitness[$field]) && ! isset($fitness[Str::snake($field)])) {
                         $validator->errors()->add("{$participantPath}.fitness.{$field}", 'Fitness metrics are required.');
                     }
                 }

@@ -25,8 +25,7 @@ class RosterController extends Controller
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly WorkflowNotificationService $workflowNotifications,
         private readonly LeaveRosterImpactService $rosterImpactService,
-    ) {
-    }
+    ) {}
 
     /**
      * Return the full ordered list of valid shift slugs:
@@ -35,6 +34,7 @@ class RosterController extends Controller
     private function allShiftSlugs(): array
     {
         $custom = CustomShift::orderBy('sort_order')->orderBy('name')->pluck('name')->toArray();
+
         return array_values(array_unique(array_merge(self::BUILT_IN_SHIFTS, $custom)));
     }
 
@@ -59,12 +59,12 @@ class RosterController extends Controller
         }
 
         $request->validate([
-            'date'     => ['sometimes', 'nullable', 'date'],
-            'from'     => ['sometimes', 'nullable', 'date'],
-            'to'       => ['sometimes', 'nullable', 'date', 'after_or_equal:from'],
-            'status'   => ['sometimes', 'nullable', 'string', 'in:draft,published,unassigned'],
+            'date' => ['sometimes', 'nullable', 'date'],
+            'from' => ['sometimes', 'nullable', 'date'],
+            'to' => ['sometimes', 'nullable', 'date', 'after_or_equal:from'],
+            'status' => ['sometimes', 'nullable', 'string', 'in:draft,published,unassigned'],
             'attention' => ['sometimes', 'nullable', 'string', 'in:draft'],
-            'months'   => ['sometimes', 'nullable', 'array', 'max:24'],
+            'months' => ['sometimes', 'nullable', 'array', 'max:24'],
             'months.*' => ['string', 'regex:/^\d{4}-\d{2}$/'],
         ]);
 
@@ -74,7 +74,7 @@ class RosterController extends Controller
             if ($diffDays > 366) {
                 return response()->json([
                     'message' => 'Date range must not exceed 366 days.',
-                    'errors'  => ['to' => ['Date range must not exceed 366 days.']],
+                    'errors' => ['to' => ['Date range must not exceed 366 days.']],
                 ], 422);
             }
         }
@@ -102,10 +102,12 @@ class RosterController extends Controller
             $query->where(function ($q) use ($months) {
                 foreach ($months as $m) {
                     $monthStr = trim($m);
-                    if ($monthStr === '') continue;
+                    if ($monthStr === '') {
+                        continue;
+                    }
                     try {
                         $start = Carbon::createFromFormat('Y-m', $monthStr)->startOfMonth();
-                        $end   = Carbon::createFromFormat('Y-m', $monthStr)->endOfMonth();
+                        $end = Carbon::createFromFormat('Y-m', $monthStr)->endOfMonth();
                         $q->orWhereBetween('date', [$start->toDateString(), $end->toDateString()]);
                     } catch (\Exception $e) {
                         continue;
@@ -117,7 +119,10 @@ class RosterController extends Controller
         $rosterRows = $query->get();
         $markersByRosterId = $this->rosterImpactService->markersForRosters($rosterRows, $canManageRosters);
         $rosters = $rosterRows->groupBy(function ($item) {
-            if ($item->date instanceof Carbon) return $item->date->toDateString();
+            if ($item->date instanceof Carbon) {
+                return $item->date->toDateString();
+            }
+
             return substr((string) $item->date, 0, 10);
         })->map(function ($items, $date) use ($markersByRosterId) {
             // Build a keyed map of all shifts present for this date
@@ -125,8 +130,8 @@ class RosterController extends Controller
             foreach ($items as $row) {
                 $shiftsMap[$row->shift] = [
                     'team_id' => $row->team_id,
-                    'team'    => $row->team?->name,
-                    'status'  => $row->status,
+                    'team' => $row->team?->name,
+                    'status' => $row->status,
                     'leave_marker' => $markersByRosterId[$row->id] ?? [
                         'requested_count' => 0,
                         'approved_count' => 0,
@@ -136,7 +141,7 @@ class RosterController extends Controller
             }
 
             return [
-                'date'   => $date,
+                'date' => $date,
                 'status' => $this->resolveRowStatus($items),
                 'shifts' => $shiftsMap,
             ];
@@ -156,10 +161,10 @@ class RosterController extends Controller
         $validSlugs = $this->allShiftSlugs();
 
         $data = $request->validate([
-            'entries'                => ['required', 'array', 'min:1', 'max:500'],
-            'entries.*.date'         => ['required', 'date'],
-            'entries.*.shifts'       => ['required', 'array', 'min:1'],
-            'entries.*.shifts.*.shift'   => ['required', 'string', Rule::in($validSlugs)],
+            'entries' => ['required', 'array', 'min:1', 'max:500'],
+            'entries.*.date' => ['required', 'date'],
+            'entries.*.shifts' => ['required', 'array', 'min:1'],
+            'entries.*.shifts.*.shift' => ['required', 'string', Rule::in($validSlugs)],
             'entries.*.shifts.*.team_id' => ['nullable', Rule::exists('teams', 'id')],
         ]);
 
@@ -167,7 +172,7 @@ class RosterController extends Controller
             if ($error = $this->detectSameTeamConflict($entry['shifts'])) {
                 return response()->json([
                     'message' => 'A team cannot be assigned to more than one shift on the same date.',
-                    'errors'  => ['entries' => ["Conflict on {$entry['date']}: {$error}"]],
+                    'errors' => ['entries' => ["Conflict on {$entry['date']}: {$error}"]],
                 ], 422);
             }
         }
@@ -177,8 +182,8 @@ class RosterController extends Controller
         DB::transaction(function () use ($data, $userId) {
             foreach ($data['entries'] as $entry) {
                 foreach ($entry['shifts'] as $shiftRow) {
-                    $shift   = $shiftRow['shift'];
-                    $teamId  = $shiftRow['team_id'];
+                    $shift = $shiftRow['shift'];
+                    $teamId = $shiftRow['team_id'];
                     if ($teamId !== null) {
                         Roster::updateOrCreate(
                             ['date' => $entry['date'], 'shift' => $shift],
@@ -206,40 +211,40 @@ class RosterController extends Controller
         $validSlugs = $this->allShiftSlugs();
 
         $data = $request->validate([
-            'entries'                => ['required', 'array', 'min:1', 'max:500'],
-            'entries.*.date'         => ['required', 'date'],
-            'entries.*.shifts'       => ['required', 'array', 'min:1'],
-            'entries.*.shifts.*.shift'   => ['required', 'string', Rule::in($validSlugs)],
+            'entries' => ['required', 'array', 'min:1', 'max:500'],
+            'entries.*.date' => ['required', 'date'],
+            'entries.*.shifts' => ['required', 'array', 'min:1'],
+            'entries.*.shifts.*.shift' => ['required', 'string', Rule::in($validSlugs)],
             'entries.*.shifts.*.team_id' => ['nullable', Rule::exists('teams', 'id')],
-            'scope_label'            => ['required', 'string', 'max:100'],
+            'scope_label' => ['required', 'string', 'max:100'],
         ]);
 
         foreach ($data['entries'] as $entry) {
             if ($error = $this->detectSameTeamConflict($entry['shifts'])) {
                 return response()->json([
                     'message' => 'A team cannot be assigned to more than one shift on the same date.',
-                    'errors'  => ['entries' => ["Conflict on {$entry['date']}: {$error}"]],
+                    'errors' => ['entries' => ["Conflict on {$entry['date']}: {$error}"]],
                 ], 422);
             }
         }
 
-        $userId     = Auth::id();
+        $userId = Auth::id();
         $scopeLabel = $data['scope_label'];
-        $now        = Carbon::now();
+        $now = Carbon::now();
         $teamShifts = [];
 
         DB::transaction(function () use ($data, $userId, $now, &$teamShifts) {
             foreach ($data['entries'] as $entry) {
                 foreach ($entry['shifts'] as $shiftRow) {
-                    $shift  = $shiftRow['shift'];
+                    $shift = $shiftRow['shift'];
                     $teamId = $shiftRow['team_id'];
                     if ($teamId !== null) {
                         Roster::updateOrCreate(
                             ['date' => $entry['date'], 'shift' => $shift],
                             [
-                                'team_id'      => $teamId,
-                                'status'       => 'published',
-                                'created_by'   => $userId,
+                                'team_id' => $teamId,
+                                'status' => 'published',
+                                'created_by' => $userId,
                                 'published_by' => $userId,
                                 'published_at' => $now,
                             ]
@@ -315,13 +320,16 @@ class RosterController extends Controller
     {
         $seen = [];
         foreach ($shifts as $row) {
-            if ($row['team_id'] === null) continue;
+            if ($row['team_id'] === null) {
+                continue;
+            }
             $id = (string) $row['team_id'];
             if (isset($seen[$id])) {
                 return "team {$id} assigned to both '{$seen[$id]}' and '{$row['shift']}'";
             }
             $seen[$id] = $row['shift'];
         }
+
         return null;
     }
 
@@ -331,8 +339,13 @@ class RosterController extends Controller
     private function resolveRowStatus($items): string
     {
         $statuses = $items->pluck('status')->filter()->unique()->values()->toArray();
-        if (empty($statuses)) return 'unassigned';
-        if (in_array('draft', $statuses, true)) return 'draft';
+        if (empty($statuses)) {
+            return 'unassigned';
+        }
+        if (in_array('draft', $statuses, true)) {
+            return 'draft';
+        }
+
         return 'published';
     }
 }

@@ -10,9 +10,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class EnsureModuleEnabled
 {
-    public function __construct(private readonly ModuleActivationService $moduleActivationService)
-    {
-    }
+    public function __construct(private readonly ModuleActivationService $moduleActivationService) {}
 
     public function handle(Request $request, Closure $next, string $moduleKey): Response
     {

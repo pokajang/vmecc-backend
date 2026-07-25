@@ -9,6 +9,7 @@ use Illuminate\Support\Str;
 class OvertimeWorkflowService
 {
     private const APPROVAL_RULES_KEY = 'overtime_approval_rules';
+
     private const RATE_SETTINGS_KEY = 'overtime_rate_settings';
 
     private const DEFAULT_POLICY = [
@@ -51,6 +52,7 @@ class OvertimeWorkflowService
     public function loadApprovalRules(): array
     {
         $setting = Setting::query()->where('key', self::APPROVAL_RULES_KEY)->first();
+
         return $this->normalizeApprovalRules($setting?->value ?? []);
     }
 
@@ -65,6 +67,7 @@ class OvertimeWorkflowService
     public function loadRateSettings(): array
     {
         $setting = Setting::query()->where('key', self::RATE_SETTINGS_KEY)->first();
+
         return $this->normalizeRateSettings($setting?->value ?? []);
     }
 
@@ -85,7 +88,7 @@ class OvertimeWorkflowService
             ->filter(fn ($row) => is_array($row))
             ->map(function (array $row, int $index) {
                 return [
-                    'id' => trim((string) ($row['id'] ?? '')) ?: "ot-rule-" . ($index + 1),
+                    'id' => trim((string) ($row['id'] ?? '')) ?: 'ot-rule-'.($index + 1),
                     'applicantRole' => trim((string) ($row['applicantRole'] ?? '')),
                     'reviewRole' => trim((string) ($row['reviewRole'] ?? '')),
                     'recommendRole' => trim((string) ($row['recommendRole'] ?? '')),
@@ -115,7 +118,7 @@ class OvertimeWorkflowService
             'publicHoliday' => ($typeVisibility['publicHoliday'] ?? true) !== false,
         ];
 
-        if (!collect($normalizedVisibility)->contains(true)) {
+        if (! collect($normalizedVisibility)->contains(true)) {
             $normalizedVisibility = self::DEFAULT_POLICY['typeVisibility'];
         }
 
@@ -185,6 +188,7 @@ class OvertimeWorkflowService
                     if ($hours === '') {
                         return [];
                     }
+
                     return [$roleName => $hours];
                 })->all(),
             ],
@@ -308,6 +312,7 @@ class OvertimeWorkflowService
                     'approval_history' => $history,
                 ];
             }
+
             return [
                 'workflow_stage' => 'approve',
                 'next_action_role' => trim((string) ($snapshot['approveRole'] ?? '')) ?: null,
@@ -340,7 +345,7 @@ class OvertimeWorkflowService
         $prefix = "OT-{$year}-";
         $last = OvertimeRecord::withTrashed()
             ->where('user_id', $userId)
-            ->where('display_id', 'like', $prefix . '%')
+            ->where('display_id', 'like', $prefix.'%')
             ->orderByDesc('id')
             ->value('display_id');
 
@@ -349,7 +354,7 @@ class OvertimeWorkflowService
             $seq = ((int) substr((string) $last, strlen($prefix))) + 1;
         }
 
-        return $prefix . str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
+        return $prefix.str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
     }
 
     private function actionLabel(string $action): string

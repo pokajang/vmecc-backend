@@ -140,7 +140,7 @@ class ReleaseHardeningTest extends TestCase
     }
 
     /**
-     * @param array<int, Cookie> $cookies
+     * @param  array<int, Cookie>  $cookies
      */
     private function findSessionCookie(array $cookies): ?Cookie
     {

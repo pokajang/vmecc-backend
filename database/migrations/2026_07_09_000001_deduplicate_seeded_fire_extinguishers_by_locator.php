@@ -44,14 +44,20 @@ return new class extends Migration
 
             usort($groupRows, fn ($a, $b): int => $this->compareSeedRowPriority($a, $b));
             $keepRow = $groupRows[0] ?? null;
-            if (! $keepRow) continue;
+            if (! $keepRow) {
+                continue;
+            }
             foreach ($groupRows as $index => $groupRow) {
-                if ($index === 0 || ! ($groupRow->id ?? null)) continue;
+                if ($index === 0 || ! ($groupRow->id ?? null)) {
+                    continue;
+                }
                 $deactivateIds[] = $groupRow->id;
             }
         }
 
-        if ($deactivateIds === []) return;
+        if ($deactivateIds === []) {
+            return;
+        }
 
         DB::table('inspection_fire_extinguishers')
             ->whereIn('id', $deactivateIds)
@@ -72,8 +78,12 @@ return new class extends Migration
         $rightCert = $right->certification_validity ?? null;
 
         if ($leftCert !== $rightCert) {
-            if ($leftCert === null) return 1;
-            if ($rightCert === null) return -1;
+            if ($leftCert === null) {
+                return 1;
+            }
+            if ($rightCert === null) {
+                return -1;
+            }
 
             return $rightCert <=> $leftCert;
         }
@@ -109,4 +119,3 @@ return new class extends Migration
         return str_replace(["CO\u{00B2}", "CO\u{FFFD}"], 'CO2', trim((string) $value));
     }
 };
-

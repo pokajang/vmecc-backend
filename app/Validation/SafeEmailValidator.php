@@ -28,16 +28,16 @@ class SafeEmailValidator extends Validator
         $validations = collect($parameters)
             ->unique()
             ->map(fn ($validation) => match (true) {
-                $validation === 'strict' => new NoRFCWarningsValidation(),
-                $validation === 'dns' => new DNSCheckValidation(),
-                $validation === 'spoof' => new SpoofCheckValidation(),
-                $validation === 'filter' => new FilterEmailValidation(),
+                $validation === 'strict' => new NoRFCWarningsValidation,
+                $validation === 'dns' => new DNSCheckValidation,
+                $validation === 'spoof' => new SpoofCheckValidation,
+                $validation === 'filter' => new FilterEmailValidation,
                 $validation === 'filter_unicode' => FilterEmailValidation::unicode(),
                 is_string($validation) && class_exists($validation) => $this->container->make($validation),
-                default => new RFCValidation(),
+                default => new RFCValidation,
             })
             ->values()
-            ->all() ?: [new RFCValidation()];
+            ->all() ?: [new RFCValidation];
 
         $emailValidator = Container::getInstance()->make(EmailValidator::class);
 

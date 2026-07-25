@@ -4,11 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\DeletedTeam;
 use App\Models\Team;
+use App\Models\TeamMember;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\TeamMemberSyncService;
+use App\Services\WorkflowNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,21 +20,20 @@ class TeamController extends Controller
 {
     public function __construct(
         private readonly TeamMemberSyncService $teamMemberSync,
-        private readonly \App\Services\WorkflowNotificationService $workflowNotifications,
+        private readonly WorkflowNotificationService $workflowNotifications,
         private readonly AssignmentAuthorizationService $authorizationService,
-    ) {
-    }
+    ) {}
 
     private function teamPayload(Team $team, bool $withMembers = false): array
     {
         $payload = [
-            'id'         => $team->id,
-            'name'       => $team->name,
-            'group'      => $team->group,
-            'status'     => $team->status,
-            'lead_name'  => $team->lead_name,
-            'lead_id'    => $team->lead_id,
-            'image_url'  => $team->image_url
+            'id' => $team->id,
+            'name' => $team->name,
+            'group' => $team->group,
+            'status' => $team->status,
+            'lead_name' => $team->lead_name,
+            'lead_id' => $team->lead_id,
+            'image_url' => $team->image_url
                 ? (str_starts_with($team->image_url, 'preset:')
                     ? $team->image_url
                     : Storage::disk($this->publicUploadsDisk())->url($team->image_url))
@@ -43,32 +44,32 @@ class TeamController extends Controller
 
         if ($withMembers) {
             $payload['members'] = $team->members
-                ->filter(fn($m) => $m->ended_at === null)
-                ->map(fn($m) => [
-                    'id'         => $m->id,
-                    'name'       => $m->name,
-                    'role'       => $m->role,
-                    'user_id'    => $m->user_id,
+                ->filter(fn ($m) => $m->ended_at === null)
+                ->map(fn ($m) => [
+                    'id' => $m->id,
+                    'name' => $m->name,
+                    'role' => $m->role,
+                    'user_id' => $m->user_id,
                     'is_primary' => (bool) $m->is_primary,
                     'started_at' => $m->started_at?->toDateString(),
-                    'ended_at'   => $m->ended_at?->toDateString(),
+                    'ended_at' => $m->ended_at?->toDateString(),
                 ])->values();
 
             $payload['past_members'] = $team->members
-                ->filter(fn($m) => $m->ended_at !== null)
+                ->filter(fn ($m) => $m->ended_at !== null)
                 ->sortByDesc('ended_at')
                 ->take(50)
-                ->map(fn($m) => [
-                    'id'         => $m->id,
-                    'name'       => $m->name,
-                    'role'       => $m->role,
-                    'user_id'    => $m->user_id,
+                ->map(fn ($m) => [
+                    'id' => $m->id,
+                    'name' => $m->name,
+                    'role' => $m->role,
+                    'user_id' => $m->user_id,
                     'is_primary' => (bool) $m->is_primary,
                     'started_at' => $m->started_at?->toDateString(),
-                    'ended_at'   => $m->ended_at?->toDateString(),
+                    'ended_at' => $m->ended_at?->toDateString(),
                 ])->values();
         } else {
-            $payload['members']      = [];
+            $payload['members'] = [];
             $payload['past_members'] = [];
         }
 
@@ -92,14 +93,14 @@ class TeamController extends Controller
         }])
             ->orderBy('name')
             ->get()
-            ->map(fn(Team $team) => $this->teamPayload($team, true));
+            ->map(fn (Team $team) => $this->teamPayload($team, true));
 
         return response()->json(['data' => $teams]);
     }
 
     public function memberOptions(): JsonResponse
     {
-        $teamMap = \App\Models\TeamMember::with('team')->get()->groupBy('user_id');
+        $teamMap = TeamMember::with('team')->get()->groupBy('user_id');
 
         $users = User::query()
             ->whereNull('deleted_at')
@@ -130,6 +131,7 @@ class TeamController extends Controller
     public function show(Team $team): JsonResponse
     {
         $this->loadMembers($team);
+
         return response()->json(['data' => $this->teamPayload($team, true)]);
     }
 
@@ -139,19 +141,19 @@ class TeamController extends Controller
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'name'   => 'required|string|max:255|unique:teams,name',
-            'group'  => 'sometimes|nullable|string|max:100',
+            'name' => 'required|string|max:255|unique:teams,name',
+            'group' => 'sometimes|nullable|string|max:100',
             'status' => 'sometimes|string|max:50',
         ]);
 
         $team = Team::create([
-            'name'   => $data['name'],
-            'group'  => $data['group'] ?? null,
+            'name' => $data['name'],
+            'group' => $data['group'] ?? null,
             'status' => $data['status'] ?? config('team.default_status', 'On Duty'),
         ]);
 
         AuditLogger::log($request, 'team_created', null, [
-            'team_id'   => $team->id,
+            'team_id' => $team->id,
             'team_name' => $team->name,
         ]);
 
@@ -171,7 +173,7 @@ class TeamController extends Controller
         $disk = $this->publicUploadsDisk();
 
         // Remove old uploaded image if present (presets are not stored on disk)
-        if ($team->image_url && !str_starts_with($team->image_url, 'preset:')) {
+        if ($team->image_url && ! str_starts_with($team->image_url, 'preset:')) {
             Storage::disk($disk)->delete($team->image_url);
         }
 
@@ -200,16 +202,16 @@ class TeamController extends Controller
         }
 
         $data = $request->validate([
-            'name'                  => 'required|string|max:255|unique:teams,name,' . $team->id,
-            'group'                 => 'sometimes|nullable|string|max:100',
-            'status'                => 'sometimes|nullable|string|max:50',
-            'image_url'             => ['sometimes', 'nullable', 'string', 'max:500', 'regex:/^(preset:[a-z]+|teams\/.+)$/'],
-            'members'               => 'array',
-            'members.*.name'        => 'required|string|max:255',
-            'members.*.role'        => 'nullable|string|max:255',
-            'members.*.user_id'     => 'nullable|exists:users,id',
-            'members.*.is_primary'  => 'boolean',
-            'members.*.started_at'  => 'nullable|date',
+            'name' => 'required|string|max:255|unique:teams,name,'.$team->id,
+            'group' => 'sometimes|nullable|string|max:100',
+            'status' => 'sometimes|nullable|string|max:50',
+            'image_url' => ['sometimes', 'nullable', 'string', 'max:500', 'regex:/^(preset:[a-z]+|teams\/.+)$/'],
+            'members' => 'array',
+            'members.*.name' => 'required|string|max:255',
+            'members.*.role' => 'nullable|string|max:255',
+            'members.*.user_id' => 'nullable|exists:users,id',
+            'members.*.is_primary' => 'boolean',
+            'members.*.started_at' => 'nullable|date',
         ]);
 
         // When a file was uploaded as part of the atomic multipart request, store it now
@@ -219,16 +221,16 @@ class TeamController extends Controller
                 'image' => ['file', 'image', 'max:4096', 'mimes:jpeg,png,webp,gif'],
             ]);
             $disk = $this->publicUploadsDisk();
-            if ($team->image_url && !str_starts_with($team->image_url, 'preset:')) {
+            if ($team->image_url && ! str_starts_with($team->image_url, 'preset:')) {
                 Storage::disk($disk)->delete($team->image_url);
             }
             $data['image_url'] = $request->file('image')->store('teams', ['disk' => $disk]);
         }
 
         // Prevent assigning a user who is already an active member of a different team.
-        if (!empty($data['members'])) {
+        if (! empty($data['members'])) {
             $incomingUserIds = collect($data['members'])->pluck('user_id')->filter()->unique()->values();
-            $conflicts = \App\Models\TeamMember::query()
+            $conflicts = TeamMember::query()
                 ->whereIn('user_id', $incomingUserIds)
                 ->where('team_id', '!=', $team->id)
                 ->whereNull('ended_at')
@@ -236,10 +238,11 @@ class TeamController extends Controller
                 ->get();
 
             if ($conflicts->isNotEmpty()) {
-                $messages = $conflicts->map(fn($m) => "{$m->name} is already an active member of {$m->team->name}")->join(', ');
+                $messages = $conflicts->map(fn ($m) => "{$m->name} is already an active member of {$m->team->name}")->join(', ');
+
                 return response()->json([
                     'message' => 'One or more members are already assigned to another team.',
-                    'errors'  => ['members' => [$messages]],
+                    'errors' => ['members' => [$messages]],
                 ], 422);
             }
         }
@@ -248,29 +251,29 @@ class TeamController extends Controller
         //   null        → clear (delete uploaded file if any)
         //   "preset:x"  → store key as-is
         //   absent      → leave image_url unchanged
-        $updateFields   = ['name' => $data['name'], 'group' => $data['group'] ?? $team->group];
+        $updateFields = ['name' => $data['name'], 'group' => $data['group'] ?? $team->group];
         $oldImageToDelete = null;
         if (array_key_exists('image_url', $data)) {
             $newImageUrl = $data['image_url'];
-            if ($newImageUrl === null && $team->image_url && !str_starts_with($team->image_url, 'preset:')) {
+            if ($newImageUrl === null && $team->image_url && ! str_starts_with($team->image_url, 'preset:')) {
                 $oldImageToDelete = $team->image_url; // delete after DB commit
             }
             $updateFields['image_url'] = $newImageUrl;
         }
-        $newUserIds       = collect();
+        $newUserIds = collect();
         $membersForLookup = [];
 
         DB::transaction(function () use ($team, $updateFields, $data, &$newUserIds, &$membersForLookup) {
             $team->update($updateFields);
 
             if (isset($data['members'])) {
-                $incoming     = collect($data['members']);
-                $existing     = $team->members()->get()->keyBy(fn($m) => $m->user_id ?? 'name:' . $m->name);
-                $incomingKeys = $incoming->map(fn($m) => $m['user_id'] ?? ('name:' . $m['name']))->toArray();
+                $incoming = collect($data['members']);
+                $existing = $team->members()->get()->keyBy(fn ($m) => $m->user_id ?? 'name:'.$m->name);
+                $incomingKeys = $incoming->map(fn ($m) => $m['user_id'] ?? ('name:'.$m['name']))->toArray();
 
                 // Track which user_ids are genuinely new (not currently active members)
                 $activeUserIds = $team->members()->whereNull('ended_at')->pluck('user_id')->filter()->values();
-                $newUserIds    = collect($data['members'])
+                $newUserIds = collect($data['members'])
                     ->pluck('user_id')
                     ->filter()
                     ->diff($activeUserIds)
@@ -281,26 +284,26 @@ class TeamController extends Controller
                     ->whereNull('ended_at')
                     ->get()
                     ->each(function ($member) use ($incomingKeys) {
-                        $key = $member->user_id ?? 'name:' . $member->name;
-                        if (!in_array($key, $incomingKeys, true)) {
+                        $key = $member->user_id ?? 'name:'.$member->name;
+                        if (! in_array($key, $incomingKeys, true)) {
                             $member->update(['ended_at' => now()]);
                         }
                     });
 
                 $incoming->each(function ($member) use ($team, $existing) {
-                    $key     = $member['user_id'] ?? ('name:' . $member['name']);
+                    $key = $member['user_id'] ?? ('name:'.$member['name']);
                     $current = $existing->get($key);
                     $team->members()->updateOrCreate(
                         [
                             'team_id' => $team->id,
                             'user_id' => $member['user_id'] ?? null,
-                            'name'    => $member['name'],
+                            'name' => $member['name'],
                         ],
                         [
-                            'role'       => $member['role'] ?? null,
+                            'role' => $member['role'] ?? null,
                             'is_primary' => $member['is_primary'] ?? false,
                             'started_at' => $member['started_at'] ?? ($current?->started_at?->toDateString() ?? now()->toDateString()),
-                            'ended_at'   => null,
+                            'ended_at' => null,
                         ],
                     );
                 });
@@ -318,7 +321,9 @@ class TeamController extends Controller
             $newMemberUsers = User::whereIn('id', $newUserIds)->get()->keyBy('id');
             foreach ($newUserIds as $userId) {
                 $newMember = $newMemberUsers->get($userId);
-                if (! $newMember) continue;
+                if (! $newMember) {
+                    continue;
+                }
                 $roleName = collect($membersForLookup)->firstWhere('user_id', $userId)['role'] ?? '';
                 $this->teamMemberSync->fireNewMemberNotifications($newMember, $team->id, $roleName);
             }
@@ -327,9 +332,9 @@ class TeamController extends Controller
         $this->loadMembers($team);
 
         AuditLogger::log($request, 'team_updated', null, [
-            'team_id'      => $team->id,
-            'team_name'    => $team->name,
-            'added_users'  => $newUserIds->values()->all(),
+            'team_id' => $team->id,
+            'team_name' => $team->name,
+            'added_users' => $newUserIds->values()->all(),
             'member_count' => $team->members->count(),
         ]);
 
@@ -348,10 +353,10 @@ class TeamController extends Controller
     public function destroy(Request $request, Team $team): JsonResponse
     {
         // Load active members before deletion
-        $team->load(['members' => fn($q) => $q->whereNull('ended_at')]);
+        $team->load(['members' => fn ($q) => $q->whereNull('ended_at')]);
 
-        $activeMembers   = $team->members;
-        $imageToDelete   = ($team->image_url && !str_starts_with($team->image_url, 'preset:'))
+        $activeMembers = $team->members;
+        $imageToDelete = ($team->image_url && ! str_starts_with($team->image_url, 'preset:'))
             ? $team->image_url
             : null;
 
@@ -360,20 +365,20 @@ class TeamController extends Controller
         DB::transaction(function () use ($team, $activeMembers, $request) {
             // 1. Snapshot active members for sysadmin audit trail
             DeletedTeam::create([
-                'name'               => $team->name,
-                'status'             => $team->status,
-                'image_url'          => $team->image_url,
-                'lead_id'            => $team->lead_id,
-                'lead_name'          => $team->lead_name,
-                'members_snapshot'   => $activeMembers->map(fn($m) => [
-                    'user_id'    => $m->user_id,
-                    'name'       => $m->name,
-                    'role'       => $m->role,
+                'name' => $team->name,
+                'status' => $team->status,
+                'image_url' => $team->image_url,
+                'lead_id' => $team->lead_id,
+                'lead_name' => $team->lead_name,
+                'members_snapshot' => $activeMembers->map(fn ($m) => [
+                    'user_id' => $m->user_id,
+                    'name' => $m->name,
+                    'role' => $m->role,
                     'is_primary' => $m->is_primary,
                     'started_at' => $m->started_at?->toDateString(),
                 ])->values()->toArray(),
                 'deleted_by_user_id' => $request->user()?->id,
-                'deleted_at'         => now(),
+                'deleted_at' => now(),
             ]);
 
             // 2. Null out team_id on role assignments so users keep their role
@@ -406,7 +411,7 @@ class TeamController extends Controller
                 actor: $actor,
                 targetUserIds: $memberUserIds->all(),
                 metadata: [
-                    'teamName'    => $team->name,
+                    'teamName' => $team->name,
                     'memberCount' => $activeMembers->count(),
                 ],
             );
@@ -414,9 +419,9 @@ class TeamController extends Controller
 
         // 6. Audit log
         AuditLogger::log($request, 'team_deleted', null, [
-            'team_name'      => $team->name,
-            'member_count'   => $activeMembers->count(),
-            'members'        => $activeMembers->map(fn($m) => [
+            'team_name' => $team->name,
+            'member_count' => $activeMembers->count(),
+            'members' => $activeMembers->map(fn ($m) => [
                 'name' => $m->name,
                 'role' => $m->role,
             ])->values()->toArray(),
