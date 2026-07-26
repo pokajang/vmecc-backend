@@ -18,6 +18,22 @@ class AiHelperRuntimeReadinessTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_markdown_only_reference_is_runtime_ready_without_a_pdf_attachment(): void
+    {
+        config([
+            'ai_helper.embedding_enabled' => false,
+            'ai_helper.reference_corpus_expected_count' => 1,
+            'ai_helper.system_guides_enabled' => false,
+        ]);
+        $entry = $this->readyReferenceEntry(false);
+
+        $readiness = app(AiHelperKnowledgeService::class)->corpusReadiness();
+
+        $this->assertNull($entry->source_document_id);
+        $this->assertTrue($readiness['ready']);
+        $this->assertSame(1, $readiness['reference_knowledge']['active_usable']);
+    }
+
     public function test_runtime_serves_a_previous_reference_index_while_reindexing_but_deployment_blocks(): void
     {
         config([
@@ -108,16 +124,19 @@ class AiHelperRuntimeReadinessTest extends TestCase
         $this->assertSame(0, $reindexing['reference_knowledge']['incompatible_active_embeddings']);
     }
 
-    private function readyReferenceEntry(): AiHelperKnowledgeEntry
+    private function readyReferenceEntry(bool $withPdfAttachment = true): AiHelperKnowledgeEntry
     {
-        $document = AiHelperDocument::create([
-            'title' => 'Approved reference',
-            'source_filename' => 'approved-reference.pdf',
-            'source_mime' => 'application/pdf',
-            'visibility' => AiHelperDocument::VISIBILITY_SHARED,
-        ]);
+        $document = $withPdfAttachment
+            ? AiHelperDocument::create([
+                'title' => 'Approved reference',
+                'source_filename' => 'approved-reference.pdf',
+                'source_mime' => 'application/pdf',
+                'visibility' => AiHelperDocument::VISIBILITY_SHARED,
+            ])
+            : null;
         $entry = AiHelperKnowledgeEntry::create([
-            'source_document_id' => $document->id,
+            'source_document_id' => $document?->id,
+            'knowledge_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
             'title' => 'Approved reference',
             'content' => 'Approved operational evidence.',
             'source_mime' => 'text/markdown',

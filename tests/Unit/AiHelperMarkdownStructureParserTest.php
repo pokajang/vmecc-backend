@@ -39,6 +39,33 @@ MD;
         $this->assertStringContainsString('| IC | Direct response |', $table['content']);
     }
 
+    public function test_it_applies_explicit_source_page_markers_to_text_and_tables(): void
+    {
+        $markdown = <<<'MD'
+# Response perimeter
+
+<!-- source-page: 7 -->
+
+The service covers all areas under VMM control.
+
+<!-- source-page: 8 -->
+
+| Access | Direction |
+| --- | --- |
+| Main route | Follow the approved site access route |
+MD;
+
+        $chunks = collect((new AiHelperMarkdownStructureParser)->chunks($markdown, 1000));
+        $text = $chunks->firstWhere('content_type', 'text');
+        $table = $chunks->firstWhere('content_type', 'table');
+
+        $this->assertSame(7, $text['page_start']);
+        $this->assertSame(7, $text['page_end']);
+        $this->assertSame(8, $table['page_start']);
+        $this->assertSame(8, $table['page_end']);
+        $this->assertStringNotContainsString('source-page', $chunks->pluck('content')->join("\n"));
+    }
+
     public function test_it_does_not_treat_plain_pipe_rows_as_a_repeating_header(): void
     {
         $rows = collect(range(1, 80))->map(fn (int $number) => "| Step {$number} | Action {$number} |")->join("\n");

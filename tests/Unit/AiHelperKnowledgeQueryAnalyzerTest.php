@@ -168,6 +168,7 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
             $this->assertNotSame('general_conversation', $analysis['answer_mode'], $message);
             $this->assertTrue($analysis['evidence_required'], $message);
         }
+
     }
 
     public function test_authoritative_document_follow_up_keeps_its_grounded_context(): void
@@ -352,6 +353,33 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
 
         $this->assertContains('extinguisher', $analyzer->analyze('How do I inspect a fire extiguisher?')['topic_keys']);
         $this->assertContains('height_rescue', $analyzer->analyze('Panduan untuk mangsa tersangkut di tempat tinggi?')['topic_keys']);
+    }
+
+    public function test_emergency_response_service_scope_questions_require_grounded_knowledge(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        foreach ([
+            'How can the VMM site be accessed and what area does the emergency response service cover?',
+            'What is the response perimeter and TRT staffing requirement?',
+            'Apakah akses tapak dan liputan perkhidmatan tindak balas kecemasan?',
+        ] as $message) {
+            $analysis = $analyzer->analyze($message);
+
+            $this->assertContains('emergency_response_service', $analysis['topic_keys'], $message);
+            $this->assertSame('operational_knowledge', $analysis['answer_mode'], $message);
+            $this->assertTrue($analysis['evidence_required'], $message);
+        }
+
+        $accessAnalysis = $analyzer->analyze(
+            'How can the VMM site be accessed and what area does the emergency response service cover?',
+        );
+        $this->assertContains('access', $accessAnalysis['terms']);
+        $this->assertContains('coverage', $accessAnalysis['terms']);
+
+        $staffingAnalysis = $analyzer->analyze('What is the response perimeter and TRT staffing requirement?');
+        $this->assertContains('tactical', $staffingAnalysis['terms']);
+        $this->assertContains('manpower', $staffingAnalysis['terms']);
     }
 
     public function test_follow_up_analysis_tracks_confidence_and_scope_hint(): void

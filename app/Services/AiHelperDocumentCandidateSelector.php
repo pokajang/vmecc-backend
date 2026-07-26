@@ -27,6 +27,18 @@ class AiHelperDocumentCandidateSelector
 
         $eligible = $ranked->reject(fn (array $item) => (bool) ($item['task_conflict'] ?? false))->values();
         $exact = $ranked->where('exact_match', true)->values();
+        if ($exact->isNotEmpty()) {
+            return [
+                'documents' => $exact->take($limit)->values(),
+                'lanes' => [
+                    'exact' => $exact->count(),
+                    'topic' => 0,
+                    'topic_intersection' => 0,
+                    'global' => 0,
+                    'page' => 0,
+                ],
+            ];
+        }
         $topic = $eligible->filter(fn (array $item) => (int) ($item['topic_score'] ?? 0) > 0)
             ->sort(function (array $left, array $right): int {
                 foreach (['task_score', 'topic_coverage', 'topic_score', 'operation_score', 'score'] as $field) {

@@ -75,6 +75,24 @@ class AiHelperDocumentCandidateSelectorTest extends TestCase
         $this->assertSame(1, $result['lanes']['page']);
     }
 
+    public function test_exact_document_request_does_not_add_unrequested_global_documents(): void
+    {
+        $exact = $this->fakeDocument(id: 1, score: 100, globalScore: 100, routeMatch: false);
+        $exact['exact_match'] = true;
+        $ranked = collect([
+            $exact,
+            $this->fakeDocument(id: 2, score: 90, globalScore: 90, routeMatch: false),
+        ]);
+
+        $result = (new AiHelperDocumentCandidateSelector)->select($ranked, [
+            'context_dependency' => 'neutral',
+            'requires_multiple_documents' => false,
+        ]);
+
+        $this->assertSame([1], $result['documents']->pluck('entry.id')->all());
+        $this->assertSame(0, $result['lanes']['global']);
+    }
+
     private function fakeDocument(int $id, int $score, int $globalScore, bool $routeMatch): array
     {
         $entry = new AiHelperKnowledgeEntry;

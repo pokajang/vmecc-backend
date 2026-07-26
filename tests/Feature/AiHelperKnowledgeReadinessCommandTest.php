@@ -91,7 +91,10 @@ class AiHelperKnowledgeReadinessCommandTest extends TestCase
         $this->assertStringContainsString('"reference_knowledge_ready":true', $output);
         $this->assertStringContainsString('"system_guides_ready":false', $output);
         $this->assertStringContainsString('"role_aware_retrieval_ready":false', $output);
-        $this->assertStringContainsString('"linked_to_pdf":34', $output);
+        $this->assertStringContainsString('"markdown_source_files":35', $output);
+        $this->assertStringContainsString('"canonical_sources":35', $output);
+        $this->assertStringContainsString('"pdf_attached":34', $output);
+        $this->assertStringContainsString('"markdown_only":1', $output);
         $this->assertStringContainsString('"valid_catalog_metadata":0', $output);
         $this->assertStringContainsString('"source_final":'.$expectedGuides, $output);
         $this->assertStringContainsString('"source_active":'.$expectedGuides, $output);

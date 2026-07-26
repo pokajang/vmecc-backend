@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\AiHelperDocument;
 use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Models\User;
@@ -205,9 +204,11 @@ class AiHelperKnowledgeService
             ->groupBy(function (array $entry) {
                 $type = $this->guidanceSourceType($entry);
                 if ($type === AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT) {
+                    $documentId = (int) ($entry['source_document_id'] ?? 0);
+
                     return implode(':', [
                         $type,
-                        (int) ($entry['source_document_id'] ?? 0),
+                        $documentId > 0 ? 'document-'.$documentId : 'entry-'.(int) ($entry['id'] ?? 0),
                         (int) ($entry['page_start'] ?? 0),
                         (int) ($entry['page_end'] ?? 0),
                     ]);
@@ -218,6 +219,7 @@ class AiHelperKnowledgeService
             ->map(function ($entries) {
                 $entry = $entries->first();
                 $sourceType = $this->guidanceSourceType($entry);
+                $documentId = (int) ($entry['source_document_id'] ?? 0) ?: null;
 
                 $citation = $sourceType === AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE
                     ? [
@@ -231,10 +233,10 @@ class AiHelperKnowledgeService
                     ]
                     : [
                         'source_type' => $sourceType,
-                        'document_id' => (int) ($entry['source_document_id'] ?? 0) ?: null,
+                        'document_id' => $documentId,
                         'title' => Str::limit(trim((string) ($entry['title'] ?? 'Reference document')), 140, ''),
                         'source_mime' => $sourceType === AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT
-                            ? 'application/pdf'
+                            ? ($documentId ? 'application/pdf' : 'text/markdown')
                             : 'text/markdown',
                         'page_start' => isset($entry['page_start']) ? (int) $entry['page_start'] : null,
                         'page_end' => isset($entry['page_end']) ? (int) $entry['page_end'] : null,
@@ -418,13 +420,12 @@ TEXT;
             ->whereNotNull('error')
             ->where('error', '!=', '')
             ->count();
-        $expectedReferenceCount = max(1, (int) config('ai_helper.reference_corpus_expected_count', 34));
+        $expectedReferenceCount = max(1, (int) config('ai_helper.reference_corpus_expected_count', 35));
         $semanticRequired = (bool) config('ai_helper.embedding_enabled', true);
         $activeReferenceEntries = (clone $referenceQuery)
             ->where('active', true)
             ->whereIn('status', [AiHelperKnowledgeEntry::STATUS_ACTIVE, AiHelperKnowledgeEntry::STATUS_PROCESSING])
             ->where('review_status', AiHelperKnowledgeEntry::REVIEW_APPROVED)
-            ->whereNotNull('source_document_id')
             ->whereHas('chunks', fn ($query) => $query->where('active', true))
             ->with('sourceDocument:id,title,source_filename')
             ->get();
@@ -533,28 +534,27 @@ TEXT;
         ];
     }
 
-    /** @return array{total: int, truncated: bool, entries: array<int, array{document_id: int, title: string}>} */
+    /** @return array{total: int, truncated: bool, entries: array<int, array{document_id: ?int, knowledge_entry_id: int, title: string}>} */
     public function catalogueForUser(?User $user): array
     {
         $limit = max(1, (int) config('ai_helper.knowledge_catalogue_limit', 250));
-        $query = AiHelperDocument::query()
-            ->whereHas('knowledgeEntries', function ($query) use ($user) {
-                $this->applyUsableEntryFilter($query, $user);
-            })
-            ->where(function ($query) use ($user) {
-                $query->where('visibility', AiHelperDocument::VISIBILITY_SHARED);
-                if ($user) {
-                    $query->orWhere('uploaded_by', $user->id);
-                }
-            });
-        $total = (clone $query)->count();
-        $entries = $query
+        $query = AiHelperKnowledgeEntry::query();
+        $this->applyUsableEntryFilter($query, $user);
+        $catalogueEntries = $query
+            ->with('sourceDocument:id,title')
             ->orderBy('title')
-            ->limit($limit)
-            ->get(['id', 'title'])
-            ->map(static fn (AiHelperDocument $document) => [
-                'document_id' => $document->id,
-                'title' => $document->title,
+            ->get(['id', 'source_document_id', 'title'])
+            ->unique(static fn (AiHelperKnowledgeEntry $entry) => $entry->source_document_id
+                ? 'document:'.$entry->source_document_id
+                : 'entry:'.$entry->id)
+            ->values();
+        $total = $catalogueEntries->count();
+        $entries = $catalogueEntries
+            ->take($limit)
+            ->map(static fn (AiHelperKnowledgeEntry $entry) => [
+                'document_id' => $entry->source_document_id ? (int) $entry->source_document_id : null,
+                'knowledge_entry_id' => (int) $entry->id,
+                'title' => $entry->sourceDocument?->title ?: $entry->title,
             ])
             ->all();
 

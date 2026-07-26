@@ -160,7 +160,12 @@ class EvaluateAiHelperKnowledge extends Command
             $context,
             $case['response_language'] ?? 'en',
         );
-        $evidence = $guidance->pluck('content')->join("\n");
+        $evidence = $guidance
+            ->map(fn (array $item) => collect([
+                ...collect($item['heading_path'] ?? [])->filter()->all(),
+                (string) ($item['content'] ?? ''),
+            ])->join("\n"))
+            ->join("\n");
         $titles = $guidance->pluck('title')->unique()->values()->all();
         $topTitle = (string) ($guidance->first()['title'] ?? '');
         $expectedTitles = collect($case['titles'] ?? [])

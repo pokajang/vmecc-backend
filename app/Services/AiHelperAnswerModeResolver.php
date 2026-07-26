@@ -20,6 +20,7 @@ final class AiHelperAnswerModeResolver
         'scba_inspection',
         'hydraulic_rescue_inspection',
         'height_rescue',
+        'emergency_response_service',
         'erco',
         'drill',
         'fitness',

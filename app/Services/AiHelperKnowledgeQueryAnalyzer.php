@@ -221,13 +221,20 @@ class AiHelperKnowledgeQueryAnalyzer
             ->filter(fn (string $term) => Str::length($term) >= 2)
             ->reject(fn (string $term) => in_array($term, [
                 'the', 'and', 'for', 'with', 'what', 'when', 'where', 'which', 'how', 'is',
-                'are', 'was', 'were', 'a', 'an', 'of', 'to', 'in', 'on', 'does', 'do', 'did',
+                'are', 'be', 'was', 'were', 'a', 'an', 'of', 'to', 'in', 'on', 'does', 'do', 'did',
                 'can', 'could', 'would', 'should', 'this', 'that', 'page', 'here', 'my', 'your',
                 'according', 'please', 'tell', 'explain',
                 'yang', 'dan', 'untuk', 'dengan', 'apa', 'bila', 'mana', 'adalah', 'boleh',
                 'saya', 'awak', 'anda', 'ini', 'itu', 'di', 'ke', 'dari', 'pada', 'macam',
                 'bagaimana', 'nak', 'tu', 'ni', 'ya', 'sini', 'halaman', 'tolong',
             ], true))
+            ->flatMap(fn (string $term) => match ($term) {
+                'accessed', 'accessing', 'accessible' => [$term, 'access'],
+                'cover', 'covers', 'covered', 'covering' => [$term, 'coverage'],
+                'trt' => [$term, 'tactical', 'response', 'team'],
+                'staffing' => [$term, 'manpower'],
+                default => [$term],
+            })
             ->unique()
             ->take(32)
             ->values()

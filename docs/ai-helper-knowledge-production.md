@@ -72,7 +72,7 @@ php artisan ai-helper:storage-health --json
 php artisan ai-helper:knowledge-readiness --production --json
 ```
 
-The corpus seeder is idempotent. It creates or updates one private Markdown knowledge entry and one view-only PDF document for every exact source pair, without ingesting the PDF. It fails closed if the configured directory or a matching Markdown file is missing.
+The corpus seeder is idempotent. It creates or updates one private knowledge entry for every canonical Markdown source. An exact-basename PDF is optional; when present, the seeder maintains it as a view-only citation attachment without ingesting it. Markdown-only knowledge remains fully searchable and appears in the document catalogue without a download link. The seeder fails closed for an invalid corpus root, invalid metadata, duplicate normalized identities, or a PDF that has no canonical Markdown source.
 
 Retrieval V4 changes both passage chunking and the document routing-vector profile. Its first rollout therefore requires a **full** semantic rebuild. Do not add `--only-missing`: legacy rows may be marked ready while carrying the previous index fingerprint.
 
@@ -97,7 +97,7 @@ php artisan ai-helper:reconcile-stuck-embeddings --dry-run
 php artisan ai-helper:storage-health --json
 ```
 
-Run the 14-case deterministic factual/safety benchmark and the 136-case corpus-wide retrieval matrix after seeding or retrieval changes:
+Run the 16-case deterministic factual/safety benchmark and the 140-case corpus-wide retrieval matrix after seeding or retrieval changes:
 
 ```bash
 php artisan ai-helper:evaluate-knowledge --suite=core

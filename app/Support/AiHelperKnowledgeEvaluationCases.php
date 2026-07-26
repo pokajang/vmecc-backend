@@ -2,6 +2,8 @@
 
 namespace App\Support;
 
+use App\Models\AiHelperKnowledgeEntry;
+
 class AiHelperKnowledgeEvaluationCases
 {
     /** @return array<int, array<string, mixed>> */
@@ -17,8 +19,8 @@ class AiHelperKnowledgeEvaluationCases
             [
                 'id' => 'catalogue',
                 'question' => 'List all annexes and knowledge documents.',
-                'catalogue_total' => 34,
-                'answer_tokens' => ['34 active AI knowledge documents', 'ANNEX 18 ERP for Man Overboard (MOB)', 'Rev 001 - Feb 2026'],
+                'catalogue_total' => 35,
+                'answer_tokens' => ['35 active AI knowledge documents', 'ANNEX 18 ERP for Man Overboard (MOB)', 'Rev 001 - Feb 2026'],
             ],
             [
                 'id' => 'emergency_number',
@@ -145,6 +147,26 @@ class AiHelperKnowledgeEvaluationCases
                 'evidence_tokens' => ['maximum of 2 casualties', '999 for ambulance'],
                 'answer_tokens' => ['Annex 10', 'Annex 11', 'maximum of 2 casualties', '999'],
             ],
+            [
+                'id' => 'sow_er_site_access_and_coverage',
+                'question' => 'How can the VMM site be accessed and what area does the emergency response service cover?',
+                'response_language' => 'en',
+                'titles' => ['SOW ER Service 2023-2024 - Sanitized Operational Edition'],
+                'expected_topic_key' => 'emergency_response_service',
+                'expected_source_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
+                'evidence_tokens' => ['1196 acres', 'Teluk Rubiah', 'Jalan Semarak Api', 'permanent or temporarily determined under VMM control'],
+                'answer_tokens' => ['1196 acres', 'Teluk Rubiah', 'Jalan Semarak Api'],
+            ],
+            [
+                'id' => 'sow_er_trt_staffing',
+                'question' => 'For the emergency response service, what are the required manpower positions and quantities per shift?',
+                'response_language' => 'en',
+                'titles' => ['SOW ER Service 2023-2024 - Sanitized Operational Edition'],
+                'expected_topic_key' => 'emergency_response_service',
+                'expected_source_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
+                'evidence_tokens' => ['Tactical Response Team Member', '4', '16', '30', '24/7'],
+                'answer_tokens' => ['Tactical Response Team Member', '16', '24/7'],
+            ],
         ];
     }
 
@@ -186,6 +208,7 @@ class AiHelperKnowledgeEvaluationCases
             'EMERGENCY ZONE PROCEDURE VMECC-OPR-SOP-002 (Approved)',
             'PRO-040582 - Emergency Response Plan - Vale Malaysia Minerals - Rev. 00',
             'RESPONSE ON EMERGENCY PROCEDURE VMECC-OPR-SOP-003. Rev.001 (Approved)',
+            'SOW ER Service 2023-2024 - Sanitized Operational Edition',
         ];
         $templates = [
             'scope' => 'What scope and subject are covered by %s?',

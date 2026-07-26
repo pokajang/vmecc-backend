@@ -132,7 +132,37 @@ class AiHelperDocumentApiTest extends TestCase
         ]], $service->citationsForGuidance($guidance));
     }
 
-    public function test_reference_corpus_seeder_builds_34_linked_pairs_without_pdf_ingestion(): void
+    public function test_markdown_only_reference_citations_are_distinct_and_non_downloadable(): void
+    {
+        $service = app(AiHelperKnowledgeService::class);
+        $citations = $service->citationsForGuidance([
+            [
+                'id' => 501,
+                'source_id' => 'S1',
+                'source_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
+                'source_document_id' => null,
+                'title' => 'First Markdown source',
+                'page_start' => 2,
+                'page_end' => 2,
+            ],
+            [
+                'id' => 502,
+                'source_id' => 'S2',
+                'source_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
+                'source_document_id' => null,
+                'title' => 'Second Markdown source',
+                'page_start' => 2,
+                'page_end' => 2,
+            ],
+        ]);
+
+        $this->assertCount(2, $citations);
+        $this->assertSame(['S1', 'S2'], collect($citations)->pluck('source_id')->all());
+        $this->assertSame([null, null], collect($citations)->pluck('document_id')->all());
+        $this->assertSame(['text/markdown'], collect($citations)->pluck('source_mime')->unique()->all());
+    }
+
+    public function test_reference_corpus_seeder_builds_a_mixed_markdown_first_corpus(): void
     {
         Storage::fake('local');
 
@@ -140,13 +170,95 @@ class AiHelperDocumentApiTest extends TestCase
         $this->seed(AiHelperReferenceCorpusSeeder::class);
 
         $this->assertSame(34, AiHelperDocument::query()->count());
-        $this->assertSame(34, AiHelperKnowledgeEntry::query()->where('source_mime', 'text/markdown')->count());
+        $this->assertSame(35, AiHelperKnowledgeEntry::query()->where('source_mime', 'text/markdown')->count());
         $this->assertSame(34, AiHelperKnowledgeEntry::query()
             ->where('source_mime', 'text/markdown')
             ->whereNotNull('source_document_id')
             ->count());
+        $sow = AiHelperKnowledgeEntry::query()
+            ->where('source_filename', 'SOW ER Service 2023-2024 - Sanitized Operational Edition.md')
+            ->firstOrFail();
+        $this->assertNull($sow->source_document_id);
+        $this->assertSame(AiHelperKnowledgeEntry::VISIBILITY_SHARED, $sow->visibility);
+        $this->assertSame(AiHelperKnowledgeEntry::SCOPE_GLOBAL, $sow->scope_type);
+        $this->assertContains('service-scope', $sow->tags);
         $this->assertSame(0, AiHelperKnowledgeEntry::query()->where('source_mime', 'application/pdf')->count());
-        $this->assertSame(34, AiHelperKnowledgeEntry::query()->whereHas('chunks')->count());
+        $this->assertSame(35, AiHelperKnowledgeEntry::query()->whereHas('chunks')->count());
+    }
+
+    public function test_reference_corpus_seeder_migrates_a_pair_to_markdown_only_without_duplication(): void
+    {
+        Storage::fake('local');
+        $root = Storage::disk('local')->path('test-reference-corpus');
+        Storage::disk('local')->put('test-reference-corpus/md/Operational note.md', <<<'MD'
+# Operational note
+
+<!-- source-page: 1 -->
+
+Use the approved response route.
+MD);
+        Storage::disk('local')->put('test-reference-corpus/pdf/Operational note.pdf', "%PDF-1.4\n%%EOF");
+        config([
+            'ai_helper.reference_corpus_path' => $root,
+            'ai_helper.embedding_enabled' => false,
+        ]);
+
+        $this->seed(AiHelperReferenceCorpusSeeder::class);
+        $paired = AiHelperKnowledgeEntry::query()->firstOrFail();
+        $documentId = $paired->source_document_id;
+        $this->assertNotNull($documentId);
+
+        Storage::disk('local')->delete('test-reference-corpus/pdf/Operational note.pdf');
+        $this->seed(AiHelperReferenceCorpusSeeder::class);
+
+        $this->assertDatabaseCount('ai_helper_knowledge_entries', 1);
+        $this->assertNull(AiHelperKnowledgeEntry::query()->firstOrFail()->source_document_id);
+        $this->assertSoftDeleted('ai_helper_documents', ['id' => $documentId]);
+    }
+
+    public function test_reference_seeding_does_not_adopt_a_user_source_with_the_same_filename(): void
+    {
+        Storage::fake('local');
+        $userDocument = AiHelperDocument::create([
+            'title' => 'User source',
+            'source_filename' => 'Operational note.pdf',
+            'source_mime' => 'application/pdf',
+            'source_path' => 'ai-helper/documents/user-source.pdf',
+            'visibility' => AiHelperDocument::VISIBILITY_PERSONAL,
+        ]);
+        $userEntry = AiHelperKnowledgeEntry::create([
+            'source_document_id' => $userDocument->id,
+            'knowledge_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
+            'title' => 'User source',
+            'content' => 'User-owned source content.',
+            'source_filename' => 'Operational note.md',
+            'source_mime' => 'text/markdown',
+            'source_path' => 'upload:user-source',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_PERSONAL,
+            'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'active' => true,
+        ]);
+        Storage::disk('local')->put('isolated-corpus/md/Operational note.md', <<<'MD'
+# Operational note
+
+Shared seeded evidence.
+MD);
+        config([
+            'ai_helper.reference_corpus_path' => Storage::disk('local')->path('isolated-corpus'),
+            'ai_helper.embedding_enabled' => false,
+        ]);
+
+        $this->seed(AiHelperReferenceCorpusSeeder::class);
+
+        $this->assertDatabaseCount('ai_helper_knowledge_entries', 2);
+        $this->assertSame($userDocument->id, $userEntry->fresh()->source_document_id);
+        $this->assertSame('upload:user-source', $userEntry->source_path);
+        $seeded = AiHelperKnowledgeEntry::query()
+            ->where('source_path', 'like', 'seed:ai_knowledge:%')
+            ->firstOrFail();
+        $this->assertNull($seeded->source_document_id);
+        $this->assertSame(AiHelperKnowledgeEntry::VISIBILITY_SHARED, $seeded->visibility);
     }
 
     public function test_citation_metadata_covers_every_source_id_the_model_can_receive(): void

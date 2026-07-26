@@ -7,6 +7,7 @@ use App\Models\AiHelperKnowledgeEntry;
 use App\Models\User;
 use App\Services\AiHelperKnowledgeLifecycleService;
 use App\Services\AiHelperKnowledgeProcessingService;
+use App\Services\AiHelperReferenceCorpusCatalog;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -20,28 +21,24 @@ class AiHelperReferenceCorpusSeeder extends Seeder
 
     public function run(): void
     {
-        $sourceDirectory = $this->sourceDirectory();
-        $pdfDirectory = $sourceDirectory.DIRECTORY_SEPARATOR.'pdf';
-        $markdownDirectory = $sourceDirectory.DIRECTORY_SEPARATOR.'md';
-        if (! is_dir($pdfDirectory) || ! is_dir($markdownDirectory)) {
-            throw new RuntimeException("AI reference corpus directories not found under: {$sourceDirectory}");
+        $catalog = app(AiHelperReferenceCorpusCatalog::class);
+        $sources = $catalog->sources();
+        if ($sources === []) {
+            throw new RuntimeException('The AI reference Markdown corpus is empty.');
+        }
+        if ($catalog->orphanPdfFiles() !== []) {
+            throw new RuntimeException(
+                'Reference PDFs without matching Markdown: '.implode(', ', $catalog->orphanPdfFiles()),
+            );
         }
 
         $uploaderId = User::query()->where('email', self::UPLOADER_EMAIL)->value('id');
         $processor = app(AiHelperKnowledgeProcessingService::class);
         $lifecycle = app(AiHelperKnowledgeLifecycleService::class);
-        $pdfFiles = glob($pdfDirectory.DIRECTORY_SEPARATOR.'*.pdf') ?: [];
-        sort($pdfFiles, SORT_NATURAL | SORT_FLAG_CASE);
 
-        foreach ($pdfFiles as $pdfFile) {
-            $markdownFile = $markdownDirectory.DIRECTORY_SEPARATOR.pathinfo($pdfFile, PATHINFO_FILENAME).'.md';
-            if (! is_file($markdownFile)) {
-                throw new RuntimeException('Matching Markdown source not found for '.basename($pdfFile));
-            }
-
-            $this->seedPair(
-                $pdfFile,
-                $markdownFile,
+        foreach ($sources as $source) {
+            $this->seedSource(
+                $source,
                 $uploaderId ? (int) $uploaderId : null,
                 $processor,
                 $lifecycle,
@@ -49,90 +46,49 @@ class AiHelperReferenceCorpusSeeder extends Seeder
         }
     }
 
-    private function sourceDirectory(): string
-    {
-        $configuredPath = trim((string) config('ai_helper.reference_corpus_path', ''));
-        if ($configuredPath === '') {
-            return base_path('../ai_knowledge');
-        }
-
-        $isAbsolute = str_starts_with($configuredPath, '/')
-            || str_starts_with($configuredPath, '\\')
-            || preg_match('/^[A-Za-z]:[\\\\\/]/', $configuredPath) === 1;
-
-        return $isAbsolute ? $configuredPath : base_path($configuredPath);
-    }
-
-    private function seedPair(
-        string $pdfFile,
-        string $markdownFile,
+    /**
+     * @param  array<string, mixed>  $source
+     */
+    private function seedSource(
+        array $source,
         ?int $uploaderId,
         AiHelperKnowledgeProcessingService $processor,
         AiHelperKnowledgeLifecycleService $lifecycle,
     ): void {
-        $pdfFilename = basename($pdfFile);
-        $title = pathinfo($pdfFilename, PATHINFO_FILENAME) ?: 'Reference document';
-        $storedFilename = $this->storedFilename($pdfFilename);
-        $storagePath = self::STORAGE_DIRECTORY.'/'.$storedFilename;
-        $legacyStoragePath = 'ai-helper/knowledge/seeded-ai-knowledge-pdfs/'.$storedFilename;
-        $pdfContents = file_get_contents($pdfFile);
+        $markdownFile = (string) $source['markdown_path'];
         $markdownContent = file_get_contents($markdownFile);
-
-        if ($pdfContents === false || $markdownContent === false) {
-            throw new RuntimeException("Could not read reference corpus pair: {$pdfFilename}");
+        if ($markdownContent === false || trim($markdownContent) === '') {
+            throw new RuntimeException('Could not read non-empty reference Markdown: '.basename($markdownFile));
+        }
+        $maximumBytes = max(1, (int) config('ai_helper.markdown_upload_max_kb', 1024)) * 1024;
+        if (strlen($markdownContent) > $maximumBytes) {
+            throw new RuntimeException('Reference Markdown exceeds the configured size limit: '.basename($markdownFile));
         }
 
-        Storage::disk('local')->put($storagePath, $pdfContents);
-        $document = AiHelperDocument::withTrashed()
-            ->where(function ($query) use ($storagePath, $legacyStoragePath) {
-                $query->where('source_path', $storagePath)
-                    ->orWhere('source_path', $legacyStoragePath);
-            })
-            ->first();
-        $documentAttributes = [
-            'uploaded_by' => $uploaderId,
-            'title' => Str::limit($title, 140, ''),
-            'source_filename' => Str::limit($pdfFilename, 255, ''),
-            'source_mime' => 'application/pdf',
-            'source_size' => filesize($pdfFile) ?: null,
-            'source_path' => $storagePath,
-            'source_hash' => hash('sha256', $pdfContents),
-            'visibility' => AiHelperDocument::VISIBILITY_SHARED,
-            'acknowledged_at' => now(),
-        ];
-
-        if ($document) {
-            $previousPath = (string) $document->source_path;
-            if ($document->trashed()) {
-                $document->restore();
-            }
-            $document->forceFill($documentAttributes)->save();
-            if ($previousPath !== '' && $previousPath !== $storagePath) {
-                Storage::disk('local')->delete($previousPath);
-            }
-        } else {
-            $document = AiHelperDocument::create($documentAttributes);
-        }
-
-        $sourcePath = 'seed:ai_knowledge:'.sha1($pdfFilename);
+        $sourcePath = (string) $source['source_path'];
+        $legacySourcePath = (string) $source['legacy_source_path'];
         $entry = AiHelperKnowledgeEntry::withTrashed()
-            ->where(function ($query) use ($sourcePath, $document, $markdownFile) {
-                $query->where('source_path', $sourcePath)
-                    ->orWhere(function ($linked) use ($document, $markdownFile) {
+            ->where('knowledge_type', AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT)
+            ->where(function ($query) use ($sourcePath, $legacySourcePath, $markdownFile) {
+                $query->whereIn('source_path', [$sourcePath, $legacySourcePath])
+                    ->orWhere(function ($linked) use ($markdownFile) {
                         $linked
-                            ->where('source_document_id', $document->id)
+                            ->where('source_path', 'like', 'seed:ai_knowledge:%')
                             ->where('source_mime', 'text/markdown')
                             ->where('source_filename', basename($markdownFile));
                     });
             })
             ->first();
+        $previousDocument = $entry?->sourceDocument;
+        $document = $this->syncOptionalPdf($source, $uploaderId, $previousDocument);
+        $title = Str::limit(trim((string) $source['title']), 140, '');
         $entryAttributes = [
             'uploaded_by' => $uploaderId,
-            'source_document_id' => $document->id,
+            'source_document_id' => $document?->id,
             'knowledge_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
             'module_key' => null,
             'route_key' => null,
-            'title' => Str::limit($title, 140, ''),
+            'title' => $title,
             'content' => $markdownContent,
             'summary' => null,
             'source_filename' => Str::limit(basename($markdownFile), 255, ''),
@@ -140,17 +96,19 @@ class AiHelperReferenceCorpusSeeder extends Seeder
             'source_size' => filesize($markdownFile) ?: null,
             'source_path' => $sourcePath,
             'content_hash' => hash('sha256', $markdownContent),
-            'scope_type' => AiHelperKnowledgeEntry::SCOPE_GLOBAL,
-            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+            'scope_type' => (string) $source['scope_type'],
+            'visibility' => (string) $source['visibility'],
             'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
-            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'review_status' => (string) $source['review_status'],
             'reviewed_by' => $uploaderId,
             'reviewed_at' => now(),
-            'review_note' => 'Seeded from the source-fidelity ai_knowledge corpus.',
+            'review_note' => $document
+                ? 'Seeded from canonical Markdown with an optional PDF attachment.'
+                : 'Seeded from canonical Markdown without a PDF attachment.',
             'active' => true,
             'acknowledged_at' => now(),
             'error' => null,
-            'tags' => ['seed', 'markdown', 'ai_knowledge', 'emergency-response'],
+            'tags' => collect($source['tags'] ?? [])->map(fn ($tag) => trim((string) $tag))->filter()->unique()->values()->all(),
             'version' => 1,
         ];
 
@@ -163,8 +121,87 @@ class AiHelperReferenceCorpusSeeder extends Seeder
             $entry = AiHelperKnowledgeEntry::create($entryAttributes);
         }
 
+        if ($previousDocument && $previousDocument->id !== $document?->id) {
+            $this->deleteUnusedSeededDocument($previousDocument);
+        }
+
         $runId = $lifecycle->beginIngestion($entry);
         $processor->processTextEntry($entry, $markdownContent, null, [], $runId);
+    }
+
+    /**
+     * @param  array<string, mixed>  $source
+     */
+    private function syncOptionalPdf(
+        array $source,
+        ?int $uploaderId,
+        ?AiHelperDocument $linkedDocument,
+    ): ?AiHelperDocument {
+        $pdfFile = $source['pdf_path'] ?? null;
+        if (! is_string($pdfFile) || $pdfFile === '') {
+            return null;
+        }
+
+        $pdfContents = file_get_contents($pdfFile);
+        if ($pdfContents === false) {
+            throw new RuntimeException('Could not read reference PDF attachment: '.basename($pdfFile));
+        }
+        $pdfFilename = basename($pdfFile);
+        $storedFilename = $this->storedFilename($pdfFilename);
+        $storagePath = self::STORAGE_DIRECTORY.'/'.$storedFilename;
+        $legacyStoragePath = 'ai-helper/knowledge/seeded-ai-knowledge-pdfs/'.$storedFilename;
+        Storage::disk('local')->put($storagePath, $pdfContents);
+
+        $document = $linkedDocument
+            ?: AiHelperDocument::withTrashed()
+                ->where(fn ($query) => $query
+                    ->where('source_path', $storagePath)
+                    ->orWhere('source_path', $legacyStoragePath))
+                ->first();
+        $attributes = [
+            'uploaded_by' => $uploaderId,
+            'title' => Str::limit(trim((string) $source['title']), 140, ''),
+            'source_filename' => Str::limit($pdfFilename, 255, ''),
+            'source_mime' => 'application/pdf',
+            'source_size' => filesize($pdfFile) ?: null,
+            'source_path' => $storagePath,
+            'source_hash' => hash('sha256', $pdfContents),
+            'visibility' => (string) $source['visibility'],
+            'acknowledged_at' => now(),
+        ];
+
+        if ($document) {
+            $previousPath = (string) $document->source_path;
+            if ($document->trashed()) {
+                $document->restore();
+            }
+            $document->forceFill($attributes)->save();
+            if ($previousPath !== '' && $previousPath !== $storagePath) {
+                Storage::disk('local')->delete($previousPath);
+            }
+
+            return $document;
+        }
+
+        return AiHelperDocument::create($attributes);
+    }
+
+    private function deleteUnusedSeededDocument(AiHelperDocument $document): void
+    {
+        $document->refresh();
+        if ($document->knowledgeEntries()->exists()) {
+            return;
+        }
+
+        $path = trim((string) $document->source_path);
+        $allowedPrefixes = [
+            self::STORAGE_DIRECTORY.'/',
+            'ai-helper/knowledge/seeded-ai-knowledge-pdfs/',
+        ];
+        if (collect($allowedPrefixes)->contains(fn (string $prefix): bool => str_starts_with($path, $prefix))) {
+            Storage::disk('local')->delete($path);
+            $document->delete();
+        }
     }
 
     private function storedFilename(string $sourceFilename): string

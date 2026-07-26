@@ -18,7 +18,7 @@ class AiHelperCoverageAuditCommandTest extends TestCase
         $this->assertSame([], $result['modules']['duplicates']);
         $this->assertSame(54, $result['guides']);
         $this->assertSame(20, $result['workflows']);
-        $this->assertSame(46, $result['topics']['registry']);
+        $this->assertSame(47, $result['topics']['registry']);
         $this->assertSame($result['topics']['registry'], $result['topics']['covered']);
         $this->assertSame([], $result['topics']['missing']);
         $this->assertSame([], $result['topics']['unknown']);

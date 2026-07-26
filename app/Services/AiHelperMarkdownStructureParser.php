@@ -16,17 +16,25 @@ class AiHelperMarkdownStructureParser
         $blocks = [];
         $buffer = [];
         $bufferType = 'text';
+        $sourcePage = null;
 
-        $flush = function () use (&$blocks, &$buffer, &$bufferType, &$headingPath): void {
+        $flush = function () use (&$blocks, &$buffer, &$bufferType, &$headingPath, &$sourcePage): void {
             $content = trim(implode("\n", $buffer));
             if ($content !== '') {
-                $blocks[] = $this->block($content, $headingPath, $bufferType);
+                $blocks[] = $this->block($content, $headingPath, $bufferType, $sourcePage);
             }
             $buffer = [];
             $bufferType = 'text';
         };
 
         foreach ($lines as $line) {
+            if (preg_match('/^\s*<!--\s*source-page:\s*0*(\d+)\s*-->\s*$/i', $line, $pageMarker)) {
+                $flush();
+                $sourcePage = max(1, (int) $pageMarker[1]);
+
+                continue;
+            }
+
             if (preg_match('/^(#{1,6})\s+(.+)$/u', trim($line), $heading)) {
                 $flush();
                 $level = strlen($heading[1]);
@@ -38,7 +46,7 @@ class AiHelperMarkdownStructureParser
 
             if (preg_match('/^\s*!\[([^]]*)]\(([^)]+)\)\s*$/u', $line)) {
                 $flush();
-                $blocks[] = $this->block(trim($line), $headingPath, 'visual_reference');
+                $blocks[] = $this->block(trim($line), $headingPath, 'visual_reference', $sourcePage);
 
                 continue;
             }
@@ -65,9 +73,14 @@ class AiHelperMarkdownStructureParser
     }
 
     /** @return array{content: string, heading_path: array<int, string>, content_type: string, page_start: ?int, page_end: ?int, search_text: string} */
-    private function block(string $content, array $headingPath, string $type): array
+    private function block(
+        string $content,
+        array $headingPath,
+        string $type,
+        ?int $sourcePage = null,
+    ): array
     {
-        $page = null;
+        $page = $sourcePage;
         if ($type === 'visual_reference' && preg_match('/\b(?:pdf\s+)?page\s*0*(\d+)\b/i', $content, $match)) {
             $page = (int) $match[1];
         }
@@ -137,11 +150,21 @@ class AiHelperMarkdownStructureParser
                 $breakAt = $targetSize;
             }
             $content = trim(Str::substr($remaining, 0, $breakAt + 1));
-            $parts[] = $this->block($content, $block['heading_path'], $block['content_type']);
+            $parts[] = $this->block(
+                $content,
+                $block['heading_path'],
+                $block['content_type'],
+                $block['page_start'],
+            );
             $remaining = trim(Str::substr($remaining, $breakAt + 1));
         }
         if ($remaining !== '') {
-            $parts[] = $this->block($remaining, $block['heading_path'], $block['content_type']);
+            $parts[] = $this->block(
+                $remaining,
+                $block['heading_path'],
+                $block['content_type'],
+                $block['page_start'],
+            );
         }
 
         return $parts;
@@ -158,10 +181,20 @@ class AiHelperMarkdownStructureParser
         foreach ($body as $row) {
             if (Str::length($row) > $targetSize) {
                 if (count($current) > count($header)) {
-                    $parts[] = $this->block(implode("\n", $current), $block['heading_path'], 'table');
+                    $parts[] = $this->block(
+                        implode("\n", $current),
+                        $block['heading_path'],
+                        'table',
+                        $block['page_start'],
+                    );
                     $current = $header;
                 }
-                foreach ($this->splitLongBlock($this->block($row, $block['heading_path'], 'table'), $targetSize) as $part) {
+                foreach ($this->splitLongBlock($this->block(
+                    $row,
+                    $block['heading_path'],
+                    'table',
+                    $block['page_start'],
+                ), $targetSize) as $part) {
                     $parts[] = $part;
                 }
 
@@ -169,13 +202,23 @@ class AiHelperMarkdownStructureParser
             }
             $candidate = implode("\n", array_merge($current, [$row]));
             if (count($current) > count($header) && Str::length($candidate) > $targetSize) {
-                $parts[] = $this->block(implode("\n", $current), $block['heading_path'], 'table');
+                $parts[] = $this->block(
+                    implode("\n", $current),
+                    $block['heading_path'],
+                    'table',
+                    $block['page_start'],
+                );
                 $current = $header;
             }
             $current[] = $row;
         }
         if (count($current) > count($header) || $parts === []) {
-            $parts[] = $this->block(implode("\n", $current), $block['heading_path'], 'table');
+            $parts[] = $this->block(
+                implode("\n", $current),
+                $block['heading_path'],
+                'table',
+                $block['page_start'],
+            );
         }
 
         return $parts;

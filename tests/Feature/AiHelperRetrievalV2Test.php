@@ -52,6 +52,28 @@ class AiHelperRetrievalV2Test extends TestCase
         $this->assertStringNotContainsString('PDF only upload', app(AiHelperKnowledgeService::class)->catalogueResponse($context));
     }
 
+    public function test_ai_catalogue_includes_markdown_only_knowledge(): void
+    {
+        AiHelperKnowledgeEntry::create([
+            'title' => 'Markdown only response perimeter',
+            'content' => 'Approved Markdown content without a PDF attachment.',
+            'source_mime' => 'text/markdown',
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+            'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'active' => true,
+        ]);
+
+        $context = app(AiHelperKnowledgeService::class)->buildContext([], null, 'List all annexes');
+
+        $this->assertSame(1, $context['catalogue']['total']);
+        $this->assertNull($context['catalogue']['entries'][0]['document_id']);
+        $this->assertStringContainsString(
+            'Markdown only response perimeter',
+            app(AiHelperKnowledgeService::class)->catalogueResponse($context),
+        );
+    }
+
     public function test_annex_with_multiple_revisions_keeps_each_revision_available(): void
     {
         config(['ai_helper.embedding_enabled' => false]);
@@ -104,6 +126,47 @@ class AiHelperRetrievalV2Test extends TestCase
         $this->assertCount(2, $titles);
         $this->assertContains('ANNEX 18 ERP for Man Overboard (MOB)', $titles);
         $this->assertContains('ANNEX 18 ERP for Man Overboard (MOB). Rev 001', $titles);
+    }
+
+    public function test_retrieval_v4_skips_variable_reranking_for_one_exact_document(): void
+    {
+        config([
+            'ai_helper.pipeline_version' => 4,
+            'ai_helper.rerank_enabled' => true,
+            'ai_helper.rerank_adaptive' => true,
+            'ai_helper.embedding_enabled' => false,
+        ]);
+        $entry = $this->knowledge(
+            'ANNEX 1 Terminologies and Definitions',
+            '999 is the official Malaysian Emergency Service Centre telephone number.',
+        );
+        AiHelperKnowledgeChunk::create([
+            'knowledge_entry_id' => $entry->id,
+            'chunk_index' => 1,
+            'content' => 'A second definition in the same exact source.',
+            'search_text' => 'ANNEX 1 second definition',
+            'content_hash' => hash('sha256', 'A second definition in the same exact source.'),
+            'token_estimate' => 20,
+            'active' => true,
+        ]);
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldNotReceive('structuredResponse');
+        });
+
+        $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
+            ['route_key' => '', 'module_key' => ''],
+            null,
+            'What is 999 according to Annex 1?',
+        );
+
+        $this->assertSame(
+            'skipped_high_confidence',
+            $result['trace']['rerank']['status'],
+        );
+        $this->assertSame(
+            ['ANNEX 1 Terminologies and Definitions'],
+            collect($result['guidance'])->pluck('title')->unique()->values()->all(),
+        );
     }
 
     public function test_catalogue_stream_is_deterministic_and_does_not_call_the_model(): void

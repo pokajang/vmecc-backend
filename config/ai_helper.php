@@ -46,7 +46,7 @@ return [
     'document_max_upload_bytes_per_user' => 209715200,
     'document_max_total_upload_bytes' => 2147483648,
     'reference_corpus_path' => storage_path('app/private/ai_knowledge'),
-    'reference_corpus_expected_count' => 34,
+    'reference_corpus_expected_count' => 35,
     'markdown_upload_max_kb' => 1024,
     'knowledge_upload_rate_limit_per_minute' => 6,
     'knowledge_upload_ip_rate_limit_per_minute' => 30,

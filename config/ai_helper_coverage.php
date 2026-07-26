@@ -139,6 +139,7 @@ return [
         ['id' => 'dashboard.view.ms', 'module' => 'dashboard', 'message' => 'apa yang boleh saya lihat di papan pemuka', 'topics' => ['dashboard'], 'operations' => ['view']],
         ['id' => 'audit.view.en', 'module' => 'audit', 'message' => 'where can I view the audit logs', 'topics' => ['audit_log'], 'operations' => ['view']],
         ['id' => 'ask-ai.usage.en', 'module' => 'profile', 'message' => 'how do I use Ask AI', 'topics' => ['ask_ai']],
+        ['id' => 'knowledge.er-service.coverage.en', 'module' => 'dashboard', 'message' => 'How can the VMM site be accessed and what area does the emergency response service cover?', 'topics' => ['emergency_response_service']],
         ['id' => 'system.overview.ms', 'module' => 'dashboard', 'message' => 'apa fungsi sistem VMECC dan modul yang ada', 'topics' => ['system_overview']],
     ],
 ];

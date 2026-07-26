@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AiHelperKnowledgeChunk;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Models\AiHelperMessage;
 use App\Models\AiHelperRun;
@@ -746,6 +747,58 @@ class AiHelperRetrievalV4Test extends TestCase
         $this->assertSame($verificationGuide->title, $result['guidance'][0]['title']);
         $this->assertContains($verificationGuide->id, $result['trace']['document_ids']);
         $this->assertNotContains($managementGuide->id, $result['trace']['document_ids']);
+    }
+
+    public function test_emergency_response_access_question_retrieves_the_shared_sow_coverage_passage(): void
+    {
+        $user = $this->userWithPermissions([]);
+        $title = 'SOW ER Service 2023-2024 - Sanitized Operational Edition';
+        $entry = AiHelperKnowledgeEntry::create([
+            'knowledge_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
+            'title' => $title,
+            'content' => 'Shared operational emergency response service scope and coverage.',
+            'source_filename' => 'sow-er-service-sanitized.md',
+            'source_mime' => 'text/markdown',
+            'scope_type' => AiHelperKnowledgeEntry::SCOPE_GLOBAL,
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+            'status' => AiHelperKnowledgeEntry::STATUS_ACTIVE,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'active' => true,
+        ]);
+        foreach ([
+            'The service provides a Tactical Response Team for VMM.',
+            'VMM covers about 1196 acres at Teluk Rubiah. The site is accessible from Jalan Semarak Api. Coverage also includes other areas permanently or temporarily under VMM control.',
+        ] as $index => $content) {
+            AiHelperKnowledgeChunk::create([
+                'knowledge_entry_id' => $entry->id,
+                'chunk_index' => $index,
+                'content' => $content,
+                'search_text' => $title.' '.$content,
+                'heading_path' => [$title, $index === 0 ? 'SERVICES SCOPE' : 'COVERAGE'],
+                'page_start' => 2,
+                'page_end' => 2,
+                'content_hash' => hash('sha256', $content),
+                'token_estimate' => 50,
+                'active' => true,
+            ]);
+        }
+
+        $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
+            ['path' => '/dashboard'],
+            $user,
+            'How can the VMM site be accessed and what area does the emergency response service cover?',
+        );
+
+        $this->assertSame('operational_knowledge', $result['analysis']['answer_mode']);
+        $this->assertTrue($result['analysis']['evidence_required']);
+        $this->assertContains('emergency_response_service', $result['analysis']['topic_keys']);
+        $this->assertContains($entry->id, $result['trace']['document_ids']);
+        $this->assertNull($entry->source_document_id);
+        $coverage = collect($result['guidance'])->first(
+            fn (array $item) => str_contains($item['content'], 'Jalan Semarak Api'),
+        );
+        $this->assertNotNull($coverage);
+        $this->assertSame([2, 2], [$coverage['page_start'], $coverage['page_end']]);
     }
 
     private function userWithPermissions(array $permissionNames): User

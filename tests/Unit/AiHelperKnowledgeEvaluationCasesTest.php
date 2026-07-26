@@ -11,10 +11,10 @@ class AiHelperKnowledgeEvaluationCasesTest extends TestCase
     {
         $coverage = collect(AiHelperKnowledgeEvaluationCases::corpusCoverage());
 
-        $this->assertCount(136, $coverage);
-        $this->assertCount(136, $coverage->pluck('id')->unique());
-        $this->assertCount(34, $coverage->flatMap(fn (array $case) => $case['titles'])->unique());
+        $this->assertCount(140, $coverage);
+        $this->assertCount(140, $coverage->pluck('id')->unique());
+        $this->assertCount(35, $coverage->flatMap(fn (array $case) => $case['titles'])->unique());
         $this->assertTrue($coverage->every(fn (array $case) => $case['retrieval_only'] === true));
-        $this->assertCount(150, AiHelperKnowledgeEvaluationCases::all());
+        $this->assertCount(156, AiHelperKnowledgeEvaluationCases::all());
     }
 }

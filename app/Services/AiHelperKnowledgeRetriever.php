@@ -226,8 +226,11 @@ class AiHelperKnowledgeRetriever
                 ->count();
             $rerankAnalysis['skip_rerank'] = $retrievalV4
                 && (bool) config('ai_helper.rerank_adaptive', true)
-                && $protectedEntryCount === 1
-                && ($analysis['context_dependency'] ?? null) === 'explicit_topic';
+                && (
+                    $exactDocuments->count() === 1
+                    || ($protectedEntryCount === 1
+                        && ($analysis['context_dependency'] ?? null) === 'explicit_topic')
+                );
             $reranked = $this->reranker->rerank(
                 (string) $analysis['query'],
                 $rerankAnalysis,
@@ -294,7 +297,9 @@ class AiHelperKnowledgeRetriever
                 $key = $item['entry']->knowledge_type === AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT
                     ? implode(':', [
                         'reference',
-                        (int) $item['entry']->source_document_id,
+                        $item['entry']->source_document_id
+                            ? 'document-'.(int) $item['entry']->source_document_id
+                            : 'entry-'.(int) $item['entry']->id,
                         (int) ($item['chunk']->page_start ?? 0),
                         (int) ($item['chunk']->page_end ?? 0),
                     ])
@@ -393,8 +398,7 @@ class AiHelperKnowledgeRetriever
             })
             ->where(function ($types) {
                 $types->where(function ($reference) {
-                    $reference->where('knowledge_type', AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT)
-                        ->whereNotNull('source_document_id');
+                    $reference->where('knowledge_type', AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT);
                 })->orWhere('knowledge_type', AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE)
                     ->orWhere('knowledge_type', AiHelperKnowledgeEntry::KNOWLEDGE_UPLOADED_MARKDOWN);
             })
@@ -405,7 +409,7 @@ class AiHelperKnowledgeRetriever
         return $candidates
             ->filter(function (AiHelperKnowledgeEntry $entry) use ($audience) {
                 return match ($entry->knowledge_type) {
-                    AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT => $entry->source_document_id !== null,
+                    AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT => true,
                     AiHelperKnowledgeEntry::KNOWLEDGE_SYSTEM_GUIDE => $this->audienceResolver->allowsSystemGuide($entry, $audience),
                     AiHelperKnowledgeEntry::KNOWLEDGE_UPLOADED_MARKDOWN => ! str_starts_with((string) $entry->source_path, 'seed:'),
                     default => false,

@@ -7,6 +7,7 @@ use App\Models\AiHelperKnowledgeEntry;
 use App\Services\AiHelperEmbeddingService;
 use App\Services\AiHelperKnowledgeProcessingService;
 use App\Services\AiHelperMarkdownKnowledgeParser;
+use App\Services\AiHelperReferenceCorpusCatalog;
 use App\Services\AiHelperSystemGuideCatalog;
 use App\Services\AiHelperWorkflowRegistry;
 use App\Services\ModuleCatalog;
@@ -30,6 +31,7 @@ class CheckAiHelperKnowledgeReadiness extends Command
         AiHelperMarkdownKnowledgeParser $parser,
         AiHelperEmbeddingService $embeddings,
         AiHelperWorkflowRegistry $workflows,
+        AiHelperReferenceCorpusCatalog $referenceCatalog,
     ): int {
         $productionGate = (bool) $this->option('production');
         $schemaReady = collect([
@@ -51,7 +53,17 @@ class CheckAiHelperKnowledgeReadiness extends Command
 
         $semanticRequired = (bool) config('ai_helper.embedding_enabled', true)
             && trim((string) config('ai_helper.api_key')) !== '';
-        $expectedReferenceCount = max(1, (int) config('ai_helper.reference_corpus_expected_count', 34));
+        $referenceCatalogError = null;
+        try {
+            $referenceSources = collect($referenceCatalog->sources());
+            $orphanPdfFiles = $referenceCatalog->orphanPdfFiles();
+            $expectedReferenceCount = $referenceSources->count();
+        } catch (Throwable $exception) {
+            $referenceSources = collect();
+            $orphanPdfFiles = [];
+            $expectedReferenceCount = max(1, (int) config('ai_helper.reference_corpus_expected_count', 35));
+            $referenceCatalogError = $exception->getMessage();
+        }
         $references = $this->entries(AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT);
         $referenceChunks = $this->chunks(AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT);
         $referenceEmbeddedChunks = $referenceChunks->whereNotNull('embedding')->count();
@@ -59,12 +71,22 @@ class CheckAiHelperKnowledgeReadiness extends Command
             ? $references->filter(fn (AiHelperKnowledgeEntry $entry) => $embeddings->isEntryCurrent($entry))->count()
             : $references->count();
         $referenceIndexed = $references->filter(fn (AiHelperKnowledgeEntry $entry) => $entry->active_chunks_count > 0)->count();
+        $canonicalSourcePaths = $referenceSources->pluck('source_path')->filter()->all();
+        $canonicalSources = $references->whereIn('source_path', $canonicalSourcePaths)->count();
+        $pdfAttached = $references->whereNotNull('source_document_id')->count();
         $referencePayload = [
             'expected' => $expectedReferenceCount,
+            'markdown_source_files' => $referenceSources->count(),
             'total' => $references->count(),
             'active' => $references->where('active', true)->count(),
             'approved' => $references->where('review_status', AiHelperKnowledgeEntry::REVIEW_APPROVED)->count(),
-            'linked_to_pdf' => $references->whereNotNull('source_document_id')->count(),
+            'canonical_sources' => $canonicalSources,
+            'pdf_attached' => $pdfAttached,
+            'markdown_only' => max(0, $references->count() - $pdfAttached),
+            // Kept for diagnostics compatibility; this is no longer a gate.
+            'linked_to_pdf' => $pdfAttached,
+            'orphan_pdf_files' => $orphanPdfFiles,
+            'source_catalog_error' => $referenceCatalogError,
             'indexed' => $referenceIndexed,
             'status_active' => $references->where('status', AiHelperKnowledgeEntry::STATUS_ACTIVE)->count(),
             'embedded' => $references->where('embedding_status', 'ready')->count(),
@@ -76,10 +98,12 @@ class CheckAiHelperKnowledgeReadiness extends Command
             'reindex_errors' => $references->filter(fn (AiHelperKnowledgeEntry $entry) => trim((string) $entry->error) !== '')->count(),
         ];
         $referenceReady = $references->isNotEmpty()
+            && $referenceCatalogError === null
+            && $orphanPdfFiles === []
             && (! $productionGate || $references->count() === $expectedReferenceCount)
             && $referencePayload['active'] === $references->count()
             && $referencePayload['approved'] === $references->count()
-            && $referencePayload['linked_to_pdf'] === $references->count()
+            && $referencePayload['canonical_sources'] === $references->count()
             && $referencePayload['indexed'] === $references->count()
             && $referencePayload['status_active'] === $references->count()
             && $referencePayload['processing'] === 0
