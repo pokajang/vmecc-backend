@@ -122,9 +122,11 @@
         .photo-unit { page-break-inside: avoid; }
         .photo-image {
             display: block;
-            width: 100%;
+            width: auto;
+            height: auto;
+            max-width: 100%;
             max-height: 72mm;
-            object-fit: contain;
+            margin: 0 auto;
             border: 1px solid #d1d5db;
             background: #f8fafc;
         }

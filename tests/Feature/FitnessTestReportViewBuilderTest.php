@@ -2,8 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Models\ReportMedia;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Smalot\PdfParser\Parser;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -112,6 +117,75 @@ class FitnessTestReportViewBuilderTest extends TestCase
         );
         $this->assertStringStartsWith('PK', $xlsx->getContent());
         $this->assertStringContainsString('.xlsx', (string) $xlsx->headers->get('content-disposition'));
+    }
+
+    public function test_fitness_managed_photo_is_linked_and_embedded_in_html_and_pdf_exports(): void
+    {
+        Storage::fake('local');
+        config([
+            'cache.default' => 'array',
+            'report_media.minimum_disk_free_bytes' => 0,
+            'report_media.modules.fitness-test.upload_enabled' => true,
+        ]);
+
+        $user = $this->reporter();
+        $this->actingAs($user);
+        $upload = $this->post('/api/report-media', [
+            'file' => UploadedFile::fake()->image('fitness-session.jpg', 800, 600),
+            'module' => 'fitness-test',
+            'source' => 'upload',
+            'upload_id' => (string) Str::uuid(),
+        ], ['Accept' => 'application/json'])->assertCreated();
+
+        $mediaId = (string) $upload->json('data.media_id');
+        $payload = $this->phase9FitnessPayload($user);
+        $payload['photos'] = [[
+            'id' => 'fitness-photo-1',
+            'mediaId' => $mediaId,
+            'url' => (string) $upload->json('data.url'),
+            'thumbnailUrl' => (string) $upload->json('data.thumbnail_url'),
+            'fileName' => 'fitness-session.jpg',
+            'mimeType' => (string) $upload->json('data.mime_type'),
+            'sizeBytes' => (int) $upload->json('data.size_bytes'),
+            'width' => (int) $upload->json('data.width'),
+            'height' => (int) $upload->json('data.height'),
+            'description' => 'Managed fitness session photograph.',
+        ]];
+
+        $created = $this->postJson('/api/reports', [
+            'report_uid' => 'fitness-photo-export-1',
+            'display_id' => 'FIT-PHOTO-001',
+            'report_type' => 'fitness-test',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ])->assertCreated();
+
+        $media = ReportMedia::query()->where('public_id', $mediaId)->firstOrFail();
+        $this->assertDatabaseHas('report_media_links', [
+            'report_media_id' => $media->id,
+            'parent_type' => 'report',
+            'parent_key' => $created->json('data.id'),
+        ]);
+
+        $html = $this->postJson('/api/reports/fitness-test/export', [
+            'report_uid' => $created->json('data.id'),
+            'format' => 'html',
+        ])->assertOk()->getContent();
+        $this->assertStringContainsString('Fitness Test Photographs', $html);
+        $this->assertStringContainsString('Managed fitness session photograph.', $html);
+        $this->assertStringContainsString('data:image/jpeg;base64,', $html);
+        $this->assertStringNotContainsString('/api/report-media/'.$mediaId, $html);
+
+        $pdf = $this->postJson('/api/reports/fitness-test/export', [
+            'report_uid' => $created->json('data.id'),
+            'format' => 'pdf',
+        ])->assertOk()->getContent();
+        $this->assertStringStartsWith('%PDF-', $pdf);
+        $this->assertStringContainsString('/Subtype /Image', $pdf);
+
+        $text = (new Parser)->parseContent($pdf)->getText();
+        $this->assertStringContainsString('Fitness Test Photographs', $text);
+        $this->assertStringContainsString('Managed fitness session photograph.', $text);
     }
 
     public function test_fitness_export_rejects_draft_report_and_unsupported_formats(): void

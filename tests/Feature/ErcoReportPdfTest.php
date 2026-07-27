@@ -3,11 +3,16 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
+use App\Models\ReportMedia;
 use App\Models\User;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Barryvdh\DomPDF\PDF as DomPdfWrapper;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Mockery;
+use Smalot\PdfParser\Parser;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -153,6 +158,66 @@ class ErcoReportPdfTest extends TestCase
         $response = $this->postJson('/api/reports/erco/pdf', []);
         $response->assertStatus(422);
         $response->assertJsonValidationErrors(['report_uid']);
+    }
+
+    public function test_pdf_download_embeds_linked_managed_erco_photo(): void
+    {
+        Storage::fake('local');
+        config([
+            'cache.default' => 'array',
+            'report_media.minimum_disk_free_bytes' => 0,
+        ]);
+
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantErcoPermission($user);
+        $this->actingAs($user);
+
+        $upload = $this->post('/api/report-media', [
+            'file' => UploadedFile::fake()->image('erco-response.jpg', 800, 600),
+            'module' => 'erco',
+            'source' => 'upload',
+            'upload_id' => (string) Str::uuid(),
+        ], ['Accept' => 'application/json'])->assertCreated();
+
+        $mediaId = (string) $upload->json('data.media_id');
+        $payload = $this->validErcoPayload('Zone 2');
+        $payload['postIncidentAnalysis']['photos'] = [[
+            'id' => 'erco-managed-photo-1',
+            'mediaId' => $mediaId,
+            'url' => (string) $upload->json('data.url'),
+            'thumbnailUrl' => (string) $upload->json('data.thumbnail_url'),
+            'fileName' => 'erco-response.jpg',
+            'mimeType' => (string) $upload->json('data.mime_type'),
+            'sizeBytes' => (int) $upload->json('data.size_bytes'),
+            'width' => (int) $upload->json('data.width'),
+            'height' => (int) $upload->json('data.height'),
+            'description' => 'Managed ERCO response photograph.',
+        ]];
+
+        $created = $this->postJson('/api/reports', [
+            'display_id' => 'ERCO-MANAGED-PHOTO',
+            'report_type' => 'erco',
+            'status' => 'Submitted',
+            'payload' => $payload,
+        ])->assertCreated();
+
+        $media = ReportMedia::query()->where('public_id', $mediaId)->firstOrFail();
+        $this->assertDatabaseHas('report_media_links', [
+            'report_media_id' => $media->id,
+            'parent_type' => 'report',
+            'parent_key' => $created->json('data.id'),
+        ]);
+
+        $pdf = $this->postJson('/api/reports/erco/pdf', [
+            'report_uid' => $created->json('data.id'),
+            'version' => $created->json('data.version'),
+        ])->assertOk()->getContent();
+
+        $this->assertStringStartsWith('%PDF-', $pdf);
+        $this->assertStringContainsString('/Subtype /Image', $pdf);
+        $text = (new Parser)->parseContent($pdf)->getText();
+        $this->assertStringContainsString('Photographs (1)', $text);
+        $this->assertStringContainsString('Managed erco response photograph.', $text);
     }
 
     public function test_pdf_download_requires_erco_permission(): void

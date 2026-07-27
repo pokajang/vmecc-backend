@@ -48,6 +48,18 @@ final class FitnessTestPayloadService
             'reportingMonth' => ['nullable', 'string', 'max:7'],
             'documentReference' => ['nullable', 'string', 'max:190'],
             'protocolRevision' => ['nullable', 'string', 'max:64'],
+            'photos' => ['nullable', 'array', 'max:10'],
+            'photos.*' => ['array'],
+            'photos.*.id' => ['nullable', 'string', 'max:190'],
+            'photos.*.mediaId' => ['required', 'string', 'max:80'],
+            'photos.*.url' => ['nullable', 'string', 'max:2048'],
+            'photos.*.thumbnailUrl' => ['nullable', 'string', 'max:2048'],
+            'photos.*.fileName' => ['nullable', 'string', 'max:255'],
+            'photos.*.mimeType' => ['nullable', 'string', 'max:80'],
+            'photos.*.sizeBytes' => ['nullable', 'integer', 'min:0'],
+            'photos.*.width' => ['nullable', 'integer', 'min:0'],
+            'photos.*.height' => ['nullable', 'integer', 'min:0'],
+            'photos.*.description' => ['nullable', 'string', 'max:2000'],
         ];
 
         if ($usesCanonical && ! $forSubmit) {
@@ -97,10 +109,59 @@ final class FitnessTestPayloadService
         }
 
         $validator = Validator::make($payload, $rules);
-        if ($forSubmit && $this->isFitnessV3($payload)) {
-            $validator->after(fn ($validator) => $this->validateFitnessV3Submission($payload, $validator));
-        }
+        $validator->after(function ($validator) use ($payload, $forSubmit): void {
+            $this->validatePhotoCollection($validator, $payload);
+            if ($forSubmit && $this->isFitnessV3($payload)) {
+                $this->validateFitnessV3Submission($payload, $validator);
+            }
+        });
         $validator->validate();
+    }
+
+    private function validatePhotoCollection(mixed $validator, array $payload): void
+    {
+        $photos = is_array($payload['photos'] ?? null) ? $payload['photos'] : [];
+        $seenMediaIds = [];
+
+        foreach ($photos as $index => $photo) {
+            if (! is_array($photo)) {
+                continue;
+            }
+
+            $mediaId = trim((string) ($photo['mediaId'] ?? ''));
+            if ($mediaId !== '') {
+                if (isset($seenMediaIds[$mediaId])) {
+                    $validator->errors()->add(
+                        "photos.{$index}.mediaId",
+                        'Each managed Fitness Test photo may be referenced only once.',
+                    );
+                }
+                $seenMediaIds[$mediaId] = true;
+            }
+
+            $url = trim((string) ($photo['url'] ?? ''));
+            if ($url !== '' && ! $this->urlMatchesMediaId($url, $mediaId)) {
+                $validator->errors()->add(
+                    "photos.{$index}.url",
+                    'Fitness Test photo URLs must reference their managed report media ID.',
+                );
+            }
+        }
+    }
+
+    private function urlMatchesMediaId(string $url, string $mediaId): bool
+    {
+        if ($mediaId === '') {
+            return false;
+        }
+
+        $path = parse_url($url, PHP_URL_PATH);
+        if (! is_string($path)) {
+            return false;
+        }
+
+        return str_ends_with(rtrim($path, '/'), '/report-media/'.rawurlencode($mediaId))
+            || str_ends_with(rtrim($path, '/'), '/report-media/'.$mediaId);
     }
 
     private function isFitnessV3(array $payload): bool

@@ -4,7 +4,9 @@ namespace Tests\Feature;
 
 use App\Models\Report;
 use App\Models\User;
+use App\Services\FitnessTestPayloadService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Validation\ValidationException;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -162,6 +164,30 @@ class FitnessTestPayloadValidationTest extends TestCase
             ->assertJsonPath('data.summary', 'Updated fitness test summary.');
 
         $this->assertDatabaseCount('reports', 1);
+    }
+
+    public function test_fitness_payload_rejects_duplicate_or_untrusted_managed_photo_references(): void
+    {
+        $payload = $this->validPayload();
+        $payload['photos'] = [
+            [
+                'mediaId' => 'rpm_fitness_duplicate',
+                'url' => '/api/report-media/rpm_fitness_duplicate',
+            ],
+            [
+                'mediaId' => 'rpm_fitness_duplicate',
+                'url' => 'https://untrusted.example/photo.jpg',
+            ],
+        ];
+
+        try {
+            app(FitnessTestPayloadService::class)->validateForSubmit($payload);
+            $this->fail('Expected Fitness Test photo validation to fail.');
+        } catch (ValidationException $exception) {
+            $errors = $exception->errors();
+            $this->assertArrayHasKey('photos.1.mediaId', $errors);
+            $this->assertArrayHasKey('photos.1.url', $errors);
+        }
     }
 
     private function validPayload(): array

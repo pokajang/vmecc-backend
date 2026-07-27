@@ -14,6 +14,10 @@ return [
             'permission' => 'reports.drill.view',
             'upload_enabled' => (bool) env('REPORT_MEDIA_DRILL_UPLOAD_ENABLED', false),
         ],
+        'fitness-test' => [
+            'permission' => 'reports.fitness.view',
+            'upload_enabled' => true,
+        ],
     ],
     'thumbnail_max_dimension' => (int) env('REPORT_MEDIA_THUMBNAIL_MAX_DIMENSION', 480),
     'thumbnail_quality' => (int) env('REPORT_MEDIA_THUMBNAIL_QUALITY', 76),

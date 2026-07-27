@@ -43,6 +43,8 @@
                 @foreach ($fireExtinguisherChecks as $check)
                     @php
                         $feName = trim((string) ($check['idLocNo'] ?? $check['id_loc_no'] ?? $check['barcodeNo'] ?? $check['barcode_no'] ?? '')) ?: 'Fire extinguisher';
+                        $generalRemarks = trim((string) ($check['remarks'] ?? $check['remark'] ?? ''));
+                        $generalPhotos = $filterInlinePhotos($check['photos'] ?? []);
                         $checkCompactBlocks = [];
                         $checkTextBlocks = [];
                         $checkEvidenceGroups = [];
@@ -62,6 +64,16 @@
                             } elseif ($remarksValue !== '') {
                                 $checkTextBlocks[] = ['title' => $defectTitle, 'label' => 'Defect remarks', 'value' => $remarksValue];
                             }
+                        }
+                        if (count($generalPhotos) > 0) {
+                            $checkEvidenceGroups[] = [
+                                'kind' => 'Additional',
+                                'title' => 'Additional Evidence: '.$feName,
+                                'remarks' => $generalRemarks,
+                                'remarksLabel' => 'General extinguisher remarks',
+                                'photos' => $generalPhotos,
+                                'alt' => 'Fire extinguisher additional photo',
+                            ];
                         }
                     @endphp
                     <tr>

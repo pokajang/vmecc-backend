@@ -6,7 +6,10 @@ use App\Models\Report;
 use App\Models\User;
 use App\Services\InspectionReports\InspectionReportPdfRenderer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Mockery;
 use Smalot\PdfParser\Parser;
 use Spatie\Permission\Models\Permission;
@@ -333,6 +336,72 @@ class InspectionReportPdfTest extends TestCase
         $this->assertStringContainsString('Real endpoint renderer verification.', $text);
         $this->assertStringContainsString('Endpoint report-level remarks.', $text);
         $this->assertStringContainsString('Page 1 of 1', $text);
+    }
+
+    public function test_pdf_download_embeds_managed_fire_extinguisher_row_photo(): void
+    {
+        Storage::fake('local');
+        config([
+            'cache.default' => 'array',
+            'report_media.minimum_disk_free_bytes' => 0,
+        ]);
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $upload = $this->post('/api/report-media', [
+            'file' => UploadedFile::fake()->image('extinguisher-overview.jpg', 800, 600),
+            'module' => 'inspection',
+            'source' => 'upload',
+            'upload_id' => (string) Str::uuid(),
+        ], ['Accept' => 'application/json'])->assertCreated();
+
+        $mediaId = (string) $upload->json('data.media_id');
+        $create = $this->postJson('/api/reports', [
+            'display_id' => 'INS-FE-MANAGED-PDF',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'Fire Extinguisher Inspection',
+                'location' => 'QA Area',
+                'fireExtinguisherInspectionDate' => '2026-07-27',
+                'fireExtinguisherChecks' => [[
+                    'id' => 'fe-managed-pdf',
+                    'idLocNo' => 'FE-MANAGED-01',
+                    'mainLocation' => 'QA Area',
+                    'physicalCondition' => 'Good',
+                    'signageCondition' => 'Good',
+                    'boxKeyAvailability' => 'Yes',
+                    'boxGlassAvailability' => 'Yes',
+                    'operationalCondition' => 'Good',
+                    'remarks' => 'Managed overview captured.',
+                    'photos' => [[
+                        'id' => 'fe-managed-photo',
+                        'mediaId' => $mediaId,
+                        'fileName' => 'extinguisher-overview.jpg',
+                        'description' => 'Managed extinguisher overview.',
+                        'url' => (string) $upload->json('data.url'),
+                        'thumbnailUrl' => (string) $upload->json('data.thumbnail_url'),
+                        'mimeType' => (string) $upload->json('data.mime_type'),
+                        'sizeBytes' => (int) $upload->json('data.size_bytes'),
+                        'width' => (int) $upload->json('data.width'),
+                        'height' => (int) $upload->json('data.height'),
+                    ]],
+                ]],
+            ],
+        ])->assertCreated();
+
+        $pdf = $this->postJson('/api/reports/inspection/pdf', [
+            'report_uid' => $create->json('data.id'),
+            'version' => $create->json('data.version'),
+        ])->assertOk()->getContent();
+
+        $this->assertStringStartsWith('%PDF-', $pdf);
+        $this->assertStringContainsString('/Subtype /Image', $pdf);
+        $text = (new Parser)->parseContent($pdf)->getText();
+        $this->assertStringContainsString('Additional Evidence: FE-MANAGED-01', $text);
+        $this->assertStringContainsString('Managed extinguisher overview.', $text);
+        $this->assertStringNotContainsString('Image unavailable', $text);
     }
 
     public function test_pdf_template_renders_required_inspection_fields(): void
@@ -886,6 +955,12 @@ class InspectionReportPdfTest extends TestCase
                     'boxGlassAvailability' => 'Good',
                     'operationalCondition' => 'Good',
                     'remarks' => 'Replace during next service.',
+                    'photos' => [
+                        [
+                            'url' => 'data:image/png;base64,QUFB',
+                            'description' => 'Extinguisher location overview.',
+                        ],
+                    ],
                 ],
                 [
                     'mainLocation' => 'Smoke Yard',
@@ -926,6 +1001,8 @@ class InspectionReportPdfTest extends TestCase
             'Cylinder body dented.',
             'Dented cylinder photo.',
             'Replace during next service.',
+            'Additional Evidence: FE-A-001',
+            'Extinguisher location overview.',
         ] as $text) {
             $this->assertStringContainsString($text, $html);
         }

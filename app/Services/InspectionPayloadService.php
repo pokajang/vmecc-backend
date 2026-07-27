@@ -2223,7 +2223,10 @@ class InspectionPayloadService
             ];
         }
 
-        $inspectionIssues = $payload['inspectionIssues'] ?? $payload['inspection_issues'] ?? [];
+        $inspectionIssues = $payload['inspectionIssues']
+            ?? $payload['inspection_issues']
+            ?? $payload['issues']
+            ?? [];
         if (is_array($inspectionIssues)) {
             foreach ($inspectionIssues as $issueIndex => $issue) {
                 if (! is_array($issue)) {
@@ -2404,6 +2407,13 @@ class InspectionPayloadService
             foreach ($checks as $checkIndex => $check) {
                 if (! is_array($check)) {
                     continue;
+                }
+                $photos = is_array($check['photos'] ?? null) ? $check['photos'] : [];
+                foreach ($photos as $photoIndex => $photo) {
+                    $rows[] = [
+                        'path' => "payload.{$checksKey}.{$checkIndex}.photos.{$photoIndex}",
+                        'photo' => $photo,
+                    ];
                 }
                 foreach (self::INSPECTION_SCBA_SECTION_FIELDS[$this->scbaSectionKeyFromPayloadKey($checksKey)] ?? [] as $field => $kind) {
                     if ($kind !== 'status') {

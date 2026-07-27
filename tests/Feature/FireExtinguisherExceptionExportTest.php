@@ -5,12 +5,17 @@ namespace Tests\Feature;
 use App\Models\InspectionCheckRow;
 use App\Models\InspectionFireExtinguisher;
 use App\Models\Report;
+use App\Models\ReportMedia;
+use App\Models\ReportMediaLink;
 use App\Models\User;
 use App\Services\InspectionFireExtinguishers\FireExtinguisherExceptionExportBuilder;
 use App\Services\InspectionFireExtinguishers\FireExtinguisherExceptionPdfRenderer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\View;
+use Illuminate\Support\Str;
 use Smalot\PdfParser\Parser;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -272,6 +277,64 @@ class FireExtinguisherExceptionExportTest extends TestCase
         $this->assertIsInt($findingPosition);
         $this->assertIsInt($imagePosition);
         $this->assertLessThan($imagePosition, $findingPosition);
+    }
+
+    public function test_exception_pdf_embeds_linked_managed_inspection_photo(): void
+    {
+        Storage::fake('local');
+        config([
+            'cache.default' => 'array',
+            'report_media.minimum_disk_free_bytes' => 0,
+        ]);
+
+        $upload = $this->post('/api/report-media', [
+            'file' => UploadedFile::fake()->image('exception-evidence.jpg', 800, 1200),
+            'module' => 'inspection',
+            'source' => 'upload',
+            'upload_id' => (string) Str::uuid(),
+        ], ['Accept' => 'application/json'])->assertCreated();
+
+        $row = $this->extinguisher('Managed Photo Zone', 'FE-MANAGED-EXCEPTION', '2026-12-31');
+        $this->submittedInspection($row, true);
+        $report = Report::query()->where('report_uid', 'report-'.$row->id)->firstOrFail();
+        $payload = (array) $report->payload;
+        data_set($payload, 'fireExtinguisherChecks.0.operationalConditionPhotos', [[
+            'id' => 'managed-exception-photo',
+            'mediaId' => (string) $upload->json('data.media_id'),
+            'url' => (string) $upload->json('data.url'),
+            'thumbnailUrl' => (string) $upload->json('data.thumbnail_url'),
+            'fileName' => 'exception-evidence.jpg',
+            'mimeType' => (string) $upload->json('data.mime_type'),
+            'sizeBytes' => (int) $upload->json('data.size_bytes'),
+            'width' => (int) $upload->json('data.width'),
+            'height' => (int) $upload->json('data.height'),
+            'description' => 'Managed exception evidence photograph.',
+        ]]);
+        $report->forceFill(['payload' => $payload])->save();
+
+        $media = ReportMedia::query()
+            ->where('public_id', (string) $upload->json('data.media_id'))
+            ->firstOrFail();
+        ReportMediaLink::query()->create([
+            'report_media_id' => $media->id,
+            'parent_type' => 'report',
+            'parent_key' => $report->report_uid,
+        ]);
+        InspectionCheckRow::query()
+            ->where('report_id', $report->id)
+            ->update(['has_evidence' => true, 'evidence_count' => 1]);
+
+        $pdf = $this->postJson('/api/inspection/fire-extinguishers/exception-export/download', [
+            'categories' => ['issues'],
+            'scope' => 'all',
+            'format' => 'pdf',
+        ])->assertOk()->getContent();
+
+        $this->assertStringStartsWith('%PDF-', $pdf);
+        $this->assertStringContainsString('/Subtype /Image', $pdf);
+        $text = (new Parser)->parseContent($pdf)->getText();
+        $this->assertStringContainsString('FE-MANAGED-EXCEPTION', $text);
+        $this->assertStringContainsString('Managed exception evidence photograph.', $text);
     }
 
     public function test_export_requires_a_supported_category_and_format(): void

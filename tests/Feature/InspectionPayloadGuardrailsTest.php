@@ -2533,6 +2533,71 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $response->assertJsonValidationErrors(['payload.photos.0.url']);
     }
 
+    public function test_inspection_report_rejects_non_data_url_finding_photo_from_legacy_issues_alias(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-FINDING-PHOTO',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'General Inspection',
+                'location' => 'Zone B',
+                'description' => 'Legacy finding photo guardrail.',
+                'issues' => [[
+                    'description' => 'Blocked access.',
+                    'photos' => [[
+                        'id' => 'finding-photo-1',
+                        'description' => 'Untrusted finding photo.',
+                        'url' => 'https://example.test/finding-photo.jpg',
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors([
+            'payload.inspectionIssues.0.photos.0.url',
+        ]);
+    }
+
+    public function test_inspection_report_rejects_non_data_url_standard_scba_row_photo(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantInspectionPermission($user);
+        $this->actingAs($user);
+
+        $response = $this->postJson('/api/reports', [
+            'display_id' => 'INS-GUARD-SCBA-PHOTO',
+            'report_type' => 'inspection',
+            'status' => 'Submitted',
+            'payload' => [
+                'incidentType' => 'SCBA Inspection',
+                'location' => 'FRT',
+                'scbaInspectionDate' => '2026-07-27',
+                'scbaBackPlateChecks' => [[
+                    'id' => 'back-plate-guardrail',
+                    'location' => 'FRT',
+                    'brand' => 'MSA',
+                    'serialNo' => 'BP-GUARD-01',
+                    'photos' => [[
+                        'id' => 'scba-photo-1',
+                        'description' => 'Untrusted SCBA overview photo.',
+                        'url' => 'https://example.test/scba-photo.jpg',
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors([
+            'payload.scbaBackPlateChecks.0.photos.0.url',
+        ]);
+    }
+
     public function test_inspection_draft_rejects_non_data_url_photo(): void
     {
         $user = User::factory()->create(['status' => 'active']);

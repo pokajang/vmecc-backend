@@ -79,6 +79,38 @@
             padding-top: 8px;
             border-top: 1px solid #e2e8f0;
         }
+
+        .photo-section {
+            page-break-before: always;
+        }
+
+        .photo-grid {
+            table-layout: fixed;
+        }
+
+        .photo-grid td {
+            width: 50%;
+            padding: 6px;
+            page-break-inside: avoid;
+        }
+
+        .photo-image {
+            display: block;
+            width: auto;
+            height: auto;
+            max-width: 100%;
+            max-height: 72mm;
+            margin: 0 auto;
+            background: #f8fafc;
+        }
+
+        .photo-description {
+            margin-top: 4px;
+            color: #374151;
+            font-size: 10px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
     </style>
 </head>
 <body>
@@ -93,6 +125,11 @@
     $signoff = is_array($data['signoff'] ?? null) ? $data['signoff'] : [];
     $status = trim((string) ($data['status'] ?? ''));
     $reportType = trim((string) ($data['reportType'] ?? 'fitness-test'));
+    $photos = array_values(array_filter(
+        is_array($data['photos'] ?? null) ? $data['photos'] : [],
+        fn ($photo): bool => is_array($photo)
+            && str_starts_with(trim((string) ($photo['url'] ?? '')), 'data:image/'),
+    ));
     $formatDate = function ($value) {
         $value = trim((string) $value);
         return $value === '' ? '-' : $value;
@@ -237,6 +274,31 @@
 
 @if (count($shiftGroups) === 0)
     <div class="section muted">No grouped participants found for this report.</div>
+@endif
+
+@if ($photos !== [])
+    <div class="section photo-section">
+        <h2>Fitness Test Photographs</h2>
+        <table class="photo-grid">
+            @foreach (array_chunk($photos, 2) as $photoPair)
+                <tr>
+                    @foreach ($photoPair as $photo)
+                        <td>
+                            <img
+                                class="photo-image"
+                                src="{{ trim((string) ($photo['url'] ?? '')) }}"
+                                alt="Fitness test photograph"
+                            >
+                            <div class="photo-description">{{ trim((string) ($photo['description'] ?? '')) }}</div>
+                        </td>
+                    @endforeach
+                    @if (count($photoPair) === 1)
+                        <td></td>
+                    @endif
+                </tr>
+            @endforeach
+        </table>
+    </div>
 @endif
 </body>
 </html>

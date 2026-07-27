@@ -927,9 +927,17 @@ class ReportController extends Controller
         $basePayload['reviewedAt'] = optional($report->reviewed_at)->toIso8601String();
         $basePayload['approvedAt'] = optional($report->approved_at)->toIso8601String();
         $basePayload['rejectedAt'] = optional($report->rejected_at)->toIso8601String();
+        $renderPayload = in_array($format, ['html', 'pdf'], true)
+            ? $this->reportMediaService->hydrateLinkedPayloadForPdf(
+                $basePayload,
+                'report',
+                (string) $report->report_uid,
+                'fitness-test',
+            )
+            : $basePayload;
 
         if ($format === 'html') {
-            $html = view('pdf.fitness_test_report', ['record' => $basePayload])->render();
+            $html = view('pdf.fitness_test_report', ['record' => $renderPayload])->render();
             $filename = $filenameBase.'.html';
             AuditLogger::log($request, 'report_exported', $user, [
                 'report_uid' => $report->report_uid,
@@ -979,7 +987,7 @@ class ReportController extends Controller
             ]);
         }
 
-        $document = Pdf::loadView('pdf.fitness_test_report', ['record' => $basePayload])->setPaper('a4')->setOption([
+        $document = Pdf::loadView('pdf.fitness_test_report', ['record' => $renderPayload])->setPaper('a4')->setOption([
             'defaultFont' => 'Helvetica',
             'isFontSubsettingEnabled' => true,
             'isHtml5ParserEnabled' => true,
