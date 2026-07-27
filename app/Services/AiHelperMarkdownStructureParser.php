@@ -78,8 +78,7 @@ class AiHelperMarkdownStructureParser
         array $headingPath,
         string $type,
         ?int $sourcePage = null,
-    ): array
-    {
+    ): array {
         $page = $sourcePage;
         if ($type === 'visual_reference' && preg_match('/\b(?:pdf\s+)?page\s*0*(\d+)\b/i', $content, $match)) {
             $page = (int) $match[1];

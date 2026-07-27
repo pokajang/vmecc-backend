@@ -75,6 +75,61 @@ class InspectionReportViewDataBuilderTest extends TestCase
         $this->assertCount(1, $viewData['sections']['erAuxChecks']);
     }
 
+    public function test_it_preserves_partial_structured_report_rows_without_catalog_expansion(): void
+    {
+        $frtViewData = app(InspectionReportViewDataBuilder::class)->build([
+            'incidentType' => 'FRT Daily Inspection',
+            'location' => 'FIRE TRUCK',
+            'frtDailyChecks' => [],
+            'frtOneOffChecks' => [[
+                'id' => 'one-off:fire-truck:45',
+                'location' => 'CREW CABIN',
+                'equipment' => 'BA SET : 4',
+                'condition' => 'Good',
+            ]],
+        ]);
+
+        $this->assertSame([], $frtViewData['sections']['frtDailyChecks']);
+        $this->assertSame(
+            ['one-off:fire-truck:45'],
+            array_column($frtViewData['sections']['frtOneOffChecks'], 'id'),
+        );
+
+        $highAngleViewData = app(InspectionReportViewDataBuilder::class)->build([
+            'incidentType' => 'High Angle Rescue Equipment Inspection',
+            'highAngleChecks' => [[
+                'id' => 'response-kit-1:3',
+                'equipment' => 'Locking Carabiner',
+                'mainLocation' => 'Response Kit #1',
+                'location' => 'Heavy Duty Organizer Bag',
+                'subLocation' => 'Main Compartment',
+            ]],
+        ]);
+
+        $this->assertSame(
+            ['response-kit-1:3'],
+            array_column($highAngleViewData['sections']['highAngleChecks'], 'id'),
+        );
+
+        $scbaViewData = app(InspectionReportViewDataBuilder::class)->build([
+            'incidentType' => 'SCBA Inspection',
+            'scbaBackPlateChecks' => [[
+                'id' => 'backPlate:frt:msa:06',
+                'serialNo' => '06',
+                'location' => 'FRT',
+            ]],
+            'scbaCylinderChecks' => [],
+            'scbaFaceMaskChecks' => [],
+        ]);
+
+        $this->assertSame(
+            ['backPlate:frt:msa:06'],
+            array_column($scbaViewData['sections']['scbaBackPlateChecks'], 'id'),
+        );
+        $this->assertSame([], $scbaViewData['sections']['scbaCylinderChecks']);
+        $this->assertSame([], $scbaViewData['sections']['scbaFaceMaskChecks']);
+    }
+
     #[DataProvider('multiLocationInspectionRecords')]
     public function test_it_derives_multiple_locations_for_supported_row_based_types(
         array $record,
