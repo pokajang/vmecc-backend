@@ -94,11 +94,18 @@ class DashboardStatsApiTest extends TestCase
         $response = $this->getJson('/api/stats/payroll?period=this_month');
 
         $response->assertOk()
+            ->assertJsonPath('scope.key', 'viewer_actionable_organization_activity')
             ->assertJsonPath('pendingApprovals', 1)
-            ->assertJsonPath('approvedUnpaidCount', 1)
-            ->assertJsonPath('approvedUnpaidTotalMyr', 400)
-            ->assertJsonPath('paidThisMonthCount', 1)
-            ->assertJsonPath('paidThisMonthTotalMyr', 250)
+            ->assertJsonPath('contexts.0.role', 'Dashboard Test Role')
+            ->assertJsonPath('contexts.0.scopeLabel', 'Organization-wide')
+            ->assertJsonPath(
+                'contexts.0.to',
+                '/staff/salary-claims/salary?action=review&status=Pending',
+            )
+            ->assertJsonPath('approvedUnpaidCount', 0)
+            ->assertJsonPath('approvedUnpaidTotalMyr', 0)
+            ->assertJsonPath('paidThisMonthCount', 0)
+            ->assertJsonPath('paidThisMonthTotalMyr', 0)
             ->assertJsonPath('byType.salary', 1)
             ->assertJsonPath('byType.expense', 1)
             ->assertJsonPath('byType.other', 1)
@@ -121,9 +128,12 @@ class DashboardStatsApiTest extends TestCase
         $user = $this->createDashboardUser([
             'self.dashboard',
             'dashboard.overtime.view',
+            'staff.overtime.manage',
             'dashboard.leave.view',
             'dashboard.roster.view',
             'dashboard.reports.view',
+            'reports.erco.view',
+            'reports.drill.view',
         ]);
         $employee = User::factory()->create(['name' => 'Employee One', 'status' => 'Active']);
         $team = Team::query()->create(['name' => 'Alpha', 'status' => 'On Duty']);
@@ -170,6 +180,10 @@ class DashboardStatsApiTest extends TestCase
             'display_id' => 'LV-002',
             'leave_type' => 'Medical Leave',
             'status' => 'Pending',
+            'workflow_stage' => 'review',
+            'next_action_role' => 'Dashboard Test Role',
+            'workflow_snapshot' => [],
+            'approval_history' => [],
             'start_date' => '2026-06-20',
             'end_date' => '2026-06-20',
             'days' => 1,
@@ -210,7 +224,13 @@ class DashboardStatsApiTest extends TestCase
 
         $this->getJson('/api/stats/overtime?period=this_month')
             ->assertOk()
+            ->assertJsonPath('scope.key', 'viewer_accessible')
             ->assertJsonPath('pendingApprovals', 1)
+            ->assertJsonPath('contexts.0.role', 'Dashboard Test Role')
+            ->assertJsonPath(
+                'contexts.0.to',
+                '/staff/overtime-management/records?action=review',
+            )
             ->assertJsonPath('approvedHoursThisPeriod', 3)
             ->assertJsonPath('submittedThisPeriod', 2)
             ->assertJsonPath('byType.weekend', 1)
@@ -219,7 +239,13 @@ class DashboardStatsApiTest extends TestCase
 
         $this->getJson('/api/stats/leave?period=this_month')
             ->assertOk()
+            ->assertJsonPath('scope.key', 'viewer_actionable_organization_activity')
             ->assertJsonPath('pendingApprovals', 1)
+            ->assertJsonPath('contexts.0.role', 'Dashboard Test Role')
+            ->assertJsonPath(
+                'contexts.0.to',
+                '/staff/leave-management/leaves?action=review',
+            )
             ->assertJsonPath('approvedDaysThisPeriod', 2)
             ->assertJsonPath('staffCurrentlyOnLeave', 1)
             ->assertJsonPath('byTeam.0.team', 'Alpha');
@@ -235,8 +261,12 @@ class DashboardStatsApiTest extends TestCase
 
         $this->getJson('/api/stats/reports?period=this_month')
             ->assertOk()
-            ->assertJsonPath('pendingReview', 1)
-            ->assertJsonPath('pendingApproval', 1)
+            ->assertJsonPath('period.dateFrom', '2026-06-01')
+            ->assertJsonPath('period.dateTo', '2026-06-10')
+            ->assertJsonPath('pendingReview', 0)
+            ->assertJsonPath('pendingApproval', 0)
+            ->assertJsonPath('openPendingReview', 1)
+            ->assertJsonPath('openPendingApproval', 1)
             ->assertJsonPath('submittedThisPeriod', 2)
             ->assertJsonPath('byType.erco', 1)
             ->assertJsonPath('byType.drill', 1)
@@ -340,6 +370,7 @@ class DashboardStatsApiTest extends TestCase
             'status' => 'Pending',
             'submitted_at' => now(),
             'workflow_stage' => 'review',
+            'next_action_role' => 'Dashboard Test Role',
             'workflow_snapshot' => [],
             'approval_history' => [],
         ], $overrides));
@@ -360,6 +391,7 @@ class DashboardStatsApiTest extends TestCase
             'status' => 'Pending',
             'applied_at' => now(),
             'workflow_stage' => 'review',
+            'next_action_role' => 'Dashboard Test Role',
             'workflow_snapshot' => [],
             'applicant_roles' => [],
             'approval_history' => [],

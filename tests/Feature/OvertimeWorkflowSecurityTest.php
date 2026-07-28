@@ -91,6 +91,7 @@ class OvertimeWorkflowSecurityTest extends TestCase
             'next_action_role' => 'Client Contract Manager',
         ]);
         $manager = $this->createManager('Client Contract Manager', RoleCatalog::CLIENT_SITE, $teamAlpha);
+        $this->createManager('Human Resource');
 
         $this->actingAs($manager)
             ->getJson('/api/staff/overtime/records?per_page=100')

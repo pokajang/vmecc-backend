@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\OvertimeRecord;
+use App\Models\Team;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Models\WorkflowNotification;
@@ -15,6 +16,8 @@ use Tests\TestCase;
 class OvertimeWorkflowRbacMatrixTest extends TestCase
 {
     use RefreshDatabase;
+
+    private ?Team $workflowTeam = null;
 
     public function test_assigned_roles_complete_review_recommend_approve_with_versioned_attribution(): void
     {
@@ -172,12 +175,19 @@ class OvertimeWorkflowRbacMatrixTest extends TestCase
         if (! $role->hasPermissionTo($permission)) {
             $role->givePermissionTo($permission);
         }
+        $scope = RoleCatalog::scopeForRole($roleName);
+        $teamScoped = in_array($scope, [RoleCatalog::SITE, RoleCatalog::CLIENT_SITE], true);
+        if ($teamScoped) {
+            $this->workflowTeam ??= Team::factory()->create([
+                'name' => 'Overtime RBAC Workflow Team',
+            ]);
+        }
 
         UserRoleAssignment::query()->create([
             'user_id' => $user->id,
             'role_id' => $role->id,
-            'scope_type' => RoleCatalog::OFFICE,
-            'team_id' => null,
+            'scope_type' => $scope,
+            'team_id' => $teamScoped ? $this->workflowTeam->id : null,
             'start_date' => $startDate,
             'end_date' => $endDate,
             'is_primary' => ! $user->roleAssignments()->exists(),
@@ -186,6 +196,10 @@ class OvertimeWorkflowRbacMatrixTest extends TestCase
 
     private function record(User $owner, array $overrides = []): OvertimeRecord
     {
+        $this->workflowTeam ??= Team::factory()->create([
+            'name' => 'Overtime RBAC Workflow Team',
+        ]);
+
         return OvertimeRecord::query()->create(array_merge([
             'user_id' => $owner->id,
             'display_id' => 'OT-RBAC-'.random_int(1000, 9999),
@@ -207,6 +221,9 @@ class OvertimeWorkflowRbacMatrixTest extends TestCase
                 'enforceDistinctApprovers' => false,
             ],
             'next_action_role' => 'Contract Manager',
+            'workflow_team_id' => $this->workflowTeam->id,
+            'workflow_team_name' => $this->workflowTeam->name,
+            'workflow_routing_source' => 'team_role_assignment',
             'applicant_roles' => ['Tactical Response Team'],
             'approval_history' => [],
             'submitted_by' => $owner->name,

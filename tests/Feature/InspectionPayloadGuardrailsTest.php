@@ -6,7 +6,10 @@ use App\Models\Report;
 use App\Models\ReportDraft;
 use App\Models\ReportMedia;
 use App\Models\ReportMediaLink;
+use App\Models\Team;
 use App\Models\User;
+use App\Models\UserRoleAssignment;
+use App\Services\RoleCatalog;
 use App\Support\Inspection\FrtDailyReference;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -18,6 +21,8 @@ use Tests\TestCase;
 class InspectionPayloadGuardrailsTest extends TestCase
 {
     use RefreshDatabase;
+
+    private ?Team $workflowTeam = null;
 
     public function test_managed_inspection_photo_survives_draft_retry_and_submit(): void
     {
@@ -2830,5 +2835,16 @@ class InspectionPayloadGuardrailsTest extends TestCase
             }
         }
         $user->assignRole($role);
+        $this->workflowTeam ??= Team::factory()->create([
+            'name' => 'Inspection Guardrail Workflow Team',
+        ]);
+        UserRoleAssignment::query()->firstOrCreate([
+            'user_id' => $user->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $this->workflowTeam->id,
+        ], [
+            'is_primary' => true,
+        ]);
     }
 }

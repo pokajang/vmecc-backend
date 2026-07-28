@@ -7,6 +7,7 @@ use App\Services\AuditLogger;
 use App\Services\OvertimeManagementScopeService;
 use App\Services\OvertimeWorkflowService;
 use App\Services\WorkflowNotificationService;
+use App\Services\WorkflowRecipientResolver;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,6 +20,7 @@ class OvertimeWorkflowController extends Controller
         private readonly OvertimeWorkflowService $workflowService,
         private readonly WorkflowNotificationService $notificationService,
         private readonly OvertimeManagementScopeService $scopeService,
+        private readonly WorkflowRecipientResolver $recipientResolver,
     ) {}
 
     public function review(Request $request, int $ownerId, int $recordId): JsonResponse
@@ -65,7 +67,7 @@ class OvertimeWorkflowController extends Controller
             ]);
         }
 
-        $row = DB::transaction(function () use ($ownerId, $recordId, $action, $actor, $payload) {
+        [$row, $recipientIds] = DB::transaction(function () use ($ownerId, $recordId, $action, $actor, $payload) {
             $row = OvertimeRecord::query()
                 ->where('user_id', $ownerId)
                 ->with(['user', 'attachment'])
@@ -84,6 +86,10 @@ class OvertimeWorkflowController extends Controller
             );
 
             $updates = $this->toColumnKeys($updates);
+            $nextRole = trim((string) ($updates['next_action_role'] ?? $row->next_action_role ?? ''));
+            $recipientIds = $nextRole !== ''
+                ? $this->resolveRecipientIds($row, $nextRole)
+                : [(int) $row->user_id];
             $updates['version'] = ((int) $row->version) + 1;
             $updated = OvertimeRecord::query()
                 ->whereKey($row->id)
@@ -93,7 +99,7 @@ class OvertimeWorkflowController extends Controller
                 $this->throwVersionConflict($row);
             }
 
-            return $row->fresh(['attachment']);
+            return [$row->fresh(['attachment']), $recipientIds];
         });
 
         $nextRole = $row->next_action_role;
@@ -115,8 +121,7 @@ class OvertimeWorkflowController extends Controller
             recordDisplayId: $row->display_id,
             ownerUserId: (int) $row->user_id,
             actor: ['userId' => $actor->id, 'name' => $actor->name, 'email' => $actor->email],
-            targetRoles: $nextRole ? [$nextRole] : [],
-            targetUserIds: $nextRole ? [] : [(int) $ownerId],
+            targetUserIds: $recipientIds,
             actionRequired: (bool) $nextRole,
             remarks: $payload['remarks'] ?? null,
             metadata: [
@@ -124,6 +129,9 @@ class OvertimeWorkflowController extends Controller
                 'status' => $row->status,
                 'workflowStage' => $row->workflow_stage,
                 'nextActionRole' => $row->next_action_role,
+                'workflowTeamId' => $row->workflow_team_id,
+                'workflowTeamName' => $row->workflow_team_name,
+                'workflowRoutingSource' => $row->workflow_routing_source,
             ],
             excludeOwner: (bool) $nextRole,
         );
@@ -212,6 +220,30 @@ class OvertimeWorkflowController extends Controller
         }
 
         return $mapped;
+    }
+
+    private function resolveRecipientIds(OvertimeRecord $record, string $role): array
+    {
+        $ids = $this->recipientResolver
+            ->resolveForWorkflowRole(
+                $role,
+                $record->workflow_team_id ? (int) $record->workflow_team_id : null,
+                now(),
+                (int) $record->user_id,
+            )
+            ->pluck('userId')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($ids === []) {
+            throw ValidationException::withMessages([
+                'workflow' => ["No active recipient is available for the '{$role}' workflow stage."],
+            ]);
+        }
+
+        return $ids;
     }
 
     private function assertExpectedVersion(OvertimeRecord $row, ?int $expectedVersion): void

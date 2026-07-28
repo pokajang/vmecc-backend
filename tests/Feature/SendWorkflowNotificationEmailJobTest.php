@@ -321,6 +321,27 @@ class SendWorkflowNotificationEmailJobTest extends TestCase
             ->value('last_reminder_at'));
     }
 
+    public function test_inspection_reassignment_with_report_record_type_links_to_inspection_record(): void
+    {
+        [$notification, $recipient] = $this->createImmediateNotification([
+            'module' => 'inspection',
+            'record_type' => 'report',
+            'metadata' => [
+                'reportUid' => 'inspection-reassigned-99',
+                'detailRouteKey' => 'inspection-reassigned-99',
+                'nextActionRole' => 'Incident Commander',
+            ],
+        ]);
+
+        $this->assertSame(
+            '/inspection/inspection-reassigned-99',
+            app(WorkflowNotificationLinkResolver::class)->resolveRelative(
+                $notification,
+                $recipient,
+            ),
+        );
+    }
+
     private function createImmediateNotification(array $notificationOverrides = []): array
     {
         $owner = User::factory()->create();

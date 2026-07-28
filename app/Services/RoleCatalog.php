@@ -154,4 +154,20 @@ class RoleCatalog
 
         return self::ROLE_ABBREVIATIONS[$roleName] ?? null;
     }
+
+    public static function canonicalRoleName(?string $roleName): ?string
+    {
+        $needle = strtolower(trim((string) $roleName));
+        if ($needle === '') {
+            return null;
+        }
+
+        foreach (self::ROLES as $role) {
+            if (strtolower($role) === $needle) {
+                return $role;
+            }
+        }
+
+        return null;
+    }
 }

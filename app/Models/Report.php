@@ -21,6 +21,9 @@ class Report extends Model
         'workflow_stage',
         'workflow_snapshot',
         'next_action_role',
+        'next_action_user_id',
+        'next_action_duty_coverage_assignment_id',
+        'routing_reason_code',
         'approval_history',
         'scope_team_id',
         'duty_context_status',
@@ -76,5 +79,10 @@ class Report extends Model
     public function fitnessShadowReconciliations(): HasMany
     {
         return $this->hasMany(FitnessShadowReconciliation::class);
+    }
+
+    public function routingEvents(): HasMany
+    {
+        return $this->hasMany(ReportRoutingEvent::class);
     }
 }

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Report;
 use App\Models\Setting;
+use App\Models\Team;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Models\WorkflowNotification;
@@ -16,6 +17,8 @@ use Tests\TestCase;
 class ReportingWorkflowRoleAssignmentTest extends TestCase
 {
     use RefreshDatabase;
+
+    private ?Team $workflowTeam = null;
 
     public function test_report_permission_without_current_stage_role_is_denied_without_side_effects(): void
     {
@@ -165,12 +168,22 @@ class ReportingWorkflowRoleAssignmentTest extends TestCase
         if (! $role->hasPermissionTo($permission)) {
             $role->givePermissionTo($permission);
         }
+        $scope = RoleCatalog::isScopedRole($roleName)
+            ? RoleCatalog::SITE
+            : RoleCatalog::GLOBAL;
+        $teamId = null;
+        if ($scope === RoleCatalog::SITE) {
+            $this->workflowTeam ??= Team::factory()->create([
+                'name' => 'Role Assignment Workflow Team',
+            ]);
+            $teamId = $this->workflowTeam->id;
+        }
 
         UserRoleAssignment::query()->create([
             'user_id' => $user->id,
             'role_id' => $role->id,
-            'scope_type' => RoleCatalog::GLOBAL,
-            'team_id' => null,
+            'scope_type' => $scope,
+            'team_id' => $teamId,
             'start_date' => $startDate,
             'end_date' => $endDate,
             'is_primary' => ! $user->roleAssignments()->exists(),
@@ -179,6 +192,9 @@ class ReportingWorkflowRoleAssignmentTest extends TestCase
 
     private function submittedReport(User $owner): Report
     {
+        $this->workflowTeam ??= Team::factory()->create([
+            'name' => 'Role Assignment Workflow Team',
+        ]);
         $uid = 'erco-rbac-'.strtolower((string) str()->ulid());
 
         return Report::query()->create([
@@ -196,7 +212,7 @@ class ReportingWorkflowRoleAssignmentTest extends TestCase
                 'approveRole' => 'Incident Commander',
                 'resolvedReviewRole' => 'Incident Commander',
                 'usedFallbackReview' => true,
-                'scopeTeamId' => null,
+                'scopeTeamId' => $this->workflowTeam->id,
                 'options' => [
                     'useTeamScopedAic' => true,
                     'allowSubmitWithoutTeam' => true,
@@ -207,7 +223,7 @@ class ReportingWorkflowRoleAssignmentTest extends TestCase
             ],
             'next_action_role' => 'Incident Commander',
             'approval_history' => [],
-            'scope_team_id' => null,
+            'scope_team_id' => $this->workflowTeam->id,
             'version' => 1,
             'revision' => 1,
             'payload' => [

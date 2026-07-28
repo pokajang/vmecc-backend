@@ -12,6 +12,8 @@ use App\Models\Report;
 use App\Models\Roster;
 use App\Models\Team;
 use App\Models\User;
+use App\Models\UserRoleAssignment;
+use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Spatie\Permission\Models\Permission;
@@ -69,8 +71,17 @@ class ActionQueueApiTest extends TestCase
         $owner = User::factory()->create(['status' => 'Active']);
 
         $team = Team::query()->create(['name' => 'Fallback Team', 'status' => 'On Duty']);
+        UserRoleAssignment::query()->create([
+            'user_id' => $actor->id,
+            'role_id' => Role::query()->where('name', 'Incident Commander')->value('id'),
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $team->id,
+            'start_date' => now()->subDay()->toDateString(),
+            'is_primary' => true,
+        ]);
         $fallbackReport = $this->createReport($owner, 'erco', 'ERCO-OTHER');
         $fallbackReport->update(['scope_team_id' => $team->id]);
+        $this->createReport($owner, 'erco', 'ERCO-MISSING-TEAM');
         $this->createReport($actor, 'erco', 'ERCO-SELF');
         $returnedReport = $this->createReport($actor, 'erco', 'ERCO-RETURNED');
         $returnedReport->update([
@@ -86,7 +97,13 @@ class ActionQueueApiTest extends TestCase
         $response->assertOk();
         $erco = $items->firstWhere('key', 'reports.erco.review');
         $this->assertSame(1, $erco['count']);
-        $this->assertSame('/report/erco?scope=actionable&action=review', $erco['to']);
+        $this->assertSame(
+            "/report/erco?scope=actionable&action=review&team_id={$team->id}",
+            $erco['to'],
+        );
+        $this->assertSame($team->id, $erco['teamId']);
+        $this->assertSame('Fallback Team', $erco['teamName']);
+        $this->assertSame('Incident Commander', $erco['actingRole']);
         $correction = $items->firstWhere('key', 'reports.erco.correction');
         $this->assertSame(1, $correction['count']);
         $this->assertSame('/report/erco?status=Rejected', $correction['to']);
@@ -100,6 +117,72 @@ class ActionQueueApiTest extends TestCase
             ->assertOk()
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.displayId', 'ERCO-RETURNED');
+    }
+
+    public function test_report_queue_separates_actions_for_each_team(): void
+    {
+        $actor = $this->createUserWithRole('System Administrator', [
+            'self.dashboard',
+            'reports.erco.view',
+        ]);
+        $owner = User::factory()->create(['status' => 'Active']);
+        $alpha = Team::factory()->create(['name' => 'Queue Alpha']);
+        $bravo = Team::factory()->create(['name' => 'Queue Bravo']);
+        $this->createReport($owner, 'erco', 'ERCO-ALPHA')
+            ->update(['scope_team_id' => $alpha->id]);
+        $this->createReport($owner, 'erco', 'ERCO-BRAVO')
+            ->update(['scope_team_id' => $bravo->id]);
+
+        $items = collect(
+            $this->actingAs($actor)
+                ->getJson('/api/dashboard/action-queue')
+                ->assertOk()
+                ->json('items'),
+        )->where('module', 'reports')->where('action', 'review')->values();
+
+        $this->assertCount(2, $items);
+        $this->assertSame(['Queue Alpha', 'Queue Bravo'], $items->pluck('teamName')->sort()->values()->all());
+        $this->assertSame([1, 1], $items->pluck('count')->all());
+        $this->assertTrue($items->every(
+            fn (array $item) => str_contains($item['to'], 'team_id='),
+        ));
+    }
+
+    public function test_distinct_approver_rule_removes_completed_admin_stage_from_queue_and_actions(): void
+    {
+        $actor = $this->createUserWithRole('System Administrator', [
+            'self.dashboard',
+            'staff.leave.manage',
+        ]);
+        $owner = User::factory()->create(['status' => 'Active']);
+        $leave = $this->createLeave($owner, [
+            'display_id' => 'LV-DISTINCT-ADMIN',
+            'workflow_stage' => 'approve',
+            'next_action_role' => 'Human Resource',
+            'workflow_snapshot' => ['enforceDistinctApprovers' => true],
+            'approval_history' => [[
+                'action' => 'Reviewed',
+                'byUserId' => (string) $actor->id,
+            ]],
+        ]);
+
+        $items = collect(
+            $this->actingAs($actor)
+                ->getJson('/api/dashboard/action-queue')
+                ->assertOk()
+                ->json('items'),
+        );
+        $this->assertNull($items->firstWhere('key', 'leave.approve'));
+
+        $record = collect(
+            $this->getJson('/api/staff/leave/records')
+                ->assertOk()
+                ->json('data'),
+        )->firstWhere('id', $leave->id);
+        $this->assertNotNull($record);
+        $this->assertNotContains('approve', $record['permitted_actions']);
+        $this->assertContains('request_correction', $record['permitted_actions']);
+        $this->assertContains('cancel', $record['permitted_actions']);
     }
 
     public function test_payment_queue_includes_only_approved_unpaid_salary_claims(): void

@@ -14,6 +14,8 @@ use App\Services\LeaveClaimGuardService;
 use App\Services\LeaveNotificationService;
 use App\Services\LeaveRosterImpactService;
 use App\Services\LeaveWorkflowService;
+use App\Services\WorkflowRecipientResolver;
+use App\Services\WorkflowSubmissionContextResolver;
 use App\Services\WorkingDayCalculator;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
@@ -31,6 +33,8 @@ class LeaveController extends Controller
         private readonly LeaveClaimGuardService $claimGuardService,
         private readonly LeaveRosterImpactService $rosterImpactService,
         private readonly LeaveNotificationService $notificationService,
+        private readonly WorkflowRecipientResolver $recipientResolver,
+        private readonly WorkflowSubmissionContextResolver $submissionContextResolver,
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly WorkingDayCalculator $workingDayCalculator,
         private readonly HolidayResolver $holidayResolver,
@@ -161,11 +165,17 @@ class LeaveController extends Controller
         $payload = $this->validatePayload($request);
         $submittedDays = $payload['days'] ?? null;
 
-        [$leave, $workflow] = DB::transaction(function () use ($user, $payload) {
+        [$leave, $workflow, $recipientIds] = DB::transaction(function () use ($user, $payload) {
             $lockedUser = User::query()->lockForUpdate()->findOrFail($user->id);
             $data = $this->claimGuardService->validate($payload, $lockedUser);
+            $effectiveAt = $this->workflowEffectiveAt($data);
             $actorRoles = $this->authorizationService->getActiveRoleNames($lockedUser)->all();
-            $workflow = $this->workflowService->buildWorkflowForSubmission($actorRoles);
+            $context = $this->submissionContextResolver->resolve($lockedUser, $effectiveAt);
+            $workflow = $this->workflowService->buildWorkflowForSubmission(array_values(array_unique(array_filter([
+                $context['applicantRole'] ?? null,
+                ...$actorRoles,
+            ]))));
+            $workflow['workflowSnapshot']['workflowContext'] = $context;
             $year = (int) date('Y', strtotime($data['start_date']));
             $historyEntry = [
                 'id' => (string) Str::uuid(),
@@ -193,6 +203,11 @@ class LeaveController extends Controller
                 'applied_at' => now(),
                 'workflow_stage' => $workflow['workflowStage'],
                 'workflow_snapshot' => $workflow['workflowSnapshot'],
+                'workflow_team_id' => $context['teamId'],
+                'workflow_team_name' => $context['teamName'],
+                'workflow_applicant_role' => $context['applicantRole'],
+                'workflow_routing_source' => $context['routingSource'],
+                'duty_coverage_assignment_id' => $context['dutyCoverageAssignmentId'],
                 'next_action_role' => $workflow['nextActionRole'],
                 'applicant_roles' => $workflow['applicantRoles'],
                 'approval_history' => [$historyEntry],
@@ -204,16 +219,25 @@ class LeaveController extends Controller
                 LeaveAttachment::query()->whereKey($data['attachment_id'])->update(['leave_id' => $leave->id]);
             }
             $this->workflowService->onLeaveSubmitted($leave);
+            $recipientIds = $this->resolveStageRecipientIds(
+                $workflow['nextActionRole'],
+                $context['teamId'] ?? null,
+                now(),
+                (int) $lockedUser->id,
+            );
 
-            return [$leave->fresh(['attachment']), $workflow];
+            return [$leave->fresh(['attachment']), $workflow, $recipientIds];
         });
 
         $this->emitNotificationSafely(
             'submitted',
             $leave,
             ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            $workflow['nextActionRole'] ? [$workflow['nextActionRole']] : [],
             [],
+            $recipientIds,
+            true,
+            null,
+            $this->workflowContextMetadata($leave),
             true,
         );
 
@@ -266,7 +290,7 @@ class LeaveController extends Controller
         $payload = $this->validatePayload($request, true);
         $submittedDays = $payload['days'] ?? null;
 
-        [$leave, $workflow, $eventType] = DB::transaction(function () use ($user, $id, $payload) {
+        [$leave, $workflow, $eventType, $recipientIds] = DB::transaction(function () use ($user, $id, $payload) {
             $lockedUser = User::query()->lockForUpdate()->findOrFail($user->id);
             $leave = Leave::query()->where('user_id', $lockedUser->id)->with('attachment')->lockForUpdate()->findOrFail($id);
             if (! $this->canApplicantEdit($leave)) {
@@ -276,8 +300,19 @@ class LeaveController extends Controller
             }
             $this->assertExpectedVersion($leave, $payload['expected_version'] ?? null);
             $data = $this->claimGuardService->validate($payload, $lockedUser, $leave);
-            $workflow = $this->workflowService->buildWorkflowForSubmission(
-                $this->authorizationService->getActiveRoleNames($lockedUser)->all(),
+            $effectiveAt = $this->workflowEffectiveAt($data);
+            $actorRoles = $this->authorizationService->getActiveRoleNames($lockedUser)->all();
+            $context = $this->submissionContextResolver->resolve($lockedUser, $effectiveAt);
+            $workflow = $this->workflowService->buildWorkflowForSubmission(array_values(array_unique(array_filter([
+                $context['applicantRole'] ?? null,
+                ...$actorRoles,
+            ]))));
+            $workflow['workflowSnapshot']['workflowContext'] = $context;
+            $recipientIds = $this->resolveStageRecipientIds(
+                $workflow['nextActionRole'],
+                $context['teamId'] ?? null,
+                now(),
+                (int) $lockedUser->id,
             );
             $isResubmission = $leave->status === 'Needs Correction';
             $history = is_array($leave->approval_history) ? $leave->approval_history : [];
@@ -305,6 +340,11 @@ class LeaveController extends Controller
                 'cover_by' => $data['cover_by'] ?? null,
                 'workflow_stage' => $workflow['workflowStage'],
                 'workflow_snapshot' => $workflow['workflowSnapshot'],
+                'workflow_team_id' => $context['teamId'],
+                'workflow_team_name' => $context['teamName'],
+                'workflow_applicant_role' => $context['applicantRole'],
+                'workflow_routing_source' => $context['routingSource'],
+                'duty_coverage_assignment_id' => $context['dutyCoverageAssignmentId'],
                 'next_action_role' => $workflow['nextActionRole'],
                 'applicant_roles' => $workflow['applicantRoles'],
                 'approval_history' => array_slice($history, -20),
@@ -322,18 +362,18 @@ class LeaveController extends Controller
             $this->workflowService->onLeaveDeclined($oldLeave);
             $this->workflowService->onLeaveSubmitted($leave->fresh());
 
-            return [$leave->fresh(['attachment']), $workflow, $isResubmission ? 'resubmitted' : 'edited'];
+            return [$leave->fresh(['attachment']), $workflow, $isResubmission ? 'resubmitted' : 'edited', $recipientIds];
         });
 
         $this->emitNotificationSafely(
             $eventType,
             $leave,
             ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            $workflow['nextActionRole'] ? [$workflow['nextActionRole']] : [],
             [],
+            $recipientIds,
             (bool) $workflow['nextActionRole'],
             null,
-            [],
+            $this->workflowContextMetadata($leave),
             true,
         );
 
@@ -479,6 +519,11 @@ class LeaveController extends Controller
             'applied_at' => optional($leave->applied_at)->toIso8601String(),
             'workflow_stage' => $leave->workflow_stage,
             'workflow_snapshot' => $leave->workflow_snapshot,
+            'workflow_team_id' => $leave->workflow_team_id,
+            'workflow_team_name' => $leave->workflow_team_name,
+            'workflow_applicant_role' => $leave->workflow_applicant_role,
+            'workflow_routing_source' => $leave->workflow_routing_source,
+            'duty_coverage_assignment_id' => $leave->duty_coverage_assignment_id,
             'next_action_role' => $leave->next_action_role,
             'applicant_roles' => $leave->applicant_roles ?? [],
             'approval_history' => $leave->approval_history ?? [],
@@ -582,6 +627,51 @@ class LeaveController extends Controller
                 'error' => $exception->getMessage(),
             ]);
         }
+    }
+
+    private function resolveStageRecipientIds(
+        mixed $role,
+        ?int $teamId,
+        Carbon $effectiveAt,
+        int $excludeUserId,
+    ): array {
+        $role = trim((string) $role);
+        if ($role === '') {
+            return [];
+        }
+
+        $ids = $this->recipientResolver
+            ->resolveForWorkflowRole($role, $teamId, $effectiveAt, $excludeUserId)
+            ->pluck('userId')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($ids === []) {
+            throw ValidationException::withMessages([
+                'workflow' => ["No active recipient is available for the '{$role}' workflow stage."],
+            ]);
+        }
+
+        return $ids;
+    }
+
+    private function workflowEffectiveAt(array $data): Carbon
+    {
+        $shift = strtolower(trim((string) ($data['work_shift'] ?? 'normal')));
+        $hour = str_contains($shift, 'night') ? 20 : 8;
+
+        return Carbon::parse((string) $data['start_date'])->setTime($hour, 0);
+    }
+
+    private function workflowContextMetadata(Leave $leave): array
+    {
+        return [
+            'workflowTeamId' => $leave->workflow_team_id,
+            'workflowTeamName' => $leave->workflow_team_name,
+            'workflowRoutingSource' => $leave->workflow_routing_source,
+        ];
     }
 
     private function buildComputationMeta($user, float $computedDays, mixed $clientDays, string $endpoint): array

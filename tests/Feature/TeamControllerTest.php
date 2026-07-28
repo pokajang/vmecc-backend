@@ -41,6 +41,23 @@ class TeamControllerTest extends TestCase
         return $admin;
     }
 
+    private function assignOperationalRole(
+        User $user,
+        Team $team,
+        string $roleName = 'Tactical Response Team',
+    ): UserRoleAssignment {
+        $role = Role::firstOrCreate(['name' => $roleName, 'guard_name' => 'web']);
+
+        return UserRoleAssignment::create([
+            'user_id' => $user->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $team->id,
+            'start_date' => now()->toDateString(),
+            'is_primary' => true,
+        ]);
+    }
+
     // ─── CREATE ──────────────────────────────────────────────────────────────
 
     public function test_store_creates_team_and_returns_201(): void
@@ -99,12 +116,31 @@ class TeamControllerTest extends TestCase
             ->assertJsonPath('errors.members.0', fn ($msg) => str_contains($msg, $otherTeam->name));
     }
 
+    public function test_update_rejects_unlinked_operational_role_member(): void
+    {
+        $this->actingAsAdmin();
+        $team = Team::factory()->create();
+
+        $this->putJson("/api/teams/{$team->id}", [
+            'name' => $team->name,
+            'members' => [[
+                'user_id' => null,
+                'name' => 'Unlinked AIC',
+                'role' => 'assistant incident commander',
+                'is_primary' => false,
+                'started_at' => now()->toDateString(),
+            ]],
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors(['members.0.user_id']);
+    }
+
     public function test_update_allows_user_already_on_same_team(): void
     {
         $this->actingAsAdmin();
 
         $team = Team::factory()->create();
         $user = User::factory()->create(['status' => 'active']);
+        $this->assignOperationalRole($user, $team);
 
         // User is an active member of the same team being updated — should be fine
         TeamMember::factory()->create([
@@ -160,6 +196,7 @@ class TeamControllerTest extends TestCase
 
         $team = Team::factory()->create();
         $user = User::factory()->create(['status' => 'active']);
+        $this->assignOperationalRole($user, $team);
 
         $this->putJson("/api/teams/{$team->id}", [
             'name' => $team->name,
@@ -187,6 +224,27 @@ class TeamControllerTest extends TestCase
 
         $this->assertNotNull($notification);
         $this->assertContains((int) $user->id, $notification->recipient_user_ids ?? []);
+    }
+
+    public function test_update_rejects_removing_an_active_operational_assignment(): void
+    {
+        $this->actingAsAdmin();
+        $team = Team::factory()->create();
+        $user = User::factory()->create(['status' => 'active']);
+        $this->assignOperationalRole($user, $team);
+        TeamMember::factory()->create([
+            'team_id' => $team->id,
+            'user_id' => $user->id,
+            'name' => $user->name,
+            'role' => 'Tactical Response Team',
+            'ended_at' => null,
+        ]);
+
+        $this->putJson("/api/teams/{$team->id}", [
+            'name' => $team->name,
+            'members' => [],
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('members');
     }
 
     // ─── DELETE ──────────────────────────────────────────────────────────────
@@ -334,6 +392,7 @@ class TeamControllerTest extends TestCase
 
         $team = Team::factory()->create();
         $user = User::factory()->create(['status' => 'active']);
+        $this->assignOperationalRole($user, $team);
         $file = UploadedFile::fake()->image('team.png', 80, 80);
 
         $members = json_encode([[

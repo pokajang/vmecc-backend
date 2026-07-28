@@ -34,6 +34,7 @@ MESSAGE_DIGEST_EMAIL_ENABLED=true
 After changing the environment, rebuild Laravel's cached configuration:
 
 ```bash
+php artisan migrate --force
 php artisan optimize:clear
 php artisan config:cache
 ```
@@ -79,6 +80,8 @@ Verify the queue and delivery records:
 ```bash
 php artisan queue:monitor database:default --max=100
 php artisan workflow:email-deliveries --since="24 hours ago"
+php artisan workflow:notification-outbox-status --max-age=10
+php artisan workflow:dispatch-notification-outbox
 php artisan schedule:list
 ```
 
@@ -89,6 +92,46 @@ Finally exercise one action-required workflow and one FYI workflow. Confirm that
 ```bash
 php artisan queue:failed
 php artisan workflow:email-deliveries --status=failed --since="24 hours ago"
+php artisan workflow:notification-outbox-status --max-age=10
+php artisan workflow:dispatch-notification-outbox --retry-failed
 ```
 
 Application warnings are written to `storage/logs/laravel.log`. SMTP acceptance confirms that the relay accepted the message; inbox delivery and bounces still need to be checked with the SMTP provider.
+
+## Workflow routing checks
+
+Run the routing audit after deployment and after material team, role, or temporary-duty changes:
+
+```bash
+php artisan workflow:audit-routing
+```
+
+The audit is read-only. A stranded legacy report must be repaired one record at a
+time. Preview the exact recipient and team first, then repeat with `--apply`:
+
+```bash
+php artisan workflow:repair-report-routing REPORT_ID \
+  --team=TEAM_ID \
+  --role="Incident Commander" \
+  --user=RECIPIENT_USER_ID \
+  --actor-user=ADMIN_USER_ID \
+  --reason="Verified workflow team and active duty holder"
+
+php artisan workflow:repair-report-routing REPORT_ID \
+  --team=TEAM_ID \
+  --role="Incident Commander" \
+  --user=RECIPIENT_USER_ID \
+  --actor-user=ADMIN_USER_ID \
+  --reason="Verified workflow team and active duty holder" \
+  --apply
+```
+
+Do not repair a record by widening it to another team. The command rejects
+inactive users, users who do not currently hold the required role in the
+persisted workflow team, and actors without administrative assignment authority.
+Every applied repair writes report approval history and a routing audit event.
+
+The scheduler also runs `workflow:reconcile-report-routing` and
+`workflow:dispatch-notification-outbox` every minute. The first safely reroutes
+open reports when a temporary duty assignment expires; the second recovers
+notification deliveries if immediate queue dispatch was unavailable.

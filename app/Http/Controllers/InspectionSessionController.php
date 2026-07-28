@@ -807,8 +807,13 @@ class InspectionSessionController extends Controller
             $payload = $this->inspectionPayloadService->normalize($payload);
             $payload = $this->sessionReportPayloadBuilder->normalizeDerivedFields($payload);
             $storedSubmittedAt = $submittedAt->copy()->setTimezone(config('app.timezone', 'UTC'));
+            $effectiveTeamId = ((int) data_get($dutyContext, 'teamId', 0))
+                ?: (((int) data_get($lockedSession->scope, 'teamId', 0)) ?: null);
             $workflowFields = $this->inspectionWorkflowService->appendSubmissionHistory(
-                $this->inspectionWorkflowService->buildWorkflowForSubmission($user),
+                $this->inspectionWorkflowService->buildWorkflowForSubmission(
+                    $user,
+                    $effectiveTeamId,
+                ),
                 $user,
                 'Submitted',
                 $this->text($request->input('remarks', '')),

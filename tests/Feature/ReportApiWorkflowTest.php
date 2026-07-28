@@ -4,8 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\Report;
 use App\Models\ReportDraft;
+use App\Models\Team;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
+use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -14,6 +16,8 @@ use Tests\TestCase;
 class ReportApiWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+
+    private ?Team $workflowTeam = null;
 
     public function test_report_crud_and_transition_workflow(): void
     {
@@ -287,12 +291,15 @@ class ReportApiWorkflowTest extends TestCase
         if (! $role->hasPermissionTo($permission)) {
             $role->givePermissionTo($permission);
         }
+        $this->workflowTeam ??= Team::factory()->create([
+            'name' => 'Report API Workflow Team',
+        ]);
 
         UserRoleAssignment::query()->create([
             'user_id' => $user->id,
             'role_id' => $role->id,
-            'scope_type' => 'global',
-            'team_id' => null,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $this->workflowTeam->id,
             'is_primary' => true,
         ]);
     }

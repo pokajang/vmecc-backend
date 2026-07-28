@@ -15,6 +15,20 @@ class OvertimeApplicantEditLockTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $reviewer = User::factory()->create(['status' => 'active']);
+        $role = Role::firstOrCreate(['name' => 'Contract Manager', 'guard_name' => 'web']);
+        UserRoleAssignment::query()->create([
+            'user_id' => $reviewer->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::OFFICE,
+            'is_primary' => true,
+        ]);
+    }
+
     public function test_applicant_can_update_pending_overtime_before_first_review_step(): void
     {
         $user = $this->createOvertimeUser();

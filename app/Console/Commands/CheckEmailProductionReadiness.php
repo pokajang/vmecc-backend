@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Services\WorkflowNotifications\WorkflowEmailModuleGate;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 class CheckEmailProductionReadiness extends Command
@@ -119,6 +120,10 @@ class CheckEmailProductionReadiness extends Command
             'Asynchronous queue' => [
                 'ok' => $queue !== '' && ! in_array($queue, ['sync', 'null'], true),
                 'detail' => "Configured queue: {$queue}",
+            ],
+            'Notification outbox' => [
+                'ok' => Schema::hasTable('workflow_notification_outbox'),
+                'detail' => 'workflow_notification_outbox migration must be applied.',
             ],
         ];
     }

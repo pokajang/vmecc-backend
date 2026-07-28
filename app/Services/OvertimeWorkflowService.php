@@ -241,6 +241,7 @@ class OvertimeWorkflowService
 
         return [
             'workflowSnapshot' => [
+                'applicantRole' => trim((string) ($rule['applicantRole'] ?? '')) ?: ($applicantRoles[0] ?? null),
                 'reviewRole' => trim((string) ($rule['reviewRole'] ?? '')),
                 'recommendRole' => trim((string) ($rule['recommendRole'] ?? '')),
                 'approveRole' => trim((string) ($rule['approveRole'] ?? '')),

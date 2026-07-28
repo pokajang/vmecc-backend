@@ -274,9 +274,27 @@ class SettingsController extends Controller
             'workflow.options' => ['nullable', 'array'],
             'typeVisibility' => ['nullable', 'array'],
         ]);
+        $normalized = $this->overtimeWorkflowService->normalizeApprovalRules($data);
+        $roleFields = [];
+        foreach (data_get($normalized, 'workflow.rules', []) as $index => $rule) {
+            if (($rule['active'] ?? true) === false) {
+                continue;
+            }
+            $roleFields["workflow.rules.{$index}.reviewRole"] = $rule['reviewRole'] ?? '';
+            $roleFields["workflow.rules.{$index}.approveRole"] = $rule['approveRole'] ?? '';
+            if (data_get($normalized, 'workflow.options.requireRecommendation', true) !== false) {
+                $roleFields["workflow.rules.{$index}.recommendRole"] = $rule['recommendRole'] ?? '';
+            }
+        }
+        $roleFields['workflow.fallback.reviewRole'] = data_get($normalized, 'workflow.fallback.reviewRole');
+        $roleFields['workflow.fallback.approveRole'] = data_get($normalized, 'workflow.fallback.approveRole');
+        if (data_get($normalized, 'workflow.options.requireRecommendation', true) !== false) {
+            $roleFields['workflow.fallback.recommendRole'] = data_get($normalized, 'workflow.fallback.recommendRole');
+        }
+        $this->assertWorkflowRolesHavePermission($roleFields, 'staff.overtime.manage');
 
         try {
-            $this->overtimeWorkflowService->saveApprovalRules($data);
+            $this->overtimeWorkflowService->saveApprovalRules($normalized);
         } catch (QueryException $e) {
             return response()->json(['message' => 'Settings table not available. Please run migrations.'], 500);
         }

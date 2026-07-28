@@ -26,6 +26,11 @@ class OvertimeRecord extends Model
         'applied_at',
         'workflow_stage',
         'workflow_snapshot',
+        'workflow_team_id',
+        'workflow_team_name',
+        'workflow_applicant_role',
+        'workflow_routing_source',
+        'duty_coverage_assignment_id',
         'next_action_role',
         'applicant_roles',
         'approval_history',
@@ -56,5 +61,15 @@ class OvertimeRecord extends Model
     public function attachment(): BelongsTo
     {
         return $this->belongsTo(WorkflowAttachment::class, 'attachment_id');
+    }
+
+    public function workflowTeam(): BelongsTo
+    {
+        return $this->belongsTo(Team::class, 'workflow_team_id');
+    }
+
+    public function dutyCoverageAssignment(): BelongsTo
+    {
+        return $this->belongsTo(DutyCoverageAssignment::class);
     }
 }

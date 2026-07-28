@@ -32,14 +32,26 @@ class InspectionWorkflowService
         return $normalized['modules'][self::MODULE_KEY];
     }
 
-    public function buildWorkflowForSubmission(User $submitter): array
-    {
-        return $this->reportingWorkflowService->buildWorkflowForSubmission($submitter, self::MODULE_KEY);
+    public function buildWorkflowForSubmission(
+        User $submitter,
+        ?int $effectiveTeamId = null,
+    ): array {
+        return $this->reportingWorkflowService->buildWorkflowForSubmission(
+            $submitter,
+            self::MODULE_KEY,
+            $effectiveTeamId,
+        );
     }
 
-    public function submissionBlockReason(User $submitter): ?string
-    {
-        return $this->reportingWorkflowService->submissionBlockReason($submitter, self::MODULE_KEY);
+    public function submissionBlockReason(
+        User $submitter,
+        ?int $effectiveTeamId = null,
+    ): ?string {
+        return $this->reportingWorkflowService->submissionBlockReason(
+            $submitter,
+            self::MODULE_KEY,
+            $effectiveTeamId,
+        );
     }
 
     public function draftWorkflowFields(): array

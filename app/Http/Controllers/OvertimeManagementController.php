@@ -56,6 +56,7 @@ class OvertimeManagementController extends Controller
             'status' => $status,
             'overtime_type' => $overtimeType,
             'team' => $team,
+            'team_id' => (int) $request->input('team_id', 0),
             'period' => $period,
             'action' => $action,
         ]);
@@ -210,6 +211,11 @@ class OvertimeManagementController extends Controller
         $team = trim((string) ($filters['team'] ?? 'All'));
         if ($team !== '' && strcasecmp($team, 'All') !== 0) {
             $this->applyTeamFilter($query, $team);
+        }
+
+        $teamId = (int) ($filters['team_id'] ?? 0);
+        if ($teamId > 0) {
+            $query->where('workflow_team_id', $teamId);
         }
     }
 
@@ -380,12 +386,13 @@ class OvertimeManagementController extends Controller
         $requiredRole = trim((string) ($row->next_action_role ?? ''));
         $canProcess = $status === 'Pending' && ($isSystemAdmin || (
             $requiredRole !== '' && $this->scopeService->canPerformWorkflowRole($actor, $row, $requiredRole)
-        )) && ($isSystemAdmin || ! $this->violatesDistinctApprovers($row, $actor));
+        ));
+        $canApproveStage = $canProcess && ! $this->violatesDistinctApprovers($row, $actor);
 
         return [
-            'review' => $canProcess && $stage === 'review',
-            'recommend' => $canProcess && $stage === 'recommend',
-            'approve' => $canProcess && $stage === 'approve',
+            'review' => $canApproveStage && $stage === 'review',
+            'recommend' => $canApproveStage && $stage === 'recommend',
+            'approve' => $canApproveStage && $stage === 'approve',
             'reject' => $canProcess,
             'request_correction' => $canProcess,
             'cancel' => ($status === 'Pending' || $status === 'Approved') && $isSystemAdmin,

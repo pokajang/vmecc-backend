@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\PayrollClaim;
 use App\Models\User;
+use App\Models\WorkflowNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -68,6 +69,16 @@ class PayrollClaimPaymentWorkflowApiTest extends TestCase
             'payment_reference' => 'BANK-TRX-001',
             'acted_by_user_id' => $manager->id,
         ]);
+        $notification = WorkflowNotification::query()
+            ->where('module', 'salary')
+            ->where('record_id', $claim->id)
+            ->where('event_type', 'paid')
+            ->firstOrFail();
+        $this->assertSame([$owner->id], $notification->recipient_user_ids);
+        $this->assertDatabaseHas('workflow_notification_recipient_states', [
+            'notification_id' => $notification->id,
+            'user_id' => $owner->id,
+        ]);
     }
 
     public function test_unmark_paid_requires_reason_and_restores_approved_status(): void
@@ -111,6 +122,12 @@ class PayrollClaimPaymentWorkflowApiTest extends TestCase
             'reason' => 'Payment reversal for correction.',
             'acted_by_user_id' => $manager->id,
         ]);
+        $this->assertDatabaseHas('workflow_notifications', [
+            'module' => 'salary',
+            'record_id' => $claim->id,
+            'event_type' => 'payment_reopened',
+            'owner_user_id' => $owner->id,
+        ]);
     }
 
     public function test_bulk_mark_paid_returns_updated_and_skipped_entries(): void
@@ -147,6 +164,17 @@ class PayrollClaimPaymentWorkflowApiTest extends TestCase
         $pendingClaim->refresh();
         $this->assertSame('Paid', $approvedClaim->status);
         $this->assertSame('Pending', $pendingClaim->status);
+        $this->assertDatabaseHas('workflow_notifications', [
+            'module' => 'salary',
+            'record_id' => $approvedClaim->id,
+            'event_type' => 'paid',
+            'owner_user_id' => $owner->id,
+        ]);
+        $this->assertDatabaseMissing('workflow_notifications', [
+            'module' => 'salary',
+            'record_id' => $pendingClaim->id,
+            'event_type' => 'paid',
+        ]);
     }
 
     public function test_mark_paid_rejects_a_stale_version_without_payment_side_effects(): void

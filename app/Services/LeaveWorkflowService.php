@@ -131,6 +131,7 @@ class LeaveWorkflowService
 
         return [
             'workflowSnapshot' => [
+                'applicantRole' => trim((string) ($resolvedRule['applicantRole'] ?? '')) ?: ($normalizedRoles[0] ?? null),
                 'reviewRole' => $reviewRole,
                 'recommendRole' => $recommendRole,
                 'approveRole' => $approveRole,

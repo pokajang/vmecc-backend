@@ -9,6 +9,7 @@ use App\Services\RoleCatalog;
 use App\Services\WorkflowNotifications\WorkflowNotificationChannelPolicy;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -28,7 +29,7 @@ class WorkflowNotificationServiceTest extends TestCase
 
         $owner = User::factory()->create(['status' => 'active']);
 
-        $notification = app(WorkflowNotificationService::class)->emit(
+        $notification = DB::transaction(fn () => app(WorkflowNotificationService::class)->emit(
             module: 'report',
             eventType: 'submitted',
             recordType: 'report',
@@ -39,12 +40,16 @@ class WorkflowNotificationServiceTest extends TestCase
             targetUserIds: [$owner->id],
             actionRequired: true,
             metadata: ['nextActionRole' => 'Contract Manager', 'status' => 'Submitted'],
-        );
+        ));
 
         $this->assertDatabaseHas('workflow_notifications', ['id' => $notification->id]);
+        $this->assertDatabaseHas('workflow_notification_outbox', [
+            'notification_id' => $notification->id,
+            'status' => 'pending',
+        ]);
         Log::shouldHaveReceived('warning')
             ->once()
-            ->withArgs(fn (string $message, array $context) => $message === 'Workflow notification persisted, but email dispatch could not be queued.'
+            ->withArgs(fn (string $message, array $context) => $message === 'Workflow notification outbox persisted, but immediate dispatch could not be queued.'
                 && $context['notification_id'] === $notification->id
             );
     }

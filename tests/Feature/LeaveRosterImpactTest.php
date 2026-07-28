@@ -20,6 +20,20 @@ class LeaveRosterImpactTest extends TestCase
     use RefreshDatabase;
     use WithoutMiddleware;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $reviewer = User::factory()->create(['status' => 'active']);
+        $role = Role::firstOrCreate(['name' => 'Human Resource', 'guard_name' => 'web']);
+        UserRoleAssignment::query()->create([
+            'user_id' => $reviewer->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::OFFICE,
+            'is_primary' => true,
+        ]);
+    }
+
     private function payload(array $overrides = []): array
     {
         return array_merge([

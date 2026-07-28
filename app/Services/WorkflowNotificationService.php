@@ -2,10 +2,11 @@
 
 namespace App\Services;
 
-use App\Jobs\DispatchWorkflowChannelsJob;
+use App\Jobs\ProcessWorkflowNotificationOutboxJob;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Models\WorkflowNotification;
+use App\Models\WorkflowNotificationOutbox;
 use App\Models\WorkflowNotificationRecipientState;
 use App\Services\WorkflowNotifications\WorkflowEmailModuleGate;
 use App\Services\WorkflowNotifications\WorkflowNotificationChannelPolicy;
@@ -29,6 +30,8 @@ class WorkflowNotificationService
         'reviewed' => 'Request reviewed',
         'recommended' => 'Request recommended',
         'approved' => 'Request approved',
+        'paid' => 'Payment completed',
+        'payment_reopened' => 'Payment status reopened',
         'rejected' => 'Request rejected',
         'cancelled' => 'Request cancelled',
         'allocation_updated' => 'Allocation updated',
@@ -39,6 +42,8 @@ class WorkflowNotificationService
         'member_assigned' => 'Team assignment',
         'roster_changed' => 'Roster updated',
         'team_disbanded' => 'Team disbanded',
+        'team_transferred' => 'Team assignment transferred',
+        'workflow_reassigned' => 'Workflow action reassigned',
         'published' => 'Roster published',
     ];
 
@@ -95,8 +100,9 @@ class WorkflowNotificationService
 
         $title = self::EVENT_TITLES[$eventType] ?? ucfirst($eventType);
         $message = $this->buildMessage($module, $eventType, $recordDisplayId, $actor, $remarks);
+        $queueEmail = $this->shouldDispatchWorkflowEmail($module, $recordType);
 
-        $notification = DB::transaction(function () use (
+        [$notification, $outbox] = DB::transaction(function () use (
             $module,
             $eventType,
             $recordType,
@@ -112,7 +118,8 @@ class WorkflowNotificationService
             $policy,
             $resolvedAt,
             $viewerIds,
-        ): WorkflowNotification {
+            $queueEmail,
+        ): array {
             $notification = $this->findCoalescingNotification(
                 module: $module,
                 recordType: $recordType,
@@ -165,15 +172,50 @@ class WorkflowNotificationService
 
             $this->resolveSupersededNotifications($notification, (string) $policy['category']);
 
-            return $notification->fresh();
+            $outbox = null;
+            if ($queueEmail) {
+                $outbox = WorkflowNotificationOutbox::query()
+                    ->lockForUpdate()
+                    ->firstOrNew(['notification_id' => $notification->id]);
+                $outbox->fill([
+                    'event_version' => ((int) ($outbox->event_version ?? 0)) + 1,
+                    'status' => 'pending',
+                    'attempts' => 0,
+                    'available_at' => now(),
+                    'processing_at' => null,
+                    'processed_at' => null,
+                    'failed_at' => null,
+                    'last_error' => null,
+                ])->save();
+            }
+
+            return [$notification->fresh(), $outbox?->fresh()];
         });
 
-        if ($this->shouldDispatchWorkflowEmail($module, $recordType)) {
+        if ($outbox) {
+            $dispatchOutbox = function () use ($notification, $outbox, $module, $recordType): void {
+                try {
+                    ProcessWorkflowNotificationOutboxJob::dispatch(
+                        (int) $outbox->id,
+                        (int) $outbox->event_version,
+                    );
+                } catch (\Throwable $exception) {
+                    Log::warning('Workflow notification outbox persisted, but immediate dispatch could not be queued.', [
+                        'notification_id' => $notification->id,
+                        'outbox_id' => $outbox->id,
+                        'module' => $module,
+                        'record_type' => $recordType,
+                        'error' => $exception->getMessage(),
+                    ]);
+                }
+            };
+
             try {
-                DispatchWorkflowChannelsJob::dispatch($notification->id);
+                DB::afterCommit($dispatchOutbox);
             } catch (\Throwable $exception) {
-                Log::warning('Workflow notification persisted, but email dispatch could not be queued.', [
+                Log::warning('Workflow notification outbox persisted, but its after-commit hook could not be registered.', [
                     'notification_id' => $notification->id,
+                    'outbox_id' => $outbox->id,
                     'module' => $module,
                     'record_type' => $recordType,
                     'error' => $exception->getMessage(),
@@ -425,6 +467,8 @@ class WorkflowNotificationService
             'reviewed' => "{$moduleLabel} {$displayId} has been reviewed by {$actorName}.",
             'recommended' => "{$moduleLabel} {$displayId} has been recommended by {$actorName}.",
             'approved' => "{$moduleLabel} {$displayId} has been approved by {$actorName}.",
+            'paid' => "{$moduleLabel} {$displayId} has been marked paid by {$actorName}.",
+            'payment_reopened' => "{$moduleLabel} {$displayId} payment status was reopened by {$actorName}.",
             'rejected' => "{$moduleLabel} {$displayId} has been rejected by {$actorName}.",
             'cancelled' => "{$moduleLabel} {$displayId} has been cancelled by {$actorName}.",
             'allocation_updated' => "{$moduleLabel} allocation has been updated by {$actorName}.",
@@ -435,6 +479,8 @@ class WorkflowNotificationService
             'member_assigned' => "You have been assigned to Team {$displayId}.",
             'roster_changed' => "Team {$displayId} roster has been updated.",
             'team_disbanded' => "Team {$displayId} has been disbanded.",
+            'team_transferred' => "{$actorName} transferred the team assignment from {$displayId}.",
+            'workflow_reassigned' => "{$moduleLabel} {$displayId} has been assigned to you by {$actorName}.",
             'published' => "{$moduleLabel} {$displayId} has been published.",
             default => "{$actorName} performed {$eventType} on {$moduleLabel} {$displayId}.",
         };

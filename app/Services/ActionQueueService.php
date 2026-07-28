@@ -50,6 +50,8 @@ class ActionQueueService
         private readonly ModuleActivationService $modules,
         private readonly ReportingWorkflowService $reportingWorkflow,
         private readonly OvertimeManagementScopeService $overtimeScope,
+        private readonly ReportActionContextService $reportActionContext,
+        private readonly WorkflowRecipientResolver $workflowRecipients,
     ) {}
 
     public function forUser(User $actor): array
@@ -91,18 +93,29 @@ class ActionQueueService
                 ->get();
 
             foreach (['review', 'approve'] as $action) {
-                $count = $candidates->filter(fn (Report $report) => $action === 'review'
+                $actionable = $candidates->filter(fn (Report $report) => $action === 'review'
                     ? $this->reportingWorkflow->canReview($report, $actor)
-                    : $this->reportingWorkflow->canApprove($report, $actor))->count();
+                    : $this->reportingWorkflow->canApprove($report, $actor))->values();
 
-                $items[] = $this->item(
-                    "reports.{$reportType}.{$action}",
-                    $reportType === 'inspection' ? 'inspection' : 'reports',
+                $contexts = $this->reportActionContext->grouped(
+                    $actionable,
                     $action,
-                    "{$config['label']} pending your {$action}",
-                    $count,
-                    "{$config['path']}?scope=actionable&action={$action}",
+                    $config['path'],
                 );
+                foreach ($contexts as $index => $context) {
+                    $items[] = $this->item(
+                        count($contexts) === 1
+                            ? "reports.{$reportType}.{$action}"
+                            : "reports.{$reportType}.{$action}.{$index}."
+                                .($context['teamId'] ?? 'organization'),
+                        $reportType === 'inspection' ? 'inspection' : 'reports',
+                        $action,
+                        "{$config['label']} awaiting your {$action}",
+                        (int) $context['count'],
+                        (string) $context['to'],
+                        context: $context,
+                    );
+                }
             }
 
             $items[] = $this->item(
@@ -185,23 +198,36 @@ class ActionQueueService
                 ->get();
 
             foreach (self::WORKFLOW_ACTIONS as $action) {
-                $count = $records->filter(fn (Leave $leave) => $leave->workflow_stage === $action
+                $actionable = $records->filter(fn (Leave $leave) => $leave->workflow_stage === $action
                     && $this->roleCanAct($actor, $roles, $isAdmin, $leave->next_action_role)
-                    && ($isAdmin || ! $this->violatesDistinctApprovers(
+                    && ($isAdmin || $this->workflowRecipients
+                        ->resolveForWorkflowRole(
+                            (string) $leave->next_action_role,
+                            $leave->workflow_team_id ? (int) $leave->workflow_team_id : null,
+                            now(),
+                            (int) $leave->user_id,
+                        )
+                        ->contains(fn (array $recipient) => (int) $recipient['userId'] === (int) $actor->id))
+                    && ! $this->violatesDistinctApprovers(
                         $leave->workflow_snapshot,
                         $leave->approval_history,
                         $actor,
-                    ))
-                )->count();
+                    )
+                )->values();
 
-                $items[] = $this->item(
-                    "leave.{$action}",
-                    'leave',
-                    $action,
-                    "Leave requests pending your {$action}",
-                    $count,
-                    "/staff/leave-management/leaves?action={$action}",
-                );
+                $contexts = $this->workflowContextGroups($actionable);
+                foreach ($contexts as $index => $context) {
+                    $key = "leave.{$action}".(count($contexts) > 1 ? ".{$index}" : '');
+                    $items[] = $this->item(
+                        $key,
+                        'leave',
+                        $action,
+                        "Leave requests pending your {$action}",
+                        (int) $context['count'],
+                        "/staff/leave-management/leaves?action={$action}".($context['teamId'] ? "&team_id={$context['teamId']}" : ''),
+                        context: $context,
+                    );
+                }
             }
         }
 
@@ -237,27 +263,32 @@ class ActionQueueService
             $isAdmin = $this->overtimeScope->isSystemAdministrator($actor);
 
             foreach (self::WORKFLOW_ACTIONS as $action) {
-                $count = $records->filter(fn (OvertimeRecord $record) => $record->workflow_stage === $action
+                $actionable = $records->filter(fn (OvertimeRecord $record) => $record->workflow_stage === $action
                     && ($isAdmin || $this->overtimeScope->canPerformWorkflowRole(
                         $actor,
                         $record,
                         (string) $record->next_action_role,
                     ))
-                    && ($isAdmin || ! $this->violatesDistinctApprovers(
+                    && ! $this->violatesDistinctApprovers(
                         $record->workflow_snapshot,
                         $record->approval_history,
                         $actor,
-                    ))
-                )->count();
+                    )
+                )->values();
 
-                $items[] = $this->item(
-                    "overtime.{$action}",
-                    'overtime',
-                    $action,
-                    "Overtime requests pending your {$action}",
-                    $count,
-                    "/staff/overtime-management/records?action={$action}",
-                );
+                $contexts = $this->workflowContextGroups($actionable);
+                foreach ($contexts as $index => $context) {
+                    $key = "overtime.{$action}".(count($contexts) > 1 ? ".{$index}" : '');
+                    $items[] = $this->item(
+                        $key,
+                        'overtime',
+                        $action,
+                        "Overtime requests pending your {$action}",
+                        (int) $context['count'],
+                        "/staff/overtime-management/records?action={$action}".($context['teamId'] ? "&team_id={$context['teamId']}" : ''),
+                        context: $context,
+                    );
+                }
             }
         }
 
@@ -408,6 +439,39 @@ class ActionQueueService
         return $requiredRole !== '' && $roles->contains($requiredRole);
     }
 
+    private function workflowContextGroups(Collection $records): array
+    {
+        return $records
+            ->groupBy(function ($record): string {
+                $role = trim((string) $record->next_action_role);
+                $scope = RoleCatalog::scopeForRole($role);
+                $teamId = in_array($scope, [RoleCatalog::SITE, RoleCatalog::CLIENT_SITE], true)
+                    ? (int) ($record->workflow_team_id ?? 0)
+                    : 0;
+
+                return implode('|', [$teamId, $role, (string) ($record->workflow_routing_source ?? 'organization')]);
+            })
+            ->map(function (Collection $rows): array {
+                $record = $rows->first();
+                $role = trim((string) $record->next_action_role);
+                $scope = RoleCatalog::scopeForRole($role);
+                $teamScoped = in_array($scope, [RoleCatalog::SITE, RoleCatalog::CLIENT_SITE], true);
+
+                return [
+                    'count' => $rows->count(),
+                    'teamId' => $teamScoped && $record->workflow_team_id ? (int) $record->workflow_team_id : null,
+                    'teamName' => $teamScoped ? trim((string) $record->workflow_team_name) : '',
+                    'role' => $role,
+                    'routingSource' => trim((string) ($record->workflow_routing_source ?? 'organization')),
+                    'scopeLabel' => $teamScoped
+                        ? (trim((string) $record->workflow_team_name) ?: 'Team scoped')
+                        : 'Organization-wide',
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
     private function violatesDistinctApprovers(mixed $snapshot, mixed $history, User $actor): bool
     {
         if (! is_array($snapshot) || ($snapshot['enforceDistinctApprovers'] ?? false) !== true) {
@@ -428,8 +492,10 @@ class ActionQueueService
         int $count,
         string $to,
         string $priority = 'normal',
+        array $context = [],
     ): array {
-        return compact('key', 'module', 'action', 'label', 'count', 'to', 'priority');
+        return compact('key', 'module', 'action', 'label', 'count', 'to', 'priority')
+            + $context;
     }
 
     private function roleNames(User $actor): Collection

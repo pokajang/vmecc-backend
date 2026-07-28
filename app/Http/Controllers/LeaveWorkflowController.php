@@ -8,6 +8,7 @@ use App\Services\AuditLogger;
 use App\Services\LeaveNotificationService;
 use App\Services\LeaveRosterImpactNotificationService;
 use App\Services\LeaveWorkflowService;
+use App\Services\WorkflowRecipientResolver;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,6 +22,7 @@ class LeaveWorkflowController extends Controller
         private readonly LeaveNotificationService $notificationService,
         private readonly LeaveRosterImpactNotificationService $rosterImpactNotifications,
         private readonly AssignmentAuthorizationService $authorizationService,
+        private readonly WorkflowRecipientResolver $recipientResolver,
     ) {}
 
     // ── Review ────────────────────────────────────────────────────────────────
@@ -82,7 +84,7 @@ class LeaveWorkflowController extends Controller
             ]);
         }
 
-        [$leave, $previousStatus] = DB::transaction(function () use ($actor, $userId, $leaveId, $action, $payload) {
+        [$leave, $previousStatus, $recipientIds] = DB::transaction(function () use ($actor, $userId, $leaveId, $action, $payload) {
             $leave = Leave::query()->where('user_id', $userId)->with('attachment')->lockForUpdate()->findOrFail($leaveId);
             $this->assertVersionedActionAllowed($leave, $action, $actor);
             $this->assertExpectedVersion($leave, $payload['expected_version'] ?? null);
@@ -94,6 +96,10 @@ class LeaveWorkflowController extends Controller
                 (string) $actor->name,
                 $payload['remarks'] ?? null,
             );
+            $nextRole = trim((string) ($updates['next_action_role'] ?? $leave->next_action_role ?? ''));
+            $recipientIds = $nextRole !== ''
+                ? $this->resolveRecipientIds($leave, $nextRole)
+                : [(int) $leave->user_id];
             $updates['version'] = ((int) $leave->version) + 1;
             $leave->update($updates);
             $fresh = $leave->fresh(['attachment']);
@@ -106,7 +112,7 @@ class LeaveWorkflowController extends Controller
                 $this->workflowService->onApprovedLeaveCancelled($fresh);
             }
 
-            return [$fresh, $previousStatus];
+            return [$fresh, $previousStatus, $recipientIds];
         });
 
         $eventType = $this->actionToEventType($action);
@@ -115,10 +121,15 @@ class LeaveWorkflowController extends Controller
                 $eventType,
                 $leave,
                 ['userId' => $actor->id, 'name' => $actor->name, 'email' => $actor->email],
-                $leave->next_action_role ? [$leave->next_action_role] : [],
-                $leave->next_action_role ? [] : [$userId],
+                [],
+                $recipientIds,
                 $leave->next_action_role !== null,
                 $payload['remarks'] ?? null,
+                metadata: [
+                    'workflowTeamId' => $leave->workflow_team_id,
+                    'workflowTeamName' => $leave->workflow_team_name,
+                    'workflowRoutingSource' => $leave->workflow_routing_source,
+                ],
                 excludeOwner: $leave->next_action_role !== null,
             );
         } catch (\Throwable $exception) {
@@ -252,7 +263,7 @@ class LeaveWorkflowController extends Controller
         $expectedStage = $leave->workflow_stage;
         $expectedRole = $leave->next_action_role;
 
-        if ($expectedRole && ! in_array($expectedRole, $actorRoles, true)) {
+        if ($expectedRole && (! in_array($expectedRole, $actorRoles, true) || ! $this->isResolvedRecipient($leave, $expectedRole, (int) $actor->id))) {
             throw ValidationException::withMessages([
                 'role' => ["This action requires the '{$expectedRole}' role."],
             ]);
@@ -303,7 +314,9 @@ class LeaveWorkflowController extends Controller
         $actorRoles = $this->authorizationService->getActiveRoleNames($actor)->all();
         if (! in_array('System Administrator', $actorRoles, true)) {
             $expectedRole = trim((string) $leave->next_action_role);
-            if ($expectedRole === '' || ! in_array($expectedRole, $actorRoles, true)) {
+            if ($expectedRole === ''
+                || ! in_array($expectedRole, $actorRoles, true)
+                || ! $this->isResolvedRecipient($leave, $expectedRole, (int) $actor->id)) {
                 throw ValidationException::withMessages([
                     'role' => [$expectedRole
                         ? "This action requires the '{$expectedRole}' role."
@@ -337,6 +350,42 @@ class LeaveWorkflowController extends Controller
                 'currentRecord' => LeaveController::formatLeave($leave),
             ], 409));
         }
+    }
+
+    private function resolveRecipientIds(Leave $leave, string $role): array
+    {
+        $ids = $this->recipientResolver
+            ->resolveForWorkflowRole(
+                $role,
+                $leave->workflow_team_id ? (int) $leave->workflow_team_id : null,
+                now(),
+                (int) $leave->user_id,
+            )
+            ->pluck('userId')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($ids === []) {
+            throw ValidationException::withMessages([
+                'workflow' => ["No active recipient is available for the '{$role}' workflow stage."],
+            ]);
+        }
+
+        return $ids;
+    }
+
+    private function isResolvedRecipient(Leave $leave, string $role, int $actorId): bool
+    {
+        return $this->recipientResolver
+            ->resolveForWorkflowRole(
+                $role,
+                $leave->workflow_team_id ? (int) $leave->workflow_team_id : null,
+                now(),
+                (int) $leave->user_id,
+            )
+            ->contains(fn (array $recipient) => (int) $recipient['userId'] === $actorId);
     }
 
     private function actionToEventType(string $action): string

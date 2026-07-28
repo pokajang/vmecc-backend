@@ -29,6 +29,12 @@ class Kernel extends ConsoleKernel
         $schedule->command('ai-helper:prune-runtime-data')->dailyAt('02:40')->withoutOverlapping();
         $schedule->command('report-media:prune')->dailyAt('03:00')->withoutOverlapping();
         $schedule->command('inspection:prune-duty-confirmations')->dailyAt('03:20')->withoutOverlapping();
+        $schedule->command('workflow:reconcile-report-routing')
+            ->everyMinute()
+            ->withoutOverlapping(5);
+        $schedule->command('workflow:dispatch-notification-outbox')
+            ->everyMinute()
+            ->withoutOverlapping(5);
     }
 
     /**

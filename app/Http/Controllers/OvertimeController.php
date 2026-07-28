@@ -14,10 +14,13 @@ use App\Services\OvertimeDateClassifier;
 use App\Services\OvertimeEligibilityService;
 use App\Services\OvertimeWorkflowService;
 use App\Services\WorkflowNotificationService;
+use App\Services\WorkflowRecipientResolver;
+use App\Services\WorkflowSubmissionContextResolver;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -29,6 +32,8 @@ class OvertimeController extends Controller
     public function __construct(
         private readonly OvertimeWorkflowService $workflowService,
         private readonly WorkflowNotificationService $notificationService,
+        private readonly WorkflowRecipientResolver $recipientResolver,
+        private readonly WorkflowSubmissionContextResolver $submissionContextResolver,
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly OvertimeEligibilityService $overtimeEligibilityService,
         private readonly OvertimeClaimGuardService $claimGuardService,
@@ -111,11 +116,12 @@ class OvertimeController extends Controller
     public function store(Request $request): JsonResponse
     {
         $user = $request->user();
-        $eligibilityResponse = $this->guardIneligibleUser($user);
+        $data = $this->validatePayload($request, (int) $user->id);
+        $effectiveAt = $this->workflowEffectiveAt($data['claim_date'] ?? null, $data['start_time'] ?? null);
+        $eligibilityResponse = $this->guardIneligibleUser($user, $effectiveAt);
         if ($eligibilityResponse) {
             return $eligibilityResponse;
         }
-        $data = $this->validatePayload($request, (int) $user->id);
         try {
             $derivedOvertimeType = $this->overtimeDateClassifier->classify($user, $data['claim_date']);
         } catch (\Throwable $exception) {
@@ -131,7 +137,13 @@ class OvertimeController extends Controller
         $claimDate = (string) ($data['claim_date'] ?? now()->toDateString());
         $displayId = $this->workflowService->generateDisplayId($user->id, (int) date('Y', strtotime($claimDate)));
         $roles = $this->authorizationService->getActiveRoleNames($user)->all();
-        $workflow = $this->workflowService->buildWorkflowForSubmission($roles);
+        $context = $this->submissionContextResolver->resolve($user, $effectiveAt);
+        $workflow = $this->workflowService->buildWorkflowForSubmission(array_values(array_unique(array_filter([
+            $context['applicantRole'] ?? null,
+            ...$roles,
+        ]))));
+        $workflow['workflowSnapshot']['workflowContext'] = $context;
+        $recipientIds = $this->resolveStageRecipientIds($workflow['nextActionRole'], $context['teamId'] ?? null, now(), (int) $user->id);
 
         $entry = [
             'id' => (string) Str::uuid(),
@@ -142,7 +154,7 @@ class OvertimeController extends Controller
             'remarks' => '',
         ];
 
-        $row = DB::transaction(function () use ($data, $user, $displayId, $workflow, $entry) {
+        $row = DB::transaction(function () use ($data, $user, $displayId, $workflow, $context, $entry) {
             return OvertimeRecord::query()->create([
                 'user_id' => $user->id,
                 'display_id' => $displayId,
@@ -157,6 +169,11 @@ class OvertimeController extends Controller
                 'applied_at' => now(),
                 'workflow_stage' => $workflow['workflowStage'],
                 'workflow_snapshot' => $workflow['workflowSnapshot'],
+                'workflow_team_id' => $context['teamId'],
+                'workflow_team_name' => $context['teamName'],
+                'workflow_applicant_role' => $context['applicantRole'],
+                'workflow_routing_source' => $context['routingSource'],
+                'duty_coverage_assignment_id' => $context['dutyCoverageAssignmentId'],
                 'next_action_role' => $workflow['nextActionRole'],
                 'applicant_roles' => $workflow['applicantRoles'],
                 'approval_history' => [$entry],
@@ -174,13 +191,16 @@ class OvertimeController extends Controller
             recordDisplayId: $row->display_id,
             ownerUserId: (int) $row->user_id,
             actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            targetRoles: $workflow['nextActionRole'] ? [$workflow['nextActionRole']] : [],
+            targetUserIds: $recipientIds,
             actionRequired: (bool) $workflow['nextActionRole'],
             metadata: [
                 'module' => 'overtime',
                 'status' => $row->status,
                 'workflowStage' => $row->workflow_stage,
                 'nextActionRole' => $row->next_action_role,
+                'workflowTeamId' => $row->workflow_team_id,
+                'workflowTeamName' => $row->workflow_team_name,
+                'workflowRoutingSource' => $row->workflow_routing_source,
             ],
             excludeOwner: true,
         );
@@ -204,10 +224,6 @@ class OvertimeController extends Controller
     public function update(Request $request, int $id): JsonResponse
     {
         $user = $request->user();
-        $eligibilityResponse = $this->guardIneligibleUser($user);
-        if ($eligibilityResponse) {
-            return $eligibilityResponse;
-        }
         $row = OvertimeRecord::query()->where('user_id', $user->id)->with('attachment')->findOrFail($id);
 
         if (! $this->canApplicantEdit($row)) {
@@ -218,6 +234,14 @@ class OvertimeController extends Controller
 
         $data = $this->validatePayload($request, (int) $user->id, (int) $row->id);
         $this->assertExpectedVersion($row, $data['expected_version'] ?? null);
+        $effectiveAt = $this->workflowEffectiveAt(
+            $data['claim_date'] ?? optional($row->claim_date)->toDateString(),
+            $data['start_time'] ?? $row->start_time,
+        );
+        $eligibilityResponse = $this->guardIneligibleUser($user, $effectiveAt);
+        if ($eligibilityResponse) {
+            return $eligibilityResponse;
+        }
         try {
             $derivedOvertimeType = $this->overtimeDateClassifier->classify($user, $data['claim_date']);
         } catch (\Throwable $exception) {
@@ -242,7 +266,13 @@ class OvertimeController extends Controller
 
         $history = collect(is_array($row->approval_history) ? $row->approval_history : [])->push($entry)->take(-20)->values()->all();
         $roles = $this->authorizationService->getActiveRoleNames($user)->all();
-        $workflow = $this->workflowService->buildWorkflowForSubmission($roles);
+        $context = $this->submissionContextResolver->resolve($user, $effectiveAt);
+        $workflow = $this->workflowService->buildWorkflowForSubmission(array_values(array_unique(array_filter([
+            $context['applicantRole'] ?? null,
+            ...$roles,
+        ]))));
+        $workflow['workflowSnapshot']['workflowContext'] = $context;
+        $recipientIds = $this->resolveStageRecipientIds($workflow['nextActionRole'], $context['teamId'] ?? null, now(), (int) $user->id);
 
         $updates = [
             'overtime_type' => $data['overtime_type'] ?? $row->overtime_type,
@@ -255,6 +285,11 @@ class OvertimeController extends Controller
             'status' => 'Pending',
             'workflow_stage' => $workflow['workflowStage'],
             'workflow_snapshot' => $workflow['workflowSnapshot'],
+            'workflow_team_id' => $context['teamId'],
+            'workflow_team_name' => $context['teamName'],
+            'workflow_applicant_role' => $context['applicantRole'],
+            'workflow_routing_source' => $context['routingSource'],
+            'duty_coverage_assignment_id' => $context['dutyCoverageAssignmentId'],
             'next_action_role' => $workflow['nextActionRole'],
             'applicant_roles' => $workflow['applicantRoles'],
             'approval_history' => $history,
@@ -271,13 +306,16 @@ class OvertimeController extends Controller
             recordDisplayId: $row->display_id,
             ownerUserId: (int) $row->user_id,
             actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            targetRoles: $workflow['nextActionRole'] ? [$workflow['nextActionRole']] : [],
+            targetUserIds: $recipientIds,
             actionRequired: (bool) $workflow['nextActionRole'],
             metadata: [
                 'module' => 'overtime',
                 'status' => $row->status,
                 'workflowStage' => $row->workflow_stage,
                 'nextActionRole' => $row->next_action_role,
+                'workflowTeamId' => $row->workflow_team_id,
+                'workflowTeamName' => $row->workflow_team_name,
+                'workflowRoutingSource' => $row->workflow_routing_source,
             ],
             excludeOwner: true,
         );
@@ -298,9 +336,9 @@ class OvertimeController extends Controller
         return response()->json(['data' => self::formatRecord($row), 'meta' => $meta]);
     }
 
-    private function guardIneligibleUser($user): ?JsonResponse
+    private function guardIneligibleUser($user, ?Carbon $effectiveAt = null): ?JsonResponse
     {
-        $eligibility = $this->overtimeEligibilityService->resolveForUser($user);
+        $eligibility = $this->overtimeEligibilityService->resolveForUser($user, $effectiveAt);
         if ($eligibility['eligible'] === true) {
             return null;
         }
@@ -359,6 +397,13 @@ class OvertimeController extends Controller
         $this->assertExpectedVersion($row, $payload['expected_version'] ?? null);
 
         $nextRole = $row->next_action_role;
+        $recipientIds = $this->resolveStageRecipientIds(
+            $nextRole,
+            $row->workflow_team_id ? (int) $row->workflow_team_id : null,
+            now(),
+            (int) $row->user_id,
+            false,
+        );
         $updates = $this->workflowService->advanceWorkflow(
             $row,
             'cancel',
@@ -378,10 +423,17 @@ class OvertimeController extends Controller
             recordDisplayId: $row->display_id,
             ownerUserId: (int) $row->user_id,
             actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            targetRoles: $nextRole ? [$nextRole] : [],
+            targetUserIds: $recipientIds,
             actionRequired: false,
             remarks: $payload['remarks'] ?? null,
-            metadata: ['module' => 'overtime', 'status' => 'Cancelled', 'workflowStage' => 'done'],
+            metadata: [
+                'module' => 'overtime',
+                'status' => 'Cancelled',
+                'workflowStage' => 'done',
+                'workflowTeamId' => $row->workflow_team_id,
+                'workflowTeamName' => $row->workflow_team_name,
+                'workflowRoutingSource' => $row->workflow_routing_source,
+            ],
             excludeOwner: true,
         );
 
@@ -551,6 +603,11 @@ class OvertimeController extends Controller
             'applied_at' => optional($row->applied_at)->toIso8601String(),
             'workflow_stage' => $row->workflow_stage,
             'workflow_snapshot' => $row->workflow_snapshot ?? [],
+            'workflow_team_id' => $row->workflow_team_id,
+            'workflow_team_name' => $row->workflow_team_name,
+            'workflow_applicant_role' => $row->workflow_applicant_role,
+            'workflow_routing_source' => $row->workflow_routing_source,
+            'duty_coverage_assignment_id' => $row->duty_coverage_assignment_id,
             'next_action_role' => $row->next_action_role,
             'applicant_roles' => $row->applicant_roles ?? [],
             'approval_history' => $row->approval_history ?? [],
@@ -565,6 +622,44 @@ class OvertimeController extends Controller
             'updated_at' => optional($row->updated_at)->toIso8601String(),
             'version' => (int) ($row->version ?: 1),
         ];
+    }
+
+    private function workflowEffectiveAt(mixed $claimDate, mixed $startTime): Carbon
+    {
+        $date = trim((string) $claimDate) ?: now()->toDateString();
+        $time = trim((string) $startTime);
+        $time = $time !== '' ? substr($time, 0, 8) : '00:00:00';
+
+        return Carbon::parse("{$date} {$time}");
+    }
+
+    private function resolveStageRecipientIds(
+        mixed $role,
+        ?int $teamId,
+        Carbon $effectiveAt,
+        int $excludeUserId,
+        bool $required = true,
+    ): array {
+        $role = trim((string) $role);
+        if ($role === '') {
+            return [];
+        }
+
+        $ids = $this->recipientResolver
+            ->resolveForWorkflowRole($role, $teamId, $effectiveAt, $excludeUserId)
+            ->pluck('userId')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($required && $ids === []) {
+            throw ValidationException::withMessages([
+                'workflow' => ["No active recipient is available for the '{$role}' workflow stage."],
+            ]);
+        }
+
+        return $ids;
     }
 
     private function validateExpectedVersion(Request $request): ?int

@@ -4,7 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\AuditLog;
 use App\Models\ReportMedia;
+use App\Models\Team;
 use App\Models\User;
+use App\Models\UserRoleAssignment;
+use App\Services\RoleCatalog;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Barryvdh\DomPDF\PDF as DomPdfWrapper;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -20,6 +23,8 @@ use Tests\TestCase;
 class ErcoReportPdfTest extends TestCase
 {
     use RefreshDatabase;
+
+    private ?Team $workflowTeam = null;
 
     public function test_pdf_download_uses_live_timeline_entries_for_signoffs(): void
     {
@@ -388,5 +393,16 @@ class ErcoReportPdfTest extends TestCase
             $role->givePermissionTo($permission);
         }
         $user->assignRole($role);
+        $this->workflowTeam ??= Team::factory()->create([
+            'name' => 'ERCO PDF Workflow Team',
+        ]);
+        UserRoleAssignment::query()->firstOrCreate([
+            'user_id' => $user->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $this->workflowTeam->id,
+        ], [
+            'is_primary' => true,
+        ]);
     }
 }

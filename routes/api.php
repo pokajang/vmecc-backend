@@ -6,6 +6,7 @@ use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DrillReportPdfController;
+use App\Http\Controllers\DutyCoverageAssignmentController;
 use App\Http\Controllers\ErcoReportPdfController;
 use App\Http\Controllers\FeedbackReportController;
 use App\Http\Controllers\FireExtinguisherExceptionExportController;
@@ -53,6 +54,7 @@ use App\Http\Controllers\SalaryAssignmentDraftController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\SocialAuthController;
 use App\Http\Controllers\TeamController;
+use App\Http\Controllers\TeamRoleTransferController;
 use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\WorkflowAttachmentController;
 use App\Http\Controllers\WorkflowNotificationController;
@@ -158,6 +160,10 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::post('users/{id}/role-assignments', [UserManagementController::class, 'addRoleAssignments'])->middleware('permission.assignment:roles.assign');
     Route::patch('users/{id}/role-assignments/{assignmentId}', [UserManagementController::class, 'updateRoleAssignment'])->middleware('permission.assignment:roles.assign');
     Route::delete('users/{id}/role-assignments/{assignmentId}', [UserManagementController::class, 'deleteRoleAssignment'])->middleware('permission.assignment:roles.assign');
+    Route::post('users/{id}/team-role-transfer', [TeamRoleTransferController::class, 'store'])
+        ->middleware('permission.assignment:roles.assign');
+    Route::get('team-role-transfers/options', [TeamRoleTransferController::class, 'options'])
+        ->middleware('permission.assignment:roles.assign');
     Route::post('users/{id}/reset-password', [UserManagementController::class, 'sendResetLink'])->middleware('permission.assignment:users.manage');
     Route::post('users/{id}/lock', [UserManagementController::class, 'lock'])->middleware('permission.assignment:users.manage');
     Route::post('users/{id}/unlock', [UserManagementController::class, 'unlock'])->middleware('permission.assignment:users.manage');
@@ -179,6 +185,15 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::post('teams/{team}', [TeamController::class, 'update'])->middleware('permission.assignment.scope:teams.manage,team'); // multipart method-spoofing path
     Route::delete('teams/{team}', [TeamController::class, 'destroy'])->middleware('permission.assignment:teams.manage');
     Route::post('teams/{team}/image', [TeamController::class, 'uploadImage'])->middleware('permission.assignment.scope:teams.manage,team');
+
+    Route::get('duty-coverage', [DutyCoverageAssignmentController::class, 'index'])
+        ->middleware('permission.assignment:teams.manage|rosters.manage');
+    Route::post('duty-coverage', [DutyCoverageAssignmentController::class, 'store'])
+        ->middleware('permission.assignment:teams.manage|rosters.manage');
+    Route::patch('duty-coverage/{dutyCoverageAssignment}', [DutyCoverageAssignmentController::class, 'update'])
+        ->middleware('permission.assignment:teams.manage|rosters.manage');
+    Route::post('duty-coverage/{dutyCoverageAssignment}/cancel', [DutyCoverageAssignmentController::class, 'cancel'])
+        ->middleware('permission.assignment:teams.manage|rosters.manage');
 
     Route::get('rosters', [RosterController::class, 'index'])->middleware('permission.assignment:rosters.manage|teams.view');
     Route::post('rosters', [RosterController::class, 'store'])->middleware('permission.assignment:rosters.manage');

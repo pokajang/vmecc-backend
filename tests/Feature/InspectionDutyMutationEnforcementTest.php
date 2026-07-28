@@ -8,6 +8,7 @@ use App\Models\Team;
 use App\Models\TeamMember;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
+use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Spatie\Permission\Models\Permission;
@@ -81,7 +82,7 @@ class InspectionDutyMutationEnforcementTest extends TestCase
     public function test_review_requires_role_policy_and_review_scoped_confirmation(): void
     {
         [$submitter, $reviewer, $team] = $this->assignedUsers(true);
-        $this->assignWorkflowRole($reviewer, 'Incident Commander');
+        $this->assignWorkflowRole($reviewer, 'Incident Commander', $team->id);
         config()->set('inspection_duty.enforcement_enabled', true);
         $this->createSubmittedReport($submitter, 'report-review-1', 'review-submit-1');
 
@@ -104,7 +105,7 @@ class InspectionDutyMutationEnforcementTest extends TestCase
 
         $this->assertDatabaseHas('reports', [
             'report_uid' => 'report-review-1',
-            'scope_team_id' => null,
+            'scope_team_id' => $team->id,
             'duty_context_status' => 'assigned',
         ]);
         $this->assertSame($team->id, data_get(
@@ -157,7 +158,7 @@ class InspectionDutyMutationEnforcementTest extends TestCase
         return $user;
     }
 
-    private function assignWorkflowRole(User $user, string $roleName): void
+    private function assignWorkflowRole(User $user, string $roleName, int $teamId): void
     {
         $role = Role::query()->firstOrCreate(['name' => $roleName, 'guard_name' => 'web']);
         foreach (['reports.inspection.view', 'reports.inspection.conduct'] as $permissionName) {
@@ -169,7 +170,8 @@ class InspectionDutyMutationEnforcementTest extends TestCase
         UserRoleAssignment::query()->create([
             'user_id' => $user->id,
             'role_id' => $role->id,
-            'scope_type' => 'global',
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $teamId,
             'is_primary' => true,
         ]);
     }

@@ -10,6 +10,7 @@ use App\Models\TeamMember;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Models\WorkflowNotification;
+use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -18,6 +19,8 @@ use Tests\TestCase;
 class ReportFitnessPhase10Test extends TestCase
 {
     use RefreshDatabase;
+
+    private ?Team $workflowTeam = null;
 
     public function test_phase10_create_blank_draft_and_restore_from_draft_for_fitness_reports(): void
     {
@@ -474,7 +477,11 @@ class ReportFitnessPhase10Test extends TestCase
     {
         $owner = User::factory()->create(['status' => 'active']);
         $statsViewer = User::factory()->create(['status' => 'active']);
-        $this->createDashboardUser($statsViewer, ['self.dashboard', 'dashboard.reports.view']);
+        $this->createDashboardUser($statsViewer, [
+            'self.dashboard',
+            'dashboard.reports.view',
+            'reports.fitness.view',
+        ]);
         $this->assignFitnessPermissionRole($owner, 'Fitness Stats Owner');
 
         $created = $this->actingAs($owner)->postJson('/api/reports', [
@@ -531,9 +538,12 @@ class ReportFitnessPhase10Test extends TestCase
         $reviewItem = collect($reviewQueue->json('items'))->firstWhere('key', 'reports.fitness-test.review');
         $this->assertNotNull($reviewItem);
         $this->assertSame(1, $reviewItem['count']);
-        $this->assertSame('/report/fitness-test?scope=actionable&action=review', $reviewItem['to']);
+        $this->assertSame(
+            "/report/fitness-test?scope=actionable&action=review&team_id={$this->workflowTeam->id}",
+            $reviewItem['to'],
+        );
 
-        $this->assertNotificationTargets('FIT-P10-WF-001', 'submitted', [(int) $reviewer->id, (int) $approver->id]);
+        $this->assertNotificationTargets('FIT-P10-WF-001', 'submitted', [(int) $reviewer->id]);
 
         $this->actingAs($reviewer)->postJson("/api/reports/{$recordUid}/review", [
             'version' => 1,
@@ -566,7 +576,7 @@ class ReportFitnessPhase10Test extends TestCase
         $resubmit->assertOk()
             ->assertJsonPath('data.status', 'Submitted')
             ->assertJsonPath('data.version', 4);
-        $this->assertNotificationTargets('FIT-P10-WF-001', 'submitted', [(int) $reviewer->id, (int) $approver->id]);
+        $this->assertNotificationTargets('FIT-P10-WF-001', 'submitted', [(int) $reviewer->id]);
 
         $reviewQueueAfterResubmit = $this->actingAs($reviewer)->getJson('/api/dashboard/action-queue');
         $reviewQueueAfterResubmit->assertOk();
@@ -648,12 +658,15 @@ class ReportFitnessPhase10Test extends TestCase
                 $role->givePermissionTo($permission);
             }
         }
+        $this->workflowTeam ??= Team::factory()->create([
+            'name' => 'Fitness Phase 10 Workflow Team',
+        ]);
 
         UserRoleAssignment::query()->create([
             'user_id' => $user->id,
             'role_id' => $role->id,
-            'scope_type' => 'global',
-            'team_id' => null,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $this->workflowTeam->id,
             'is_primary' => true,
         ]);
     }

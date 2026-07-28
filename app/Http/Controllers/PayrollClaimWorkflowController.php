@@ -13,6 +13,7 @@ use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -118,6 +119,12 @@ class PayrollClaimWorkflowController extends Controller
         });
 
         $claim->refresh()->load(['items.attachment', 'attachment', 'paidByUser']);
+        $this->emitPaymentStatusNotification(
+            $claim,
+            $actor,
+            'paid',
+            trim((string) ($payload['payment_note'] ?? '')) ?: null,
+        );
 
         AuditLogger::log($request, 'payroll_claim_mark_paid', $actor, [
             'claim_id' => $claim->id,
@@ -136,8 +143,9 @@ class PayrollClaimWorkflowController extends Controller
             'reason' => ['required', 'string', 'max:1000'],
             'expected_version' => ['nullable', 'integer', 'min:1'],
         ]);
+        $reason = trim((string) ($payload['reason'] ?? ''));
 
-        $claim = DB::transaction(function () use ($ownerId, $claimId, $actor, $payload): PayrollClaim {
+        $claim = DB::transaction(function () use ($ownerId, $claimId, $actor, $payload, $reason): PayrollClaim {
             $claim = PayrollClaim::query()
                 ->where('user_id', $ownerId)
                 ->with(['items.attachment', 'attachment', 'paidByUser'])
@@ -145,7 +153,6 @@ class PayrollClaimWorkflowController extends Controller
                 ->findOrFail($claimId);
             $this->assertUnmarkPaidAllowed($claim, $actor);
             $this->assertExpectedVersion($claim, $payload['expected_version'] ?? null);
-            $reason = trim((string) ($payload['reason'] ?? ''));
             $now = now();
             $history = is_array($claim->approval_history) ? $claim->approval_history : [];
             $history[] = [
@@ -196,6 +203,7 @@ class PayrollClaimWorkflowController extends Controller
         });
 
         $claim->refresh()->load(['items.attachment', 'attachment', 'paidByUser']);
+        $this->emitPaymentStatusNotification($claim, $actor, 'payment_reopened', $reason);
 
         AuditLogger::log($request, 'payroll_claim_unmark_paid', $actor, [
             'claim_id' => $claim->id,
@@ -309,6 +317,12 @@ class PayrollClaimWorkflowController extends Controller
                 continue;
             }
             $claim->refresh()->load(['items.attachment', 'attachment', 'paidByUser']);
+            $this->emitPaymentStatusNotification(
+                $claim,
+                $actor,
+                'paid',
+                trim((string) ($payload['payment_note'] ?? '')) ?: null,
+            );
             $updatedRows[] = PayrollClaimController::formatClaim($claim, $actor);
         }
 
@@ -427,6 +441,7 @@ class PayrollClaimWorkflowController extends Controller
                 continue;
             }
             $claim->refresh()->load(['items.attachment', 'attachment', 'paidByUser']);
+            $this->emitPaymentStatusNotification($claim, $actor, 'payment_reopened', $reason);
             $updatedRows[] = PayrollClaimController::formatClaim($claim, $actor);
         }
 
@@ -531,6 +546,46 @@ class PayrollClaimWorkflowController extends Controller
         ]);
 
         return response()->json(['data' => PayrollClaimController::formatClaim($claim, $actor)]);
+    }
+
+    private function emitPaymentStatusNotification(
+        PayrollClaim $claim,
+        $actor,
+        string $eventType,
+        ?string $remarks = null,
+    ): void {
+        try {
+            $this->notificationService->emit(
+                module: 'salary',
+                eventType: $eventType,
+                recordType: 'payroll_claim',
+                recordId: (int) $claim->id,
+                recordDisplayId: (string) $claim->display_id,
+                ownerUserId: (int) $claim->user_id,
+                actor: [
+                    'userId' => $actor->id,
+                    'name' => $actor->name,
+                    'email' => $actor->email,
+                ],
+                targetUserIds: [(int) $claim->user_id],
+                actionRequired: false,
+                remarks: $remarks,
+                metadata: [
+                    'module' => 'salary',
+                    'status' => $claim->status,
+                    'workflowStage' => 'done',
+                    'nextActionRole' => null,
+                    'claimType' => $claim->claim_type,
+                    'paymentDate' => optional($claim->payment_date)->toDateString(),
+                ],
+            );
+        } catch (\Throwable $exception) {
+            Log::warning('Salary payment notification could not be persisted after a committed mutation.', [
+                'claim_id' => $claim->id,
+                'event_type' => $eventType,
+                'error' => $exception->getMessage(),
+            ]);
+        }
     }
 
     private function assertActionAllowed(PayrollClaim $claim, string $action, $actor): void

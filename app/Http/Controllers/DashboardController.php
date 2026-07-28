@@ -54,7 +54,11 @@ class DashboardController extends Controller
                 abort(403, 'Module is disabled.');
             }
 
-            $payload[$module] = $statsService->stats($module, (string) ($data['period'] ?? 'this_month'));
+            $payload[$module] = $statsService->stats(
+                $module,
+                (string) ($data['period'] ?? 'this_month'),
+                $user,
+            );
         }
 
         return response()->json($payload);
@@ -95,7 +99,11 @@ class DashboardController extends Controller
         ]);
 
         return response()->json(
-            $statsService->stats($module, (string) ($data['period'] ?? 'this_month')),
+            $statsService->stats(
+                $module,
+                (string) ($data['period'] ?? 'this_month'),
+                $request->user(),
+            ),
         );
     }
 

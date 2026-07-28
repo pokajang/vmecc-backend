@@ -42,6 +42,55 @@ class AssignmentAuthorizationService
         return false;
     }
 
+    /**
+     * Return null when the permission is organization-wide, otherwise the
+     * concrete team IDs where the user holds it.
+     */
+    public function permittedTeamIds(User $user, string $requiredPermissions): ?Collection
+    {
+        if ($this->isSystemAdministrator($user)) {
+            return null;
+        }
+
+        $required = collect(preg_split('/[|,]/', $requiredPermissions) ?: [])
+            ->map(fn (string $permission) => trim($permission))
+            ->filter()
+            ->values();
+        if ($required->isEmpty()) {
+            return collect();
+        }
+
+        $assignments = $this->activeAssignmentsQuery($user)
+            ->with('role.permissions')
+            ->get();
+        if ($assignments->isEmpty() && ! $this->hasPersistedAssignments($user)) {
+            return $this->hasPermission($user, $requiredPermissions) ? null : collect();
+        }
+
+        $qualified = $assignments->filter(function (UserRoleAssignment $assignment) use ($required) {
+            $permissionNames = $assignment->role?->permissions?->pluck('name') ?? collect();
+
+            return $permissionNames->contains('*')
+                || $permissionNames->intersect($required)->isNotEmpty();
+        });
+        if ($qualified->contains(
+            fn (UserRoleAssignment $assignment) => in_array(
+                $assignment->scope_type,
+                [RoleCatalog::GLOBAL, RoleCatalog::OFFICE],
+                true,
+            ),
+        )) {
+            return null;
+        }
+
+        return $qualified
+            ->pluck('team_id')
+            ->filter()
+            ->map(fn ($teamId) => (int) $teamId)
+            ->unique()
+            ->values();
+    }
+
     public function isSystemAdministrator(User $user): bool
     {
         return $this->getActiveRoleNames($user)

@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\Report;
+use App\Models\Team;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
+use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -13,6 +15,8 @@ use Tests\TestCase;
 class ReportApiSecurityTest extends TestCase
 {
     use RefreshDatabase;
+
+    private ?Team $workflowTeam = null;
 
     public function test_guest_cannot_access_report_endpoints(): void
     {
@@ -250,12 +254,15 @@ class ReportApiSecurityTest extends TestCase
         if (! $role->hasPermissionTo($permission)) {
             $role->givePermissionTo($permission);
         }
+        $this->workflowTeam ??= Team::factory()->create([
+            'name' => 'Report Security Workflow Team',
+        ]);
 
         UserRoleAssignment::query()->create([
             'user_id' => $user->id,
             'role_id' => $role->id,
-            'scope_type' => 'global',
-            'team_id' => null,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $this->workflowTeam->id,
             'is_primary' => true,
         ]);
     }

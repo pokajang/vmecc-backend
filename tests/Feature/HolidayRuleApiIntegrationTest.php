@@ -18,6 +18,14 @@ class HolidayRuleApiIntegrationTest extends TestCase
     use RefreshDatabase;
     use WithoutMiddleware;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->createWorkflowRecipient('Human Resource');
+        $this->createWorkflowRecipient('Contract Manager');
+    }
+
     private function makeOvertimeEligible(User $user): void
     {
         $role = Role::firstOrCreate(['name' => 'Tactical Response Team', 'guard_name' => 'web']);
@@ -28,6 +36,18 @@ class HolidayRuleApiIntegrationTest extends TestCase
             'user_id' => $user->id,
             'role_id' => $role->id,
             'scope_type' => RoleCatalog::GLOBAL,
+            'is_primary' => true,
+        ]);
+    }
+
+    private function createWorkflowRecipient(string $roleName): void
+    {
+        $user = User::factory()->create(['status' => 'Active']);
+        $role = Role::firstOrCreate(['name' => $roleName, 'guard_name' => 'web']);
+        UserRoleAssignment::query()->create([
+            'user_id' => $user->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::OFFICE,
             'is_primary' => true,
         ]);
     }

@@ -20,6 +20,14 @@ class LeaveHardeningTest extends TestCase
     use RefreshDatabase;
     use WithoutMiddleware;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $reviewer = User::factory()->create(['status' => 'active']);
+        $this->assignRole($reviewer, 'Human Resource');
+    }
+
     private function assignmentFor(User $user, string $type = 'Annual Leave', float $entitlement = 14): void
     {
         LeaveAssignment::query()->create([
@@ -113,15 +121,18 @@ class LeaveHardeningTest extends TestCase
             'expected_version' => 1,
         ]))->assertConflict()->assertJsonPath('code', 'LEAVE_VERSION_CONFLICT');
 
-        $this->assignRole($user, 'Reviewer');
+        $reviewer = User::factory()->create(['status' => 'active']);
+        $this->assignRole($reviewer, 'Reviewer');
         Leave::query()->whereKey($leaveId)->update([
             'workflow_snapshot' => ['reviewRole' => 'Reviewer'],
             'next_action_role' => 'Reviewer',
         ]);
+        $this->actingAs($reviewer);
         $this->postJson("/api/staff/leave/records/{$user->id}/{$leaveId}/request-correction", [
             'remarks' => 'Please clarify the handover.',
             'expected_version' => 2,
         ])->assertOk()->assertJsonPath('data.status', 'Needs Correction')->assertJsonPath('data.version', 3);
+        $this->actingAs($user);
         $this->putJson("/api/leave/{$leaveId}", $this->payload([
             'reason' => 'Clarified family commitment and handover.',
             'expected_version' => 3,

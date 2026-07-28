@@ -454,7 +454,7 @@ class InspectionHseInspectionTest extends TestCase
         $this->assignWorkflowRole($submitter, 'Tactical Response Team', $team->id, true);
         $this->assignWorkflowRole($reviewer, 'Assistant Incident Commander', $team->id);
         $this->assignWorkflowRole($otherReviewer, 'Assistant Incident Commander', $otherTeam->id);
-        $this->assignWorkflowRole($approver, 'Incident Commander');
+        $this->assignWorkflowRole($approver, 'Incident Commander', $team->id);
 
         $this->actingAs($submitter);
         $created = $this->postJson('/api/reports', [

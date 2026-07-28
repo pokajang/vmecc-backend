@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Leave;
 use App\Models\User;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\WorkflowRecipientResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -13,6 +14,7 @@ class LeaveManagementController extends Controller
 {
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
+        private readonly WorkflowRecipientResolver $recipientResolver,
     ) {}
 
     // ── All records (staff view) ──────────────────────────────────────────────
@@ -38,6 +40,9 @@ class LeaveManagementController extends Controller
         }
         if ($request->filled('user_id')) {
             $query->where('user_id', (int) $request->input('user_id'));
+        }
+        if ($request->filled('team_id')) {
+            $query->where('workflow_team_id', (int) $request->input('team_id'));
         }
         if ($request->filled('search')) {
             $search = $request->input('search');
@@ -105,19 +110,26 @@ class LeaveManagementController extends Controller
             return [];
         }
         $roles = $this->authorizationService->getActiveRoleNames($actor)->all();
-        if (in_array('System Administrator', $roles, true)) {
-            return match ($leave->status) {
-                'Pending' => ['review', 'recommend', 'approve', 'reject', 'request_correction', 'cancel'],
-                'Approved' => ['cancel'],
-                default => [],
-            };
+        $isSystemAdministrator = in_array('System Administrator', $roles, true);
+        if ($leave->status === 'Approved') {
+            return $isSystemAdministrator ? ['cancel'] : [];
         }
         if ($leave->status !== 'Pending') {
             return [];
         }
         $expectedRole = trim((string) $leave->next_action_role);
-        if ($expectedRole === '' || ! in_array($expectedRole, $roles, true)) {
-            return [];
+        if (! $isSystemAdministrator) {
+            $isRecipient = $expectedRole !== '' && $this->recipientResolver
+                ->resolveForWorkflowRole(
+                    $expectedRole,
+                    $leave->workflow_team_id ? (int) $leave->workflow_team_id : null,
+                    now(),
+                    (int) $leave->user_id,
+                )
+                ->contains(fn (array $recipient) => (int) $recipient['userId'] === (int) $actor->id);
+            if ($expectedRole === '' || ! in_array($expectedRole, $roles, true) || ! $isRecipient) {
+                return [];
+            }
         }
 
         $primaryAction = match ($leave->workflow_stage) {
@@ -137,7 +149,7 @@ class LeaveManagementController extends Controller
                     && in_array((string) ($entry['action'] ?? ''), ['Reviewed', 'Recommended', 'Approved'], true),
             );
             if ($hasActed) {
-                return [];
+                return ['reject', 'request_correction', 'cancel'];
             }
         }
 

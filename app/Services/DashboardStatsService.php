@@ -23,16 +23,31 @@ class DashboardStatsService
 
     private const ACTIVE_STATUS_VALUES = ['Active', 'active', 'ACTIVE'];
 
-    public function stats(string $module, string $period): array
+    private const REPORT_TYPE_PERMISSIONS = [
+        'inspection' => 'reports.inspection.view|reports.manage',
+        'erco' => 'reports.erco.view|reports.manage',
+        'drill' => 'reports.drill.view|reports.manage',
+        'fitness-test' => 'reports.fitness.view|reports.manage',
+    ];
+
+    public function __construct(
+        private readonly AssignmentAuthorizationService $authorization,
+        private readonly ReportingWorkflowService $reportingWorkflow,
+        private readonly ReportActionContextService $reportActionContext,
+        private readonly OvertimeManagementScopeService $overtimeScope,
+        private readonly WorkflowRecipientResolver $workflowRecipients,
+    ) {}
+
+    public function stats(string $module, string $period, ?User $actor = null): array
     {
         [$from, $to] = $this->resolvePeriod($period);
 
         return match ($module) {
-            'payroll' => $this->payroll($from, $to),
-            'overtime' => $this->overtime($from, $to),
-            'leave' => $this->leave($from, $to),
+            'payroll' => $this->payroll($from, $to, $actor),
+            'overtime' => $this->overtime($from, $to, $actor),
+            'leave' => $this->leave($from, $to, $actor),
             'roster' => $this->roster($from, $to),
-            'reports' => $this->reports($from, $to),
+            'reports' => $this->reports($from, $to, $actor),
             default => abort(404, 'Dashboard stats module not found.'),
         };
     }
@@ -65,7 +80,7 @@ class DashboardStatsService
         };
     }
 
-    private function payroll(Carbon $from, Carbon $to): array
+    private function payroll(Carbon $from, Carbon $to, ?User $actor): array
     {
         $periodClaims = PayrollClaim::query()
             ->whereBetween('submitted_at', [$from, $to]);
@@ -78,12 +93,14 @@ class DashboardStatsService
             ->get();
 
         $paidClaims = PayrollClaim::query()
+            ->where('claim_type', 'salary')
             ->where('status', 'Paid')
             ->whereBetween('paid_at', [$from, $to])
             ->selectRaw('COUNT(*) as total, COALESCE(SUM(projected_net_payout), 0) as payout_total')
             ->first();
 
         $approvedUnpaid = PayrollClaim::query()
+            ->where('claim_type', 'salary')
             ->where('status', 'Approved')
             ->whereNull('paid_at')
             ->selectRaw('COUNT(*) as total, COALESCE(SUM(projected_net_payout), 0) as payout_total')
@@ -105,8 +122,26 @@ class DashboardStatsService
             ->distinct()
             ->count('employee_user_id');
 
+        $pendingClaims = PayrollClaim::query()->where('status', 'Pending')->get();
+        $actionable = $actor
+            ? $pendingClaims->filter(fn (PayrollClaim $claim) => $this->roleWorkflowActionable(
+                $actor,
+                $claim,
+            ))->values()
+            : $pendingClaims;
+
         return [
-            'pendingApprovals' => PayrollClaim::query()->where('status', 'Pending')->count(),
+            'scope' => [
+                'key' => $actor ? 'viewer_actionable_organization_activity' : 'global',
+                'label' => $actor
+                    ? 'Actions assigned to you; organization-wide payroll activity'
+                    : 'Organization-wide payroll',
+            ],
+            'pendingApprovals' => $actionable->count(),
+            'contexts' => $this->workflowContextGroups(
+                $actionable,
+                fn ($record, string $action) => $this->payrollRoute($record, $action),
+            ),
             'approvedUnpaidCount' => (int) ($approvedUnpaid->total ?? 0),
             'approvedUnpaidTotalMyr' => round((float) ($approvedUnpaid->payout_total ?? 0), 2),
             'paidThisMonthCount' => (int) ($paidClaims->total ?? 0),
@@ -138,10 +173,13 @@ class DashboardStatsService
         ];
     }
 
-    private function overtime(Carbon $from, Carbon $to): array
+    private function overtime(Carbon $from, Carbon $to, ?User $actor): array
     {
         $periodRecords = OvertimeRecord::query()
             ->whereBetween('claim_date', [$from->toDateString(), $to->toDateString()]);
+        if ($actor) {
+            $periodRecords = $this->overtimeScope->scopeVisibleRecords($periodRecords, $actor);
+        }
 
         $recordsByType = $this->groupCountBy((clone $periodRecords), 'overtime_type');
         $recordsByStatus = $this->groupCountBy((clone $periodRecords), 'status');
@@ -157,13 +195,36 @@ class DashboardStatsService
             ->pluck('total', 'user_id');
         $submittedThisPeriod = (clone $periodRecords)->count();
 
+        $pendingQuery = OvertimeRecord::query()->where('status', 'Pending')->with('user');
+        if ($actor) {
+            $pendingQuery = $this->overtimeScope->scopeVisibleRecords($pendingQuery, $actor);
+        }
+        $pendingRecords = $pendingQuery->get();
+        $actionable = $actor
+            ? $pendingRecords->filter(fn (OvertimeRecord $record) => $this->overtimeActionable(
+                $actor,
+                $record,
+            ))->values()
+            : $pendingRecords;
+
         return [
-            'pendingApprovals' => OvertimeRecord::query()->where('status', 'Pending')->count(),
+            'scope' => [
+                'key' => $actor ? 'viewer_accessible' : 'global',
+                'label' => $actor
+                    ? 'Actions assigned to you; activity within your management scope'
+                    : 'Organization-wide overtime',
+            ],
+            'pendingApprovals' => $actionable->count(),
+            'contexts' => $this->workflowContextGroups(
+                $actionable,
+                fn ($record, string $action, ?int $teamId) => '/staff/overtime-management/records?'
+                    .http_build_query(array_filter([
+                        'action' => $action,
+                        'team_id' => $teamId,
+                    ], fn ($value) => $value !== null && $value !== '')),
+            ),
             'approvedHoursThisPeriod' => round(((int) ($approved->duration_total ?? 0)) / 60, 1),
-            'staffWithOpenRequests' => OvertimeRecord::query()
-                ->where('status', 'Pending')
-                ->distinct()
-                ->count('user_id'),
+            'staffWithOpenRequests' => $pendingRecords->pluck('user_id')->unique()->count(),
             'submittedThisPeriod' => $submittedThisPeriod,
             'approvedRequestsThisPeriod' => (int) ($approved->total ?? 0),
             'byType' => [
@@ -177,7 +238,7 @@ class DashboardStatsService
         ];
     }
 
-    private function leave(Carbon $from, Carbon $to): array
+    private function leave(Carbon $from, Carbon $to, ?User $actor): array
     {
         $periodLeaves = Leave::query()
             ->whereBetween('start_date', [$from->toDateString(), $to->toDateString()]);
@@ -194,13 +255,32 @@ class DashboardStatsService
             ->groupBy('user_id')
             ->pluck('total', 'user_id');
 
+        $pendingLeaves = Leave::query()->where('status', 'Pending')->get();
+        $actionable = $actor
+            ? $pendingLeaves->filter(fn (Leave $leave) => $this->roleWorkflowActionable(
+                $actor,
+                $leave,
+            ))->values()
+            : $pendingLeaves;
+
         return [
-            'pendingApprovals' => Leave::query()->where('status', 'Pending')->count(),
+            'scope' => [
+                'key' => $actor ? 'viewer_actionable_organization_activity' : 'global',
+                'label' => $actor
+                    ? 'Actions assigned to you; organization-wide leave activity'
+                    : 'Organization-wide leave',
+            ],
+            'pendingApprovals' => $actionable->count(),
+            'contexts' => $this->workflowContextGroups(
+                $actionable,
+                fn ($record, string $action, ?int $teamId) => '/staff/leave-management/leaves?'
+                    .http_build_query(array_filter([
+                        'action' => $action,
+                        'team_id' => $teamId,
+                    ], fn ($value) => $value !== null && $value !== '')),
+            ),
             'approvedDaysThisPeriod' => round((float) ($approved->approved_days_total ?? 0), 1),
-            'staffWithPendingRequests' => Leave::query()
-                ->where('status', 'Pending')
-                ->distinct()
-                ->count('user_id'),
+            'staffWithPendingRequests' => $pendingLeaves->pluck('user_id')->unique()->count(),
             'staffCurrentlyOnLeave' => Leave::query()
                 ->where('status', 'Approved')
                 ->whereDate('start_date', '<=', $today)
@@ -255,24 +335,109 @@ class DashboardStatsService
         ];
     }
 
-    private function reports(Carbon $from, Carbon $to): array
+    private function reports(Carbon $from, Carbon $to, ?User $actor): array
     {
+        $reportTypes = $actor
+            ? collect(self::REPORT_TYPE_PERMISSIONS)
+                ->filter(fn (string $permission) => $this->authorization->hasPermission(
+                    $actor,
+                    $permission,
+                ))
+                ->keys()
+                ->values()
+            : collect(array_keys(self::REPORT_TYPE_PERMISSIONS));
         $periodReports = Report::query()
             ->with('owner:id,name')
+            ->whereIn('report_type', $reportTypes)
             ->whereBetween('submitted_at', [$from, $to])
             ->get();
+        $openReports = Report::query()
+            ->whereIn('report_type', $reportTypes)
+            ->whereIn('status', ['Submitted', 'Reviewed'])
+            ->get();
+        $actionableReview = $actor
+            ? $openReports->filter(
+                fn (Report $report) => $this->reportingWorkflow->canReview($report, $actor),
+            )
+            : $openReports->where('status', 'Submitted');
+        $actionableApproval = $actor
+            ? $openReports->filter(
+                fn (Report $report) => $this->reportingWorkflow->canApprove($report, $actor),
+            )
+            : $openReports->where('status', 'Reviewed');
 
         $ercoReports = $periodReports->where('report_type', 'erco');
+        $families = collect(self::REPORT_TYPE_PERMISSIONS)
+            ->filter(fn ($permission, string $type) => $reportTypes->contains($type))
+            ->mapWithKeys(function ($permission, string $type) use (
+                $periodReports,
+                $openReports,
+                $actionableReview,
+                $actionableApproval,
+                $from,
+                $to,
+            ) {
+                $config = $this->reportFamilyConfig($type);
+
+                return [$type => [
+                    'label' => $config['label'],
+                    'route' => $config['route'],
+                    'pendingReview' => $actionableReview->where('report_type', $type)->count(),
+                    'pendingApproval' => $actionableApproval->where('report_type', $type)->count(),
+                    'contexts' => [
+                        ...$this->reportActionContext->grouped(
+                            $actionableReview->where('report_type', $type)->values(),
+                            'review',
+                            $config['route'],
+                        ),
+                        ...$this->reportActionContext->grouped(
+                            $actionableApproval->where('report_type', $type)->values(),
+                            'approve',
+                            $config['route'],
+                        ),
+                        ...$this->reportActionContext->groupedSubmissions(
+                            $periodReports->where('report_type', $type)->values(),
+                            $config['route'],
+                            $from->toDateString(),
+                            $to->toDateString(),
+                        ),
+                    ],
+                    'openPendingReview' => $openReports
+                        ->where('report_type', $type)
+                        ->where('status', 'Submitted')
+                        ->count(),
+                    'openPendingApproval' => $openReports
+                        ->where('report_type', $type)
+                        ->where('status', 'Reviewed')
+                        ->count(),
+                    'submittedThisPeriod' => $periodReports->where('report_type', $type)->count(),
+                ]];
+            })
+            ->all();
 
         return [
-            'pendingReview' => Report::query()->where('status', 'Submitted')->count(),
-            'pendingApproval' => Report::query()->where('status', 'Reviewed')->count(),
+            'period' => [
+                'dateFrom' => $from->toDateString(),
+                'dateTo' => $to->toDateString(),
+            ],
+            'scope' => [
+                'key' => $actor ? 'viewer_accessible' : 'global',
+                'label' => $actor
+                    ? 'Actions assigned to you; activity from reports you can access'
+                    : 'Organization-wide reports',
+            ],
+            'pendingReview' => $actionableReview->count(),
+            'pendingApproval' => $actionableApproval->count(),
+            'openPendingReview' => $openReports->where('status', 'Submitted')->count(),
+            'openPendingApproval' => $openReports->where('status', 'Reviewed')->count(),
             'submittedThisPeriod' => $periodReports->count(),
             'byType' => [
+                'inspection' => $periodReports->where('report_type', 'inspection')->count(),
                 'erco' => $periodReports->where('report_type', 'erco')->count(),
                 'drill' => $periodReports->where('report_type', 'drill')->count(),
                 'fitnessTest' => $periodReports->where('report_type', 'fitness-test')->count(),
             ],
+            'families' => $families,
             'ercoByIncidentType' => $this->topCounts(
                 $ercoReports->map(fn (Report $report) => $this->payloadValue($report, 'incidentType', 'Unspecified')),
                 'type',
@@ -283,6 +448,130 @@ class DashboardStatsService
             ),
             'monthlyTrend' => $this->monthTrend($from, $to, $periodReports, 'submitted_at', 'count'),
         ];
+    }
+
+    private function reportFamilyConfig(string $type): array
+    {
+        return match ($type) {
+            'inspection' => ['label' => 'Inspection', 'route' => '/inspection'],
+            'drill' => ['label' => 'Drill', 'route' => '/report/drill'],
+            'fitness-test' => ['label' => 'Fitness test', 'route' => '/report/fitness-test'],
+            default => ['label' => 'ERCO', 'route' => '/report/erco'],
+        };
+    }
+
+    private function overtimeActionable(User $actor, OvertimeRecord $record): bool
+    {
+        $role = trim((string) $record->next_action_role);
+
+        return $role !== ''
+            && $this->overtimeScope->canPerformWorkflowRole($actor, $record, $role)
+            && ! $this->violatesDistinctApprovers($record, $actor);
+    }
+
+    private function roleWorkflowActionable(User $actor, object $record): bool
+    {
+        if ($this->authorization->isSystemAdministrator($actor)) {
+            return ! $this->violatesDistinctApprovers($record, $actor);
+        }
+
+        $role = trim((string) ($record->next_action_role ?? ''));
+        if ($role === '') {
+            return false;
+        }
+
+        return $this->workflowRecipients
+            ->resolveForWorkflowRole(
+                $role,
+                ! empty($record->workflow_team_id) ? (int) $record->workflow_team_id : null,
+                now(),
+                (int) ($record->user_id ?? 0),
+            )
+            ->contains(fn (array $recipient) => (int) $recipient['userId'] === (int) $actor->id)
+            && ! $this->violatesDistinctApprovers($record, $actor);
+    }
+
+    private function workflowContextGroups(Collection $records, callable $route): array
+    {
+        return $records
+            ->groupBy(function ($record): string {
+                return implode('|', [
+                    strtolower((string) ($record->claim_type ?? '')),
+                    strtolower((string) ($record->workflow_stage ?? '')),
+                    (int) ($record->workflow_team_id ?? 0),
+                    strtolower(trim((string) ($record->next_action_role ?? ''))),
+                    strtolower(trim((string) ($record->workflow_routing_source ?? 'organization'))),
+                ]);
+            })
+            ->map(function (Collection $rows) use ($route): array {
+                $record = $rows->first();
+                $action = trim((string) ($record->workflow_stage ?? ''));
+                $role = trim((string) ($record->next_action_role ?? ''));
+                $scope = RoleCatalog::scopeForRole($role);
+                $teamScoped = in_array($scope, [RoleCatalog::SITE, RoleCatalog::CLIENT_SITE], true);
+                $teamId = $teamScoped && $record->workflow_team_id
+                    ? (int) $record->workflow_team_id
+                    : null;
+                $teamName = $teamScoped
+                    ? trim((string) ($record->workflow_team_name ?? ''))
+                    : '';
+
+                return [
+                    'action' => $action,
+                    'count' => $rows->count(),
+                    'teamId' => $teamId,
+                    'teamName' => $teamName,
+                    'role' => $role,
+                    'roleCode' => RoleCatalog::abbreviationForRole($role),
+                    'routingSource' => trim((string) ($record->workflow_routing_source ?? 'organization')),
+                    'scopeLabel' => $teamScoped
+                        ? ($teamName ?: 'Team scoped')
+                        : 'Organization-wide',
+                    'claimType' => $record->claim_type ?? null,
+                    'to' => $route($record, $action, $teamId),
+                ];
+            })
+            ->sortBy([
+                ['action', 'asc'],
+                ['teamName', 'asc'],
+                ['role', 'asc'],
+            ])
+            ->values()
+            ->all();
+    }
+
+    private function payrollRoute(PayrollClaim $claim, string $action): string
+    {
+        if ($claim->claim_type === 'salary') {
+            return '/staff/salary-claims/salary?'.http_build_query([
+                'action' => $action,
+                'status' => 'Pending',
+            ]);
+        }
+
+        return '/staff/salary-claims/claims?'.http_build_query([
+            'action' => $action,
+            'status' => 'Pending',
+            'type' => $claim->claim_type === 'expense' ? 'expense' : 'other',
+        ]);
+    }
+
+    private function violatesDistinctApprovers(object $record, User $actor): bool
+    {
+        $snapshot = is_array($record->workflow_snapshot ?? null)
+            ? $record->workflow_snapshot
+            : [];
+        if (($snapshot['enforceDistinctApprovers'] ?? false) !== true) {
+            return false;
+        }
+
+        return collect(is_array($record->approval_history ?? null) ? $record->approval_history : [])
+            ->contains(fn ($entry) => (string) ($entry['byUserId'] ?? '') === (string) $actor->id
+                && in_array(
+                    (string) ($entry['action'] ?? ''),
+                    ['Checked', 'Reviewed', 'Recommended', 'Approved'],
+                    true,
+                ));
     }
 
     private function monthTrend(Carbon $from, Carbon $to, Collection $records, string $dateKey, string $valueKey): array

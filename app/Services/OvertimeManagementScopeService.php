@@ -33,15 +33,21 @@ class OvertimeManagementScopeService
         $teamNames = Team::query()->whereIn('id', $teamIds)->pluck('name')->all();
         $today = now()->toDateString();
 
-        return $query->whereHas('user', function (Builder $userQuery) use ($teamIds, $teamNames, $today) {
-            $userQuery->where(function (Builder $ownerQuery) use ($teamIds, $teamNames, $today) {
-                $ownerQuery
-                    ->whereHas('roleAssignments', function (Builder $assignmentQuery) use ($teamIds, $today) {
-                        $this->applyActiveWindow($assignmentQuery, $today);
-                        $assignmentQuery->whereIn('team_id', $teamIds);
-                    })
-                    ->orWhereIn('team', $teamNames);
-            });
+        return $query->where(function (Builder $recordQuery) use ($teamIds, $teamNames, $today) {
+            $recordQuery->whereIn('workflow_team_id', $teamIds)
+                ->orWhere(function (Builder $legacyQuery) use ($teamIds, $teamNames, $today) {
+                    $legacyQuery->whereNull('workflow_team_id')
+                        ->whereHas('user', function (Builder $userQuery) use ($teamIds, $teamNames, $today) {
+                            $userQuery->where(function (Builder $ownerQuery) use ($teamIds, $teamNames, $today) {
+                                $ownerQuery
+                                    ->whereHas('roleAssignments', function (Builder $assignmentQuery) use ($teamIds, $today) {
+                                        $this->applyActiveWindow($assignmentQuery, $today);
+                                        $assignmentQuery->whereIn('team_id', $teamIds);
+                                    })
+                                    ->orWhereIn('team', $teamNames);
+                            });
+                        });
+                });
         });
     }
 
@@ -52,7 +58,11 @@ class OvertimeManagementScopeService
             return true;
         }
 
-        return count(array_intersect($scope['teamIds'], $this->ownerTeamIds($record->user))) > 0;
+        $recordTeamIds = $record->workflow_team_id
+            ? [(int) $record->workflow_team_id]
+            : $this->ownerTeamIds($record->user);
+
+        return count(array_intersect($scope['teamIds'], $recordTeamIds)) > 0;
     }
 
     public function canPerformWorkflowRole(User $actor, OvertimeRecord $record, string $roleName): bool
@@ -74,7 +84,9 @@ class OvertimeManagementScopeService
             return $actor->roleAssignments()->doesntExist() && $actor->hasRole($roleName);
         }
 
-        $ownerTeamIds = $this->ownerTeamIds($record->user);
+        $ownerTeamIds = $record->workflow_team_id
+            ? [(int) $record->workflow_team_id]
+            : $this->ownerTeamIds($record->user);
         foreach ($assignments as $assignment) {
             if (! $this->roleCanManageOvertime($assignment)) {
                 continue;

@@ -9,12 +9,14 @@ use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
+use App\Services\RoleCatalog;
 use App\Services\TeamMemberSyncService;
 use App\Services\WorkflowNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 class TeamController extends Controller
 {
@@ -53,6 +55,7 @@ class TeamController extends Controller
                     'is_primary' => (bool) $m->is_primary,
                     'started_at' => $m->started_at?->toDateString(),
                     'ended_at' => $m->ended_at?->toDateString(),
+                    ...$this->workflowEligibilityPayload($m),
                 ])->values();
 
             $payload['past_members'] = $team->members
@@ -78,9 +81,12 @@ class TeamController extends Controller
 
     private function loadMembers(Team $team): void
     {
-        $team->load(['members' => function ($query) {
-            $query->orderByDesc('is_primary')->orderBy('name');
-        }]);
+        $team->load([
+            'members' => function ($query) {
+                $query->orderByDesc('is_primary')->orderBy('name');
+            },
+            'members.user.roleAssignments.role',
+        ]);
     }
 
     /**
@@ -88,9 +94,12 @@ class TeamController extends Controller
      */
     public function index(): JsonResponse
     {
-        $teams = Team::with(['members' => function ($query) {
-            $query->orderByDesc('is_primary')->orderBy('name');
-        }])
+        $teams = Team::with([
+            'members' => function ($query) {
+                $query->orderByDesc('is_primary')->orderBy('name');
+            },
+            'members.user.roleAssignments.role',
+        ])
             ->orderBy('name')
             ->get()
             ->map(fn (Team $team) => $this->teamPayload($team, true));
@@ -100,7 +109,7 @@ class TeamController extends Controller
 
     public function memberOptions(): JsonResponse
     {
-        $teamMap = TeamMember::with('team')->get()->groupBy('user_id');
+        $teamMap = TeamMember::with('team')->whereNull('ended_at')->get()->groupBy('user_id');
 
         $users = User::query()
             ->whereNull('deleted_at')
@@ -213,6 +222,10 @@ class TeamController extends Controller
             'members.*.is_primary' => 'boolean',
             'members.*.started_at' => 'nullable|date',
         ]);
+        $this->validateWorkflowMemberIdentities($data['members'] ?? [], $team->id);
+        if (array_key_exists('members', $data)) {
+            $this->validateOperationalMemberRemovals($team, $data['members']);
+        }
 
         // When a file was uploaded as part of the atomic multipart request, store it now
         // and treat it exactly like a regular image_url update for the rest of the method.
@@ -339,6 +352,151 @@ class TeamController extends Controller
         ]);
 
         return response()->json(['data' => $this->teamPayload($team, true)]);
+    }
+
+    private function validateWorkflowMemberIdentities(array $members, ?int $teamId = null): void
+    {
+        $errors = [];
+        $today = now()->toDateString();
+        foreach ($members as $index => $member) {
+            $role = RoleCatalog::canonicalRoleName($member['role'] ?? null);
+            if (
+                $role !== null
+                && RoleCatalog::isScopedRole($role)
+                && empty($member['user_id'])
+            ) {
+                $errors["members.{$index}.user_id"] = [
+                    "{$role} is an operational role and must be linked to an active user account.",
+                ];
+            } elseif (
+                $role !== null
+                && RoleCatalog::isScopedRole($role)
+                && $teamId
+                && ! TeamMember::query()
+                    ->where('user_id', $member['user_id'])
+                    ->where('team_id', '!=', $teamId)
+                    ->whereNull('ended_at')
+                    ->exists()
+                && ! UserRoleAssignment::query()
+                    ->where('user_id', $member['user_id'])
+                    ->where('team_id', $teamId)
+                    ->where(fn ($query) => $query->whereNull('start_date')->orWhereDate('start_date', '<=', $today))
+                    ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $today))
+                    ->whereHas(
+                        'role',
+                        fn ($query) => $query->whereRaw(
+                            'LOWER(TRIM(name)) = ?',
+                            [strtolower($role)],
+                        ),
+                    )
+                    ->exists()
+            ) {
+                $errors["members.{$index}.role"] = [
+                    "{$role} must have a matching active scoped role assignment for this team.",
+                ];
+            }
+        }
+
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
+    }
+
+    private function validateOperationalMemberRemovals(Team $team, array $incomingMembers): void
+    {
+        $incomingUserIds = collect($incomingMembers)
+            ->pluck('user_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->all();
+        $today = now()->toDateString();
+        $protected = $team->members()
+            ->whereNull('ended_at')
+            ->whereNotNull('user_id')
+            ->whereNotIn('user_id', $incomingUserIds)
+            ->get()
+            ->filter(function (TeamMember $member) use ($today) {
+                $role = RoleCatalog::canonicalRoleName($member->role);
+                if ($role === null || ! RoleCatalog::isScopedRole($role)) {
+                    return false;
+                }
+
+                return UserRoleAssignment::query()
+                    ->where('user_id', $member->user_id)
+                    ->where('team_id', $member->team_id)
+                    ->where(fn ($query) => $query->whereNull('start_date')->orWhereDate('start_date', '<=', $today))
+                    ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $today))
+                    ->whereHas(
+                        'role',
+                        fn ($query) => $query->whereRaw(
+                            'LOWER(TRIM(name)) = ?',
+                            [strtolower((string) $role)],
+                        ),
+                    )
+                    ->exists();
+            });
+
+        if ($protected->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                'members' => [
+                    'Active operational assignments cannot be removed from the Team Directory. '
+                    .'Use Permanent team transfer or update the scoped role assignment.',
+                ],
+            ]);
+        }
+    }
+
+    private function workflowEligibilityPayload(TeamMember $member): array
+    {
+        $role = RoleCatalog::canonicalRoleName($member->role);
+        if ($role === null || ! RoleCatalog::isScopedRole($role)) {
+            return [
+                'workflow_eligible' => false,
+                'workflow_block_reason' => 'informational_member',
+            ];
+        }
+        if (! $member->user_id) {
+            return [
+                'workflow_eligible' => false,
+                'workflow_block_reason' => 'unlinked_user',
+            ];
+        }
+
+        $today = now()->toDateString();
+        $user = $member->user;
+        $eligible = $user
+            && $user->deleted_at === null
+            && (
+                $user->status === null
+                || strtolower(trim((string) $user->status)) === 'active'
+            )
+            && ($user->relationLoaded('roleAssignments')
+                ? $user->roleAssignments->contains(
+                    fn (UserRoleAssignment $assignment) => (
+                        (int) $assignment->team_id === (int) $member->team_id
+                        && (! $assignment->start_date || $assignment->start_date->toDateString() <= $today)
+                        && (! $assignment->end_date || $assignment->end_date->toDateString() >= $today)
+                        && strcasecmp((string) $assignment->role?->name, $role) === 0
+                    ),
+                )
+                : UserRoleAssignment::query()
+                    ->where('user_id', $member->user_id)
+                    ->where('team_id', $member->team_id)
+                    ->where(fn ($query) => $query->whereNull('start_date')->orWhereDate('start_date', '<=', $today))
+                    ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $today))
+                    ->whereHas(
+                        'role',
+                        fn ($query) => $query->whereRaw(
+                            'LOWER(TRIM(name)) = ?',
+                            [strtolower($role)],
+                        ),
+                    )
+                    ->exists());
+
+        return [
+            'workflow_eligible' => $eligible,
+            'workflow_block_reason' => $eligible ? null : 'missing_team_role_assignment',
+        ];
     }
 
     /**

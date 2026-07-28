@@ -16,6 +16,7 @@ class WorkflowNotificationPolicyResolver
 
     private const FINAL_OUTCOME_EVENTS = [
         'approved',
+        'paid',
         'rejected',
         'cancelled',
     ];
@@ -30,6 +31,7 @@ class WorkflowNotificationPolicyResolver
         'roster_changed',
         'team_disbanded',
         'published',
+        'payment_reopened',
     ];
 
     public function resolve(
@@ -130,7 +132,7 @@ class WorkflowNotificationPolicyResolver
     {
         if ($category === self::CATEGORY_FINAL_OUTCOME) {
             return match ($eventType) {
-                'approved' => 'success',
+                'approved', 'paid' => 'success',
                 'rejected', 'cancelled' => 'warning',
                 default => 'info',
             };

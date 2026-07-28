@@ -25,7 +25,7 @@ class WorkflowNotificationLinkResolver
         $actionRequiredForViewer = $recipient ? $this->actionRequiredForRecipient($notification, $recipient, $metadata) : false;
 
         if ($module === 'report' || $recordType === 'report') {
-            if ($reportType === 'inspection') {
+            if ($module === 'inspection' || $reportType === 'inspection') {
                 return $reportUid !== '' ? '/inspection/'.rawurlencode($reportUid) : '/reports?reportType=inspection';
             }
 

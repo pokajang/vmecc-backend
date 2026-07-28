@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\DutyCoverageAssignment;
 use App\Models\User;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Carbon;
 
 class OvertimeEligibilityService
 {
@@ -14,7 +16,7 @@ class OvertimeEligibilityService
         private readonly AssignmentAuthorizationService $authorizationService,
     ) {}
 
-    public function resolveForUser(?User $user): array
+    public function resolveForUser(?User $user, ?Carbon $effectiveAt = null): array
     {
         if (! $user) {
             return [
@@ -31,9 +33,19 @@ class OvertimeEligibilityService
         }
 
         $applicableRoles = $this->normalizeRoles($rateSettings['otApplicability']['roles'] ?? []);
-        $userRoles = $this->normalizeRoles(
-            $this->authorizationService->getActiveRoleNames($user)->all(),
-        );
+        $effectiveAt ??= now();
+        $actingRoles = DutyCoverageAssignment::query()
+            ->with('actingRole:id,name')
+            ->where('user_id', $user->id)
+            ->effectiveAt($effectiveAt)
+            ->get()
+            ->pluck('actingRole.name')
+            ->filter()
+            ->all();
+        $userRoles = $this->normalizeRoles([
+            ...$actingRoles,
+            ...$this->authorizationService->getActiveRoleNames($user)->all(),
+        ]);
         if ($this->isSystemAdministrator($userRoles)) {
             return [
                 'eligible' => true,

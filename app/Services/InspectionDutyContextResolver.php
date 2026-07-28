@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\CustomShift;
+use App\Models\DutyCoverageAssignment;
 use App\Models\Roster;
 use App\Models\TeamMember;
 use App\Models\User;
@@ -28,15 +29,28 @@ class InspectionDutyContextResolver
             ->orderByDesc('id')
             ->get()
             ->groupBy('team_id');
+        $coverages = DutyCoverageAssignment::query()
+            ->with(['actingRole:id,name'])
+            ->where('user_id', $user->id)
+            ->effectiveAt($localNow->copy()->utc())
+            ->orderByDesc('effective_from')
+            ->orderByDesc('id')
+            ->get()
+            ->groupBy('acting_team_id');
 
         $shiftWindows = $this->shiftWindows();
+        $candidateTeamIds = $memberships->keys()
+            ->concat($coverages->keys())
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
         $candidates = Roster::query()
             ->with('team:id,name')
             ->where('status', 'published')
             ->whereIn('date', $dates)
-            ->whereIn('team_id', $memberships->keys())
+            ->whereIn('team_id', $candidateTeamIds)
             ->get()
-            ->map(function (Roster $roster) use ($localNow, $shiftWindows, $memberships): ?array {
+            ->map(function (Roster $roster) use ($localNow, $shiftWindows, $memberships, $coverages): ?array {
                 $shiftKey = Str::slug(Str::lower(trim((string) $roster->shift)));
                 $window = $shiftWindows[$shiftKey] ?? null;
                 if (! $window) {
@@ -47,13 +61,22 @@ class InspectionDutyContextResolver
                     return null;
                 }
                 $rosterDate = $roster->date->toDateString();
+                $coverage = $coverages->get($roster->team_id)?->first(
+                    fn (DutyCoverageAssignment $candidate) => (
+                        ! $candidate->roster_id
+                        || (int) $candidate->roster_id === (int) $roster->id
+                    ) && (
+                        ! $candidate->shift_key
+                        || Str::slug(Str::lower($candidate->shift_key)) === $shiftKey
+                    )
+                );
                 $membership = $memberships->get($roster->team_id)?->first(
                     fn (TeamMember $candidate) => (! $candidate->started_at || $candidate->started_at->toDateString() <= $rosterDate)
                         && (! $candidate->ended_at || $candidate->ended_at->toDateString() >= $rosterDate)
                 );
-                if (! $membership
+                if (! $coverage && (! $membership
                     || ($membership->started_at && $membership->started_at->toDateString() > $rosterDate)
-                    || ($membership->ended_at && $membership->ended_at->toDateString() < $rosterDate)) {
+                    || ($membership->ended_at && $membership->ended_at->toDateString() < $rosterDate))) {
                     return null;
                 }
 
@@ -66,6 +89,12 @@ class InspectionDutyContextResolver
                     'effectiveUntil' => $until->toIso8601String(),
                     'rosterUpdatedAt' => optional($roster->updated_at)->toIso8601String(),
                     'membershipUpdatedAt' => optional($membership?->updated_at)->toIso8601String(),
+                    'assignmentSource' => $coverage ? 'temporary_coverage' : 'team_membership',
+                    'dutyCoverageAssignmentId' => $coverage ? (int) $coverage->id : null,
+                    'homeTeamId' => $coverage?->home_team_id ? (int) $coverage->home_team_id : null,
+                    'actingRole' => $coverage?->actingRole?->name ?: ($membership?->role ?: null),
+                    'coverageEffectiveFrom' => $coverage?->effective_from?->toIso8601String(),
+                    'coverageEffectiveUntil' => $coverage?->effective_until?->toIso8601String(),
                 ];
             })
             ->filter()

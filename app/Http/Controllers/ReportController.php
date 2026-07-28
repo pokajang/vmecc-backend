@@ -99,6 +99,24 @@ class ReportController extends Controller
         if ($request->filled('status') && $request->input('status') !== 'All') {
             $query->where('status', trim((string) $request->input('status')));
         }
+        if ($request->filled('team_id')) {
+            $validatedTeam = $request->validate([
+                'team_id' => ['integer', 'min:1', 'exists:teams,id'],
+            ]);
+            $query->where('scope_team_id', (int) $validatedTeam['team_id']);
+        }
+        if ($request->filled('date_from') || $request->filled('date_to')) {
+            $validatedPeriod = $request->validate([
+                'date_from' => ['nullable', 'date'],
+                'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+            ]);
+            if (! empty($validatedPeriod['date_from'])) {
+                $query->whereDate('submitted_at', '>=', $validatedPeriod['date_from']);
+            }
+            if (! empty($validatedPeriod['date_to'])) {
+                $query->whereDate('submitted_at', '<=', $validatedPeriod['date_to']);
+            }
+        }
         if ($isActionableScope) {
             $query
                 ->where('status', $action === 'review' ? self::STATUS_SUBMITTED : self::STATUS_REVIEWED)
@@ -352,29 +370,7 @@ class ReportController extends Controller
         $action = $status === self::STATUS_DRAFT ? 'DraftSaved' : 'Submitted';
         $submissionKey = trim((string) ($data['submission_key'] ?? ''));
         $sourceDraftId = trim((string) ($data['source_draft_id'] ?? ''));
-        $checklistIndex = $isInspection
-            ? $this->extractInspectionChecklistIndex((array) $data['payload'])
-            : ['ids' => [], 'labels' => [], 'hasChecklist' => false];
-        $workflowFields = [];
-        if ($isManagedWorkflow) {
-            if ($status === self::STATUS_SUBMITTED) {
-                $submissionDecision = $isInspection ? $this->inspectionPolicy->canSubmit($user) : null;
-                $blockReason = $submissionDecision !== null
-                    ? ($submissionDecision->allowed ? null : $submissionDecision->message)
-                    : $this->reportingWorkflowService->submissionBlockReason($user, $reportType);
-                if ($blockReason !== null) {
-                    throw ValidationException::withMessages(['workflow' => [$blockReason]]);
-                }
-            }
-            $workflowFields = $status === self::STATUS_SUBMITTED
-                ? $this->reportingWorkflowService->appendSubmissionHistory(
-                    $this->reportingWorkflowService->buildWorkflowForSubmission($user, $reportType),
-                    $user,
-                    'Submitted',
-                    (string) ($data['remarks'] ?? ''),
-                )
-                : $this->reportingWorkflowService->draftWorkflowFields();
-        }
+        $reportUid = trim((string) ($data['report_uid'] ?? '')) ?: Str::uuid()->toString();
 
         if ($submissionKey !== '') {
             $existing = Report::query()
@@ -398,12 +394,48 @@ class ReportController extends Controller
             }
         }
 
-        $reportUid = trim((string) ($data['report_uid'] ?? '')) ?: Str::uuid()->toString();
         $dutyContext = $isInspection
             ? ($status === self::STATUS_SUBMITTED
-                ? $this->dutyConfirmations->consume($request, 'submit', $reportUid, $this->inspectionFormId($data['payload']))
+                ? $this->dutyConfirmations->consume(
+                    $request,
+                    'submit',
+                    $reportUid,
+                    $this->inspectionFormId($data['payload']),
+                )
                 : $this->dutyContextResolver->resolve($user))
             : null;
+        $effectiveTeamId = ((int) data_get($dutyContext, 'teamId', 0)) ?: null;
+        $checklistIndex = $isInspection
+            ? $this->extractInspectionChecklistIndex((array) $data['payload'])
+            : ['ids' => [], 'labels' => [], 'hasChecklist' => false];
+        $workflowFields = [];
+        if ($isManagedWorkflow) {
+            if ($status === self::STATUS_SUBMITTED) {
+                $submissionDecision = $isInspection ? $this->inspectionPolicy->canSubmit($user) : null;
+                $blockReason = $submissionDecision !== null
+                    ? ($submissionDecision->allowed ? null : $submissionDecision->message)
+                    : $this->reportingWorkflowService->submissionBlockReason(
+                        $user,
+                        $reportType,
+                        $effectiveTeamId,
+                    );
+                if ($blockReason !== null) {
+                    throw ValidationException::withMessages(['workflow' => [$blockReason]]);
+                }
+            }
+            $workflowFields = $status === self::STATUS_SUBMITTED
+                ? $this->reportingWorkflowService->appendSubmissionHistory(
+                    $this->reportingWorkflowService->buildWorkflowForSubmission(
+                        $user,
+                        $reportType,
+                        $effectiveTeamId,
+                    ),
+                    $user,
+                    'Submitted',
+                    (string) ($data['remarks'] ?? ''),
+                )
+                : $this->reportingWorkflowService->draftWorkflowFields();
+        }
 
         $submittedAt = $status === self::STATUS_SUBMITTED
             ? $this->submittedAtForReportPayload($data, $isInspection)
@@ -614,20 +646,39 @@ class ReportController extends Controller
         $checklistIndex = $isInspection
             ? $this->extractInspectionChecklistIndex((array) $data['payload'])
             : ['ids' => [], 'labels' => [], 'hasChecklist' => false];
+        $dutyContext = $isInspection
+            ? ($targetStatus === self::STATUS_SUBMITTED
+                ? $this->dutyConfirmations->consume(
+                    $request,
+                    'submit',
+                    $report->report_uid,
+                    $this->inspectionFormId($data['payload']),
+                )
+                : $this->dutyContextResolver->resolve($user))
+            : null;
+        $effectiveTeamId = ((int) data_get($dutyContext, 'teamId', 0)) ?: null;
         $workflowFields = [];
         if ($isManagedWorkflow) {
             if ($targetStatus === self::STATUS_SUBMITTED) {
                 $submissionDecision = $isInspection ? $this->inspectionPolicy->canSubmit($user) : null;
                 $blockReason = $submissionDecision !== null
                     ? ($submissionDecision->allowed ? null : $submissionDecision->message)
-                    : $this->reportingWorkflowService->submissionBlockReason($user, $reportType);
+                    : $this->reportingWorkflowService->submissionBlockReason(
+                        $user,
+                        $reportType,
+                        $effectiveTeamId,
+                    );
                 if ($blockReason !== null) {
                     throw ValidationException::withMessages(['workflow' => [$blockReason]]);
                 }
             }
             $workflowFields = $targetStatus === self::STATUS_SUBMITTED
                 ? $this->reportingWorkflowService->appendSubmissionHistory(
-                    $this->reportingWorkflowService->buildWorkflowForSubmission($user, $reportType),
+                    $this->reportingWorkflowService->buildWorkflowForSubmission(
+                        $user,
+                        $reportType,
+                        $effectiveTeamId,
+                    ),
                     $user,
                     'Resubmitted',
                     (string) ($data['remarks'] ?? ''),
@@ -638,12 +689,6 @@ class ReportController extends Controller
         $submittedAt = $targetStatus === self::STATUS_SUBMITTED
             ? $this->submittedAtForReportPayload($data, $isInspection)
             : $report->submitted_at;
-
-        $dutyContext = $isInspection
-            ? ($targetStatus === self::STATUS_SUBMITTED
-                ? $this->dutyConfirmations->consume($request, 'submit', $report->report_uid, $this->inspectionFormId($data['payload']))
-                : $this->dutyContextResolver->resolve($user))
-            : null;
 
         $sourceDraftId = trim((string) ($data['source_draft_id'] ?? ''));
         DB::transaction(function () use ($report, $data, $sourceDraftId, $targetStatus, $nextRevision, $nextVersion, $user, $checklistIndex, $isInspection, $workflowFields, $submittedAt, $reportType, $dutyContext, $reportModuleAdapter) {
@@ -1396,6 +1441,13 @@ class ReportController extends Controller
             'workflowStage' => $this->formatWorkflowStage($report),
             'workflowSnapshot' => $this->formatWorkflowSnapshot($report),
             'nextActionRole' => $this->formatNextActionRole($report),
+            'nextActionUserId' => $report->next_action_user_id
+                ? (int) $report->next_action_user_id
+                : null,
+            'nextActionDutyCoverageAssignmentId' => $report->next_action_duty_coverage_assignment_id
+                ? (int) $report->next_action_duty_coverage_assignment_id
+                : null,
+            'routingReasonCode' => $report->routing_reason_code,
             'scopeTeamId' => $this->formatScopeTeamId($report),
             'dutyContextStatus' => $report->duty_context_status,
             'dutyContextVersion' => $report->duty_context_version,
@@ -1714,6 +1766,11 @@ class ReportController extends Controller
             if ($actionRequired) {
                 $targetUserIds = $this->reportingWorkflowService->recipientUserIdsForNextAction($report);
                 $excludeOwner = true;
+                if ($targetUserIds === []) {
+                    // Preserve the report but escalate stranded routing so it is
+                    // visible to administrators instead of silently disappearing.
+                    $targetRoles = ['System Administrator'];
+                }
             } elseif (in_array($eventType, ['approved', 'rejected'], true)) {
                 $targetUserIds = [(int) $report->owner_user_id];
             }
@@ -1740,6 +1797,13 @@ class ReportController extends Controller
                 'status' => $report->status,
                 'workflowStage' => $workflowStage,
                 'nextActionRole' => $nextActionRole,
+                'nextActionUserId' => $report->next_action_user_id
+                    ? (int) $report->next_action_user_id
+                    : null,
+                'dutyCoverageAssignmentId' => $report->next_action_duty_coverage_assignment_id
+                    ? (int) $report->next_action_duty_coverage_assignment_id
+                    : null,
+                'routingReasonCode' => $report->routing_reason_code,
                 'scopeTeamId' => $scopeTeamId,
                 'reportType' => $report->report_type,
                 'reportUid' => $report->report_uid,

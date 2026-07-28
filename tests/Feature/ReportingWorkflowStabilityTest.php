@@ -2,10 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Models\Team;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Models\WorkflowNotification;
 use App\Models\WorkflowNotificationRecipientState;
+use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Spatie\Permission\Models\Permission;
@@ -35,10 +37,11 @@ class ReportingWorkflowStabilityTest extends TestCase
         $reviewer = User::factory()->create(['status' => 'active']);
         $approver = User::factory()->create(['status' => 'active']);
         $unrelated = User::factory()->create(['status' => 'active']);
+        $team = Team::factory()->create();
 
-        $this->assignWorkflowRole($submitter, 'Tactical Response Team', $permissionName);
-        $this->assignWorkflowRole($reviewer, 'Incident Commander', $permissionName);
-        $this->assignWorkflowRole($approver, 'Incident Commander', $permissionName);
+        $this->assignWorkflowRole($submitter, 'Tactical Response Team', $permissionName, $team);
+        $this->assignWorkflowRole($reviewer, 'Incident Commander', $permissionName, $team);
+        $this->assignWorkflowRole($approver, 'Incident Commander', $permissionName, $team);
 
         $this->actingAs($submitter);
         $draft = $this->postJson('/api/reports', [
@@ -72,7 +75,7 @@ class ReportingWorkflowStabilityTest extends TestCase
 
         $reportUid = (string) $submitted->json('data.id');
         $this->assertGreaterThanOrEqual(1, count($submitted->json('data.approvalHistory') ?? []));
-        $this->assertNotificationTargets($displayId, 'submitted', [$reviewer->id, $approver->id]);
+        $this->assertNotificationTargets($displayId, 'submitted', [$reviewer->id]);
 
         $this->actingAs($reviewer);
         $reviewerView = $this->getJson("/api/reports/{$reportUid}");
@@ -132,8 +135,9 @@ class ReportingWorkflowStabilityTest extends TestCase
     {
         $owner = User::factory()->create(['status' => 'active']);
         $approver = User::factory()->create(['status' => 'active']);
-        $this->assignWorkflowRole($owner, 'Incident Commander', 'reports.erco.view');
-        $this->assignWorkflowRole($approver, 'Incident Commander', 'reports.erco.view');
+        $team = Team::factory()->create();
+        $this->assignWorkflowRole($owner, 'Incident Commander', 'reports.erco.view', $team);
+        $this->assignWorkflowRole($approver, 'Incident Commander', 'reports.erco.view', $team);
 
         $this->actingAs($owner);
         $created = $this->postJson('/api/reports', [
@@ -172,8 +176,9 @@ class ReportingWorkflowStabilityTest extends TestCase
     {
         $submitter = User::factory()->create(['status' => 'active']);
         $reviewer = User::factory()->create(['status' => 'active']);
-        $this->assignWorkflowRole($submitter, 'Tactical Response Team', 'reports.erco.view');
-        $this->assignWorkflowRole($reviewer, 'Incident Commander', 'reports.erco.view');
+        $team = Team::factory()->create();
+        $this->assignWorkflowRole($submitter, 'Tactical Response Team', 'reports.erco.view', $team);
+        $this->assignWorkflowRole($reviewer, 'Incident Commander', 'reports.erco.view', $team);
 
         $this->actingAs($submitter);
         $created = $this->postJson('/api/reports', [
@@ -252,8 +257,12 @@ class ReportingWorkflowStabilityTest extends TestCase
         ];
     }
 
-    private function assignWorkflowRole(User $user, string $roleName, string $permissionName): void
-    {
+    private function assignWorkflowRole(
+        User $user,
+        string $roleName,
+        string $permissionName,
+        Team $team,
+    ): void {
         $permission = Permission::query()->firstOrCreate([
             'name' => $permissionName,
             'guard_name' => 'web',
@@ -269,8 +278,8 @@ class ReportingWorkflowStabilityTest extends TestCase
         UserRoleAssignment::query()->create([
             'user_id' => $user->id,
             'role_id' => $role->id,
-            'scope_type' => 'global',
-            'team_id' => null,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $team->id,
             'is_primary' => true,
         ]);
     }

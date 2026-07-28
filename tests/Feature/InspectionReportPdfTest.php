@@ -3,8 +3,11 @@
 namespace Tests\Feature;
 
 use App\Models\Report;
+use App\Models\Team;
 use App\Models\User;
+use App\Models\UserRoleAssignment;
 use App\Services\InspectionReports\InspectionReportPdfRenderer;
+use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
@@ -19,6 +22,8 @@ use Tests\TestCase;
 class InspectionReportPdfTest extends TestCase
 {
     use RefreshDatabase;
+
+    private ?Team $workflowTeam = null;
 
     public function test_shared_evidence_gallery_renders_two_photos_in_one_row_and_filters_invalid_urls(): void
     {
@@ -1639,5 +1644,16 @@ class InspectionReportPdfTest extends TestCase
         ]);
         $role->givePermissionTo($permissions);
         $user->assignRole($role);
+        $this->workflowTeam ??= Team::factory()->create([
+            'name' => 'Inspection PDF Workflow Team',
+        ]);
+        UserRoleAssignment::query()->firstOrCreate([
+            'user_id' => $user->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $this->workflowTeam->id,
+        ], [
+            'is_primary' => true,
+        ]);
     }
 }

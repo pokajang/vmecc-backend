@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Team;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
+use App\Models\WorkflowNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -14,7 +15,7 @@ class InspectionWorkflowGovernanceTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_same_team_aic_reviews_and_global_ic_approves_inspection(): void
+    public function test_same_team_aic_reviews_and_same_team_ic_approves_inspection(): void
     {
         $team = Team::factory()->create(['name' => 'Alpha TRT']);
         $otherTeam = Team::factory()->create(['name' => 'Bravo TRT']);
@@ -26,7 +27,7 @@ class InspectionWorkflowGovernanceTest extends TestCase
         $this->assignWorkflowRole($submitter, 'Tactical Response Team', $team->id, true);
         $this->assignWorkflowRole($sameTeamAic, 'Assistant Incident Commander', $team->id);
         $this->assignWorkflowRole($otherTeamAic, 'Assistant Incident Commander', $otherTeam->id);
-        $this->assignWorkflowRole($ic, 'Incident Commander');
+        $this->assignWorkflowRole($ic, 'Incident Commander', $team->id);
 
         $this->actingAs($submitter);
         $create = $this->postJson('/api/reports', $this->reportPayload('INS-WF-AIC-001'));
@@ -34,11 +35,17 @@ class InspectionWorkflowGovernanceTest extends TestCase
             ->assertJsonPath('data.status', 'Submitted')
             ->assertJsonPath('data.workflowStage', 'review')
             ->assertJsonPath('data.nextActionRole', 'Assistant Incident Commander')
+            ->assertJsonPath('data.nextActionUserId', $sameTeamAic->id)
             ->assertJsonPath('data.scopeTeamId', $team->id)
             ->assertJsonPath('data.canReview', false)
             ->assertJsonPath('data.canApprove', false);
 
         $reportUid = (string) $create->json('data.id');
+        $notification = WorkflowNotification::query()
+            ->where('record_display_id', 'INS-WF-AIC-001')
+            ->where('event_type', 'submitted')
+            ->firstOrFail();
+        $this->assertSame([$sameTeamAic->id], $notification->recipient_user_ids);
 
         $this->actingAs($otherTeamAic);
         $this->postJson("/api/reports/{$reportUid}/review", ['version' => 1])
@@ -71,7 +78,7 @@ class InspectionWorkflowGovernanceTest extends TestCase
         $ic = User::factory()->create(['status' => 'active', 'name' => 'Fallback IC']);
 
         $this->assignWorkflowRole($submitter, 'Tactical Response Team', $team->id, true);
-        $this->assignWorkflowRole($ic, 'Incident Commander');
+        $this->assignWorkflowRole($ic, 'Incident Commander', $team->id);
 
         $this->actingAs($submitter);
         $create = $this->postJson('/api/reports', $this->reportPayload('INS-WF-IC-001'));

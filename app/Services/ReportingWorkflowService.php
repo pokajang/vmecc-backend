@@ -2,10 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\DutyCoverageAssignment;
 use App\Models\Report;
 use App\Models\Setting;
 use App\Models\User;
-use App\Models\UserRoleAssignment;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
@@ -73,7 +73,10 @@ class ReportingWorkflowService
         ],
     ];
 
-    public function __construct(private readonly AssignmentAuthorizationService $authorizationService) {}
+    public function __construct(
+        private readonly AssignmentAuthorizationService $authorizationService,
+        private readonly WorkflowRecipientResolver $recipientResolver,
+    ) {}
 
     public function isManagedModule(?string $moduleKey): bool
     {
@@ -149,23 +152,45 @@ class ReportingWorkflowService
         ];
     }
 
-    public function buildWorkflowForSubmission(User $submitter, string $moduleKey): array
-    {
+    public function buildWorkflowForSubmission(
+        User $submitter,
+        string $moduleKey,
+        ?int $effectiveTeamId = null,
+    ): array {
         $moduleKey = $this->normalizeModuleKey($moduleKey);
         $rules = $this->loadModuleWorkflowRules($moduleKey);
         $reviewRole = $rules['fallback']['reviewRole'];
         $fallbackReviewRole = $rules['fallback']['fallbackReviewRole'];
         $approveRole = $rules['fallback']['approveRole'];
         $options = $rules['options'];
-        $scopeTeamId = $this->resolvePrimaryTeamId($submitter);
-        $hasSameTeamReviewer = $scopeTeamId !== null
-            && ($options['useTeamScopedAic'] ?? true)
-            && $this->activeUserIdsForRole($reviewRole, $scopeTeamId, (int) $submitter->id)->isNotEmpty();
+        $scopeTeamId = $effectiveTeamId ?: $this->resolvePrimaryTeamId($submitter);
+        $sameTeamReviewer = $scopeTeamId !== null && ($options['useTeamScopedAic'] ?? true)
+            ? $this->recipientResolver->resolveFirst(
+                $reviewRole,
+                $scopeTeamId,
+                excludeUserId: (int) $submitter->id,
+            )
+            : null;
+        $hasSameTeamReviewer = $sameTeamReviewer !== null;
         $resolvedReviewRole = $hasSameTeamReviewer ? $reviewRole : $fallbackReviewRole;
+        $assignedReviewer = $sameTeamReviewer;
+        $fallbackTeamId = RoleCatalog::isScopedRole($resolvedReviewRole) ? $scopeTeamId : null;
+        $hasFallbackReviewer = ! $hasSameTeamReviewer
+            && $this->recipientResolver
+                ->resolveRole($resolvedReviewRole, $fallbackTeamId, excludeUserId: (int) $submitter->id)
+                ->isNotEmpty();
+        $routingReasonCode = $hasSameTeamReviewer
+            ? (($assignedReviewer['source'] ?? '') === 'temporary_coverage'
+                ? 'team_temporary_coverage'
+                : 'team_role_assignment')
+            : ($hasFallbackReviewer ? 'fallback_role_assignment' : 'no_eligible_recipient');
 
         return [
             'workflow_stage' => 'review',
             'next_action_role' => $resolvedReviewRole ?: null,
+            'next_action_user_id' => $assignedReviewer['userId'] ?? null,
+            'next_action_duty_coverage_assignment_id' => $assignedReviewer['dutyCoverageAssignmentId'] ?? null,
+            'routing_reason_code' => $routingReasonCode,
             'scope_team_id' => $scopeTeamId,
             'workflow_snapshot' => [
                 'moduleKey' => $moduleKey,
@@ -176,18 +201,25 @@ class ReportingWorkflowService
                 'resolvedReviewRole' => $resolvedReviewRole,
                 'usedFallbackReview' => ! $hasSameTeamReviewer,
                 'scopeTeamId' => $scopeTeamId,
+                'assignedReviewerUserId' => $assignedReviewer['userId'] ?? null,
+                'assignedReviewerSource' => $assignedReviewer['source'] ?? null,
+                'dutyCoverageAssignmentId' => $assignedReviewer['dutyCoverageAssignmentId'] ?? null,
+                'routingReasonCode' => $routingReasonCode,
                 'options' => $options,
             ],
         ];
     }
 
-    public function submissionBlockReason(User $submitter, string $moduleKey): ?string
-    {
+    public function submissionBlockReason(
+        User $submitter,
+        string $moduleKey,
+        ?int $effectiveTeamId = null,
+    ): ?string {
         $moduleKey = $this->normalizeModuleKey($moduleKey);
         $rules = $this->loadModuleWorkflowRules($moduleKey);
         $reviewRole = $rules['fallback']['reviewRole'];
         $options = $rules['options'];
-        $scopeTeamId = $this->resolvePrimaryTeamId($submitter);
+        $scopeTeamId = $effectiveTeamId ?: $this->resolvePrimaryTeamId($submitter);
         $moduleLabel = $this->moduleLabel($moduleKey);
 
         if ($scopeTeamId === null && ($options['allowSubmitWithoutTeam'] ?? true) === false) {
@@ -196,7 +228,9 @@ class ReportingWorkflowService
 
         $hasSameTeamReviewer = $scopeTeamId !== null
             && ($options['useTeamScopedAic'] ?? true)
-            && $this->activeUserIdsForRole($reviewRole, $scopeTeamId, (int) $submitter->id)->isNotEmpty();
+            && $this->recipientResolver
+                ->resolveRole($reviewRole, $scopeTeamId, excludeUserId: (int) $submitter->id)
+                ->isNotEmpty();
 
         if (! $hasSameTeamReviewer && ($options['allowIcFallbackReview'] ?? true) === false) {
             return "{$moduleLabel} submission requires an active same-team reviewer.";
@@ -210,6 +244,9 @@ class ReportingWorkflowService
         return [
             'workflow_stage' => null,
             'next_action_role' => null,
+            'next_action_user_id' => null,
+            'next_action_duty_coverage_assignment_id' => null,
+            'routing_reason_code' => null,
             'scope_team_id' => null,
             'workflow_snapshot' => null,
             'approval_history' => null,
@@ -229,6 +266,16 @@ class ReportingWorkflowService
         $fallback = $rules['fallback'];
         $stage = trim((string) ($report->workflow_stage ?? ''));
         $nextRole = trim((string) ($report->next_action_role ?? ''));
+        $nextUserId = $report->next_action_user_id;
+        $nextDutyCoverageId = $report->next_action_duty_coverage_assignment_id;
+        if ($stage === 'review') {
+            $nextUserId ??= $snapshot['assignedReviewerUserId'] ?? null;
+            $nextDutyCoverageId ??= $snapshot['dutyCoverageAssignmentId'] ?? null;
+        }
+        $routingReasonCode = trim((string) (
+            $report->routing_reason_code
+            ?? ($snapshot['routingReasonCode'] ?? '')
+        ));
         $scopeTeamId = $report->scope_team_id !== null ? (int) $report->scope_team_id : ($snapshot['scopeTeamId'] ?? null);
         $scopeTeamId = $scopeTeamId !== null && $scopeTeamId !== '' ? (int) $scopeTeamId : null;
 
@@ -252,6 +299,11 @@ class ReportingWorkflowService
         return [
             'workflow_stage' => $stage,
             'next_action_role' => $nextRole !== '' ? $nextRole : null,
+            'next_action_user_id' => $nextUserId ? (int) $nextUserId : null,
+            'next_action_duty_coverage_assignment_id' => $nextDutyCoverageId
+                ? (int) $nextDutyCoverageId
+                : null,
+            'routing_reason_code' => $routingReasonCode !== '' ? $routingReasonCode : null,
             'scope_team_id' => $scopeTeamId,
             'workflow_snapshot' => $snapshot ?: [
                 'moduleKey' => $moduleKey,
@@ -290,7 +342,11 @@ class ReportingWorkflowService
             return false;
         }
 
-        return $this->actorHasActiveRole($actor, $this->approveRole($report), null);
+        return $this->actorMatchesRoleForWorkflow(
+            $actor,
+            $this->approveRole($report),
+            $workflow,
+        );
     }
 
     public function canReject(Report $report, User $actor): bool
@@ -346,10 +402,27 @@ class ReportingWorkflowService
             ->all();
 
         if ($action === 'review') {
+            $approveRole = $this->approveRole($report);
+            $scopeTeamId = RoleCatalog::isScopedRole($approveRole) && $report->scope_team_id
+                ? (int) $report->scope_team_id
+                : null;
+            $hasApprover = $this->recipientResolver
+                ->resolveRole(
+                    $approveRole,
+                    $scopeTeamId,
+                    excludeUserId: (int) $report->owner_user_id,
+                )
+                ->isNotEmpty();
+
             return [
                 'status' => 'Reviewed',
                 'workflow_stage' => 'approve',
-                'next_action_role' => $this->approveRole($report),
+                'next_action_role' => $approveRole,
+                'next_action_user_id' => null,
+                'next_action_duty_coverage_assignment_id' => null,
+                'routing_reason_code' => $hasApprover
+                    ? 'approval_role_assignment'
+                    : 'no_eligible_recipient',
                 'approval_history' => $history,
             ];
         }
@@ -359,6 +432,9 @@ class ReportingWorkflowService
                 'status' => 'Approved',
                 'workflow_stage' => 'done',
                 'next_action_role' => null,
+                'next_action_user_id' => null,
+                'next_action_duty_coverage_assignment_id' => null,
+                'routing_reason_code' => null,
                 'approval_history' => $history,
             ];
         }
@@ -368,6 +444,9 @@ class ReportingWorkflowService
                 'status' => 'Rejected',
                 'workflow_stage' => 'done',
                 'next_action_role' => null,
+                'next_action_user_id' => null,
+                'next_action_duty_coverage_assignment_id' => null,
+                'routing_reason_code' => null,
                 'approval_history' => $history,
             ];
         }
@@ -396,6 +475,12 @@ class ReportingWorkflowService
     public function recipientUserIdsForNextAction(Report $report): array
     {
         $workflow = $this->effectiveWorkflow($report);
+        $assignedUserId = (int) ($workflow['next_action_user_id'] ?? 0);
+        if ($assignedUserId > 0) {
+            return $assignedUserId === (int) $report->owner_user_id
+                ? []
+                : [$assignedUserId];
+        }
         $nextRole = trim((string) ($workflow['next_action_role'] ?? ''));
         if ($nextRole === '') {
             return [];
@@ -494,22 +579,78 @@ class ReportingWorkflowService
             return false;
         }
 
-        return $this->actorHasActiveRole($actor, $role, $this->teamScopeForCurrentAction($workflow));
+        if ($this->authorizationService->isSystemAdministrator($actor)) {
+            return true;
+        }
+        if ($this->missingRequiredTeamScope($workflow, $role)) {
+            return false;
+        }
+
+        $assignedUserId = (int) ($workflow['next_action_user_id'] ?? 0);
+        if ($assignedUserId > 0) {
+            if ($assignedUserId !== (int) $actor->id) {
+                return false;
+            }
+
+            $coverageId = (int) ($workflow['next_action_duty_coverage_assignment_id'] ?? 0);
+            if ($coverageId > 0) {
+                return DutyCoverageAssignment::query()
+                    ->whereKey($coverageId)
+                    ->where('user_id', $actor->id)
+                    ->effectiveAt(now())
+                    ->whereHas(
+                        'actingRole',
+                        fn ($query) => $query->whereRaw(
+                            'LOWER(TRIM(name)) = ?',
+                            [strtolower($role)],
+                        ),
+                    )
+                    ->exists();
+            }
+
+            return $this->actorHasActiveRole(
+                $actor,
+                $role,
+                $this->teamScopeForCurrentAction($workflow),
+            );
+        }
+
+        return $this->actorHasActiveRole(
+            $actor,
+            $role,
+            $this->teamScopeForCurrentAction($workflow),
+        );
+    }
+
+    private function missingRequiredTeamScope(array $workflow, string $role): bool
+    {
+        if (! RoleCatalog::isScopedRole($role)
+            || ! in_array(($workflow['workflow_stage'] ?? null), ['review', 'approve'], true)) {
+            return false;
+        }
+
+        $snapshot = is_array($workflow['workflow_snapshot'] ?? null)
+            ? $workflow['workflow_snapshot']
+            : [];
+        $options = is_array($snapshot['options'] ?? null) ? $snapshot['options'] : [];
+
+        return ($options['useTeamScopedAic'] ?? true) !== false
+            && empty($workflow['scope_team_id']);
     }
 
     private function teamScopeForCurrentAction(array $workflow): ?int
     {
-        if (($workflow['workflow_stage'] ?? null) !== 'review') {
+        if (! in_array(($workflow['workflow_stage'] ?? null), ['review', 'approve'], true)) {
             return null;
         }
 
         $snapshot = is_array($workflow['workflow_snapshot'] ?? null) ? $workflow['workflow_snapshot'] : [];
         $options = is_array($snapshot['options'] ?? null) ? $snapshot['options'] : [];
         $scopeTeamId = $workflow['scope_team_id'] ?? null;
-        $usesFallback = ($snapshot['usedFallbackReview'] ?? false) === true;
         $teamScopedReviewEnabled = ($options['useTeamScopedAic'] ?? true) !== false;
+        $role = trim((string) ($workflow['next_action_role'] ?? ''));
 
-        if ($usesFallback || ! $teamScopedReviewEnabled || ! $scopeTeamId) {
+        if (! $teamScopedReviewEnabled || ! $scopeTeamId || ! RoleCatalog::isScopedRole($role)) {
             return null;
         }
 
@@ -527,54 +668,40 @@ class ReportingWorkflowService
             return true;
         }
 
+        // Keep legacy/global assignments authoritative for unscoped stages.
+        // Team-scoped stages must use the duty-aware resolver so temporary
+        // coverage and replaced incumbents are applied consistently.
         if ($teamId === null) {
             return $this->authorizationService->getActiveRoleNames($actor)
                 ->contains(fn ($name) => strcasecmp((string) $name, $role) === 0);
         }
 
-        return $this->activeAssignmentsForRole($role, $teamId)
-            ->where('user_id', (int) $actor->id)
-            ->isNotEmpty();
+        return $this->recipientResolver
+            ->resolveRole($role, $teamId)
+            ->contains(fn (array $row) => (int) $row['userId'] === (int) $actor->id);
     }
 
     private function activeUserIdsForRole(string $role, ?int $teamId = null, ?int $excludeUserId = null): Collection
     {
-        $rows = $this->activeAssignmentsForRole($role, $teamId);
-        if ($excludeUserId) {
-            $rows = $rows->where('user_id', '!=', (int) $excludeUserId);
-        }
-
-        return $rows->pluck('user_id')->map(fn ($id) => (int) $id)->unique()->values();
-    }
-
-    private function activeAssignmentsForRole(string $role, ?int $teamId = null): Collection
-    {
-        $today = now()->toDateString();
-        $query = UserRoleAssignment::query()
-            ->where(function ($builder) use ($today) {
-                $builder->whereNull('start_date')->orWhereDate('start_date', '<=', $today);
-            })
-            ->where(function ($builder) use ($today) {
-                $builder->whereNull('end_date')->orWhereDate('end_date', '>=', $today);
-            })
-            ->whereHas('role', fn ($builder) => $builder->whereRaw('LOWER(TRIM(name)) = ?', [strtolower(trim($role))]))
-            ->whereHas('user', function ($builder) {
-                $builder->whereNull('deleted_at')
-                    ->where(function ($query) {
-                        $query->whereNull('status')
-                            ->orWhereRaw("LOWER(TRIM(status)) = 'active'");
-                    });
-            });
-
-        if ($teamId !== null) {
-            $query->where('team_id', (int) $teamId);
-        }
-
-        return $query->get();
+        return $this->recipientResolver
+            ->resolveRole($role, $teamId, excludeUserId: $excludeUserId)
+            ->pluck('userId')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
     }
 
     private function resolvePrimaryTeamId(User $user): ?int
     {
+        $coverageTeamId = DutyCoverageAssignment::query()
+            ->where('user_id', $user->id)
+            ->effectiveAt(now())
+            ->orderByDesc('effective_from')
+            ->value('acting_team_id');
+        if ($coverageTeamId) {
+            return (int) $coverageTeamId;
+        }
+
         $assignments = collect($this->authorizationService->getRoleAssignmentsPayload($user))
             ->filter(fn ($assignment) => ! empty($assignment['active']) && ! empty($assignment['team_id']))
             ->sortByDesc(fn ($assignment) => ! empty($assignment['is_primary']) ? 1 : 0)

@@ -4,7 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\InspectionCheckRow;
 use App\Models\Report;
+use App\Models\Team;
 use App\Models\User;
+use App\Models\UserRoleAssignment;
+use App\Services\RoleCatalog;
 use App\Support\Inspection\FrtDailyReference;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
@@ -14,6 +17,8 @@ use Tests\TestCase;
 class InspectionCheckRowsAnalyticsTest extends TestCase
 {
     use RefreshDatabase;
+
+    private ?Team $workflowTeam = null;
 
     public function test_hydraulic_report_creates_one_analytics_row_per_equipment_check(): void
     {
@@ -828,5 +833,16 @@ class InspectionCheckRowsAnalyticsTest extends TestCase
             }
         }
         $user->assignRole($role);
+        $this->workflowTeam ??= Team::factory()->create([
+            'name' => 'Inspection Analytics Workflow Team',
+        ]);
+        UserRoleAssignment::query()->firstOrCreate([
+            'user_id' => $user->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $this->workflowTeam->id,
+        ], [
+            'is_primary' => true,
+        ]);
     }
 }
