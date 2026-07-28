@@ -9,6 +9,7 @@ use App\Services\ReportImageService;
 use App\Services\ReportMediaAuthorizationService;
 use App\Services\ReportMediaLeaseService;
 use App\Services\ReportMediaModulePolicy;
+use App\Services\ReportMediaStorageService;
 use App\Services\ReportThumbnailService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -28,6 +29,7 @@ class ReportMediaController extends Controller
         private readonly ReportMediaLeaseService $mediaLeaseService,
         private readonly ReportMediaModulePolicy $modulePolicy,
         private readonly PhotoUploadCapacityService $capacityService,
+        private readonly ReportMediaStorageService $storageService,
     ) {}
 
     public function store(Request $request): JsonResponse
@@ -40,6 +42,7 @@ class ReportMediaController extends Controller
             'module' => ['required', 'string', Rule::in($this->modulePolicy->uploadEnabledModules())],
             'source' => ['nullable', 'string', 'in:camera,upload'],
             'upload_id' => ['required', 'uuid'],
+            'batch_id' => ['nullable', 'uuid'],
             'context_key' => ['nullable', 'string', 'max:190'],
         ]);
         if (! $this->mediaAuthorizationService->canUseModule($request->user(), $data['module'])) {
@@ -70,17 +73,21 @@ class ReportMediaController extends Controller
             $normalized = $this->imageService->normalize($request->file('file'), (string) ($data['source'] ?? 'upload'));
             $thumbnail = $this->thumbnailService->create($normalized['bytes']);
             $publicId = 'rpm_'.Str::lower(Str::random(24));
-            $path = 'report-media/'.$request->user()->id.'/'.$publicId.'.jpg';
-            Storage::disk('local')->put($path, $normalized['bytes']);
-            $thumbnailPath = 'report-media/'.$request->user()->id.'/'.$publicId.'-thumb.jpg';
-            Storage::disk('local')->put($thumbnailPath, $thumbnail['bytes']);
-            [$media, $lease] = DB::transaction(function () use ($data, $normalized, $thumbnail, $publicId, $path, $thumbnailPath, $request): array {
+            $stored = $this->storageService->storeVerifiedPair(
+                (int) $request->user()->id,
+                $publicId,
+                $normalized['bytes'],
+                $thumbnail['bytes'],
+            );
+            $path = $stored['imagePath'];
+            $thumbnailPath = $stored['thumbnailPath'];
+            [$media, $lease] = DB::transaction(function () use ($data, $normalized, $thumbnail, $publicId, $path, $thumbnailPath, $request, $stored): array {
                 $media = ReportMedia::query()->create([
                     'public_id' => $publicId,
                     'client_upload_id' => $data['upload_id'],
                     'user_id' => $request->user()->id,
                     'module' => $data['module'],
-                    'disk' => 'local',
+                    'disk' => $stored['disk'] ?? 'local',
                     'storage_path' => $path,
                     'thumbnail_path' => $thumbnailPath,
                     'original_name' => pathinfo($request->file('file')->getClientOriginalName(), PATHINFO_FILENAME).'.jpg',
@@ -102,26 +109,16 @@ class ReportMediaController extends Controller
 
                 return [$media, $lease];
             });
-            Log::info('report_media_processed', ['upload_id' => $data['upload_id'], 'user_id' => $request->user()->id, 'module' => $data['module'], 'source' => $data['source'] ?? 'upload', 'processor' => $normalized['processor'] ?? null, 'browser_family' => $this->browserFamily($request->userAgent()), 'source_bytes' => $normalized['originalSize'], 'output_bytes' => $normalized['sizeBytes'], 'thumbnail_bytes' => $thumbnail['sizeBytes'], 'width' => $normalized['width'], 'height' => $normalized['height'], 'duration_ms' => (int) ((microtime(true) - $started) * 1000)]);
+            Log::info('report_media_processed', ['batch_id' => $data['batch_id'] ?? null, 'upload_id' => $data['upload_id'], 'user_id' => $request->user()->id, 'module' => $data['module'], 'source' => $data['source'] ?? 'upload', 'processor' => $normalized['processor'] ?? null, 'browser_family' => $this->browserFamily($request->userAgent()), 'source_bytes' => $normalized['originalSize'], 'output_bytes' => $normalized['sizeBytes'], 'thumbnail_bytes' => $thumbnail['sizeBytes'], 'width' => $normalized['width'], 'height' => $normalized['height'], 'duration_ms' => (int) ((microtime(true) - $started) * 1000)]);
 
             return response()->json(['data' => $this->format($media, $lease) + ['idempotent_replay' => false]], 201);
         } catch (ReportImageException $exception) {
-            if ($path) {
-                Storage::disk('local')->delete($path);
-            }
-            if ($thumbnailPath) {
-                Storage::disk('local')->delete($thumbnailPath);
-            }
-            Log::warning('report_media_failed', ['upload_id' => $data['upload_id'] ?? null, 'user_id' => $request->user()?->id, 'module' => $data['module'] ?? '', 'source' => $data['source'] ?? 'upload', 'browser_family' => $this->browserFamily($request->userAgent()), 'code' => $exception->errorCode, 'duration_ms' => (int) ((microtime(true) - $started) * 1000)]);
+            $this->storageService->deletePair($path, $thumbnailPath);
+            Log::warning('report_media_failed', ['batch_id' => $data['batch_id'] ?? null, 'upload_id' => $data['upload_id'] ?? null, 'user_id' => $request->user()?->id, 'module' => $data['module'] ?? '', 'source' => $data['source'] ?? 'upload', 'browser_family' => $this->browserFamily($request->userAgent()), 'code' => $exception->errorCode, 'duration_ms' => (int) ((microtime(true) - $started) * 1000)]);
 
             return response()->json(['message' => $exception->getMessage(), 'code' => $exception->errorCode], $exception->httpStatus);
         } catch (QueryException $exception) {
-            if ($path) {
-                Storage::disk('local')->delete($path);
-            }
-            if ($thumbnailPath) {
-                Storage::disk('local')->delete($thumbnailPath);
-            }
+            $this->storageService->deletePair($path, $thumbnailPath);
             $existing = ReportMedia::query()->where('user_id', $request->user()->id)->where('client_upload_id', $data['upload_id'])->first();
             if ($existing) {
                 if ($existing->module !== $data['module']) {

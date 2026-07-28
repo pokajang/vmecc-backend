@@ -2,18 +2,21 @@
 
 namespace Tests\Feature;
 
+use App\Exceptions\ReportImageException;
 use App\Models\Report;
 use App\Models\ReportMedia;
 use App\Models\ReportMediaLink;
 use App\Models\User;
 use App\Services\ReportMediaLeaseService;
 use App\Services\ReportMediaService;
+use App\Services\ReportMediaStorageService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Mockery\MockInterface;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -68,6 +71,61 @@ class ReportMediaHardeningTest extends TestCase
         ], ['Accept' => 'application/json'])
             ->assertCreated()
             ->assertJsonPath('data.mime_type', 'image/jpeg');
+    }
+
+    public function test_five_image_batch_creates_five_verified_media_records(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
+        $batchId = (string) Str::uuid();
+
+        for ($index = 1; $index <= 5; $index++) {
+            $this->actingAs($user)->post('/api/report-media', [
+                'file' => UploadedFile::fake()->image("photo-{$index}.jpg", 640, 480),
+                'module' => 'inspection',
+                'source' => 'upload',
+                'batch_id' => $batchId,
+                'upload_id' => (string) Str::uuid(),
+            ], ['Accept' => 'application/json'])
+                ->assertCreated()
+                ->assertJsonPath('data.file_name', "photo-{$index}.jpg");
+        }
+
+        $this->assertDatabaseCount('report_media', 5);
+        ReportMedia::query()->each(function (ReportMedia $media): void {
+            Storage::disk($media->disk)->assertExists($media->storage_path);
+            Storage::disk($media->disk)->assertExists($media->thumbnail_path);
+        });
+    }
+
+    public function test_failed_verified_storage_creates_no_media_record(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.inspection.view');
+        $batchId = (string) Str::uuid();
+
+        $this->mock(ReportMediaStorageService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('storeVerifiedPair')
+                ->once()
+                ->andThrow(new ReportImageException(
+                    'storage_verification_failed',
+                    'The saved photo could not be verified. Try again.',
+                    507,
+                ));
+            $mock->shouldReceive('deletePair')->once();
+        });
+
+        $this->actingAs($user)->post('/api/report-media', [
+            'file' => UploadedFile::fake()->image('camera.jpg', 1600, 900),
+            'module' => 'inspection',
+            'source' => 'upload',
+            'batch_id' => $batchId,
+            'upload_id' => (string) Str::uuid(),
+        ], ['Accept' => 'application/json'])
+            ->assertStatus(507)
+            ->assertJsonPath('code', 'storage_verification_failed');
+
+        $this->assertDatabaseCount('report_media', 0);
     }
 
     public function test_source_upload_above_hard_limit_is_rejected_before_processing(): void
