@@ -435,7 +435,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
             'mode' => 'new',
             'report_type' => 'inspection',
             'payload' => [
-                'incidentType' => 'Health Safety Environment Inspection',
+                'incidentType' => 'General Inspection',
                 'location' => 'Zone 1 > Dock',
                 'description' => 'HSE inspection with separate findings.',
                 'report_remarks' => 'Dock inspection paused during vessel movement.',

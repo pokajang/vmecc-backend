@@ -78,7 +78,7 @@ return [
             'expected_task' => 'overtime.self_service',
             'expected_workflow' => 'overtime.self_service',
             'expected_guide' => 'overtime-self-service',
-            'required' => ['Overtime', 'Application Type', 'Submit request'],
+            'required' => ['Overtime', 'Overtime type', 'Submit request'],
         ],
         [
             'id' => 'payroll.payslip.ms',

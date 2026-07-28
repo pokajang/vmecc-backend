@@ -20,14 +20,14 @@ final class SelfServiceWorkflows
             ]),
             self::workflow('overtime.self_service', 'overtime-self-service', 'Overtime', 'Submit Overtime', [
                 ['key' => 'open_overtime', 'kind' => 'open_menu', 'target' => 'Overtime'],
-                ['key' => 'select_type', 'kind' => 'complete', 'targets' => ['Application Type', 'Continue']],
+                ['key' => 'select_type', 'kind' => 'complete', 'targets' => ['Overtime type', 'Continue']],
                 ['key' => 'complete_request', 'kind' => 'complete', 'targets' => ['Date', 'Start time', 'End time', 'Reason / work done']],
                 ['key' => 'save_or_submit', 'kind' => 'review', 'targets' => ['Save draft', 'Submit request']],
                 ['key' => 'verify_status', 'kind' => 'verify', 'targets' => ['Status']],
             ], [
                 'save_draft' => 'Save draft', 'submit_request' => 'Submit request', 'edit' => 'Edit', 'cancel' => 'Cancel',
             ], [
-                'application_type' => 'Application Type', 'date' => 'Date', 'start_time' => 'Start time', 'end_time' => 'End time', 'reason' => 'Reason / work done',
+                'application_type' => 'Overtime type', 'date' => 'Date', 'start_time' => 'Start time', 'end_time' => 'End time', 'reason' => 'Reason / work done',
             ]),
             self::workflow('payroll.payslip.view', 'payroll-self-service', 'Payroll', 'View Payslips', [
                 ['key' => 'open_payroll', 'kind' => 'open_menu', 'target' => 'Payroll'],
@@ -68,7 +68,7 @@ final class SelfServiceWorkflows
             'type' => $action,
             'source_labels' => match ($key) {
                 'leave.self_service' => ['Leave', 'Save Draft', 'Submit', 'Current Action Owner'],
-                'overtime.self_service' => ['Overtime', 'Application Type', 'Continue', 'Save draft', 'Submit request'],
+                'overtime.self_service' => ['Overtime', 'Overtime type', 'Continue', 'Save draft', 'Submit request'],
                 'payroll.payslip.view' => ['Payroll', 'Payslips', 'Download payslip'],
                 'payroll.claim.submit' => ['Payroll', 'Claims', 'Save draft', 'Current Action Owner'],
             },

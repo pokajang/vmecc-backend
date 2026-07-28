@@ -34,7 +34,7 @@ Verify the exact person, period, record, current state, and assigned team or are
 ## Steps
 
 1. Go to **Overtime**.
-2. Choose the **Application Type** and select **Continue**.
+2. Under **Overtime type**, choose an option and select **Continue**.
 3. Enter **Date**, **Start time**, **End time**, and **Reason / work done**. If the form says the work ends on the next day, select **I confirm this overtime ends on the next day.**
 4. Add an **Evidence attachment (optional)** when needed, then select **Save draft** or **Submit request**.
 5. Reopen the request and confirm its status. Use **Edit**, **Delete**, or **Cancel** only when that action is displayed.
