@@ -52,13 +52,6 @@
         ]
     },
     "hse": {
-        "pages": 2,
-        "pngPages": [
-            {"width": 1191, "height": 1684, "averageHash": "80018101bf01ffff"},
-            {"width": 1191, "height": 1684, "averageHash": "ff0b8f8fffffffff"}
-        ]
-    },
-    "hse-v2": {
         "pages": 1,
         "pngPages": [
             {"width": 1191, "height": 1684, "averageHash": "b915819f9f2bffff"}

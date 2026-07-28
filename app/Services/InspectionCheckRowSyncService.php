@@ -279,12 +279,6 @@ class InspectionCheckRowSyncService
         }
 
         $selectionMeta = [
-            'areaSatisfactory' => [
-                'key' => 'area-satisfactory',
-                'name' => 'Area Satisfactory',
-                'remarks' => 'hseAreaConditionRemarks',
-                'defect' => false,
-            ],
             'unsafeAct' => [
                 'key' => 'unsafe-act',
                 'name' => 'Unsafe Act',
@@ -297,28 +291,15 @@ class InspectionCheckRowSyncService
                 'remarks' => 'hseUnsafeConditionDetails',
                 'defect' => true,
             ],
-            'environmental' => [
-                'key' => 'environmental',
-                'name' => 'Environmental',
-                'remarks' => 'hseEnvironmentalDetails',
-                'defect' => true,
-            ],
         ];
 
         $rows = [];
         $sortOrder = 0;
         $locationParts = $this->resolveLocationParts($payload, []);
         $inspectedBy = trim((string) ($payload['hseInspectedBy'] ?? $payload['hse_inspected_by'] ?? ''));
-        $inspectionDate = trim((string) ($payload['hseInspectionDate'] ?? $payload['hse_inspection_date'] ?? ''));
         $inspectedAt = trim((string) ($payload['inspectedAt'] ?? $payload['inspected_at'] ?? ''));
-        $severity = trim((string) ($payload['hseSeverity'] ?? $payload['hse_severity'] ?? ''));
-        $isVersion2 = (int) ($payload['hsePayloadVersion'] ?? $payload['hse_payload_version'] ?? 0) === 2;
         $followUp = [
-            'Immediate Action' => trim((string) ($payload['hseImmediateAction'] ?? $payload['hse_immediate_action'] ?? '')),
-            'Corrective Action' => trim((string) ($payload['hseCorrectiveAction'] ?? $payload['hse_corrective_action'] ?? '')),
-            'Responsible Person' => trim((string) ($payload['hseResponsiblePerson'] ?? $payload['hse_responsible_person'] ?? '')),
-            'Target Date' => trim((string) ($payload['hseTargetDate'] ?? $payload['hse_target_date'] ?? '')),
-            'General Remarks' => trim((string) ($payload['hseRemarks'] ?? $payload['hse_remarks'] ?? '')),
+            'Immediate Corrective Action' => trim((string) ($payload['hseImmediateAction'] ?? $payload['hse_immediate_action'] ?? '')),
         ];
 
         foreach ($selections as $selection) {
@@ -333,16 +314,10 @@ class InspectionCheckRowSyncService
             if ($detail !== '') {
                 $parts[] = 'Details: '.$detail;
             }
-            if (! $isVersion2 && $severity !== '' && $meta['defect']) {
-                $parts[] = 'Severity: '.$severity;
-            }
             if ($inspectedBy !== '') {
                 $parts[] = 'Inspected By: '.$inspectedBy;
             }
-            if ($inspectionDate !== '') {
-                $parts[] = 'Inspection Date: '.$inspectionDate;
-            }
-            if ($isVersion2 && $inspectedAt !== '') {
+            if ($inspectedAt !== '') {
                 $parts[] = 'Observed At: '.$inspectedAt;
             }
             if ($meta['defect']) {
@@ -364,7 +339,7 @@ class InspectionCheckRowSyncService
                 equipmentSource: 'report',
                 checkKey: $meta['key'],
                 checkName: $meta['name'],
-                checkValue: ! $isVersion2 && $meta['defect'] && $severity !== '' ? $severity : $meta['name'],
+                checkValue: $meta['name'],
                 remarks: implode('; ', $parts),
                 evidenceCount: $this->countEvidencePhotos($payload['photos'] ?? []),
                 sourceRowId: 'hse:'.$selection,

@@ -1342,17 +1342,6 @@ class InspectionPayloadService
         return Str::of($inspectionType)->squish()->lower()->toString() === 'health safety environment inspection';
     }
 
-    private function hasExplicitHsePayloadVersion(array $payload): bool
-    {
-        if (! array_key_exists('hsePayloadVersion', $payload) && ! array_key_exists('hse_payload_version', $payload)) {
-            return false;
-        }
-
-        $value = $payload['hsePayloadVersion'] ?? $payload['hse_payload_version'] ?? null;
-
-        return ! in_array($value, [null, '', 0, '0'], true);
-    }
-
     private function isGeneralInspectionType(string $inspectionType): bool
     {
         return Str::of($inspectionType)->squish()->lower()->toString() === 'general inspection';
@@ -1921,11 +1910,7 @@ class InspectionPayloadService
             );
         }
 
-        if (
-            $this->isHseInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
-            || $this->hasInspectionRows($payload, 'hseSelections', 'hse_selections')
-            || $this->hasExplicitHsePayloadVersion($payload)
-        ) {
+        if ($this->isHseInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))) {
             $this->hsePayloadService->validateForSubmit($payload);
         }
 
@@ -2083,12 +2068,7 @@ class InspectionPayloadService
             );
         }
 
-        if (
-            $this->isHseInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))
-            || $this->hasInspectionRows($payload, 'hseSelections', 'hse_selections')
-            || array_key_exists('hsePayloadVersion', $payload)
-            || array_key_exists('hse_payload_version', $payload)
-        ) {
+        if ($this->isHseInspectionType((string) ($payload['incidentType'] ?? $payload['inspectionType'] ?? ''))) {
             $this->hsePayloadService->validateForDraft($payload);
         }
 

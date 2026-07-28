@@ -36,7 +36,11 @@ class InspectionReportViewDataBuilder
             'description' => (string) ($record['description'] ?? ''),
             'reportRemarks' => $this->text($record['reportRemarks'] ?? $record['report_remarks'] ?? ''),
             'reportEvidence' => $reportEvidence,
-            'hse' => $this->hseViewDataBuilder->build($record, $reportEvidence),
+            'hse' => $this->hseViewDataBuilder->build(
+                $record,
+                $reportEvidence,
+                $type === InspectionReportType::Hse,
+            ),
             'sections' => $this->sectionDataBuilder->build($record, $inspectionTypeKey),
             'isErAuxInspection' => $type === InspectionReportType::ErAux,
             'isFireExtinguisherInspection' => $type === InspectionReportType::FireExtinguisher,

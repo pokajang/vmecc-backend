@@ -61,10 +61,8 @@
     $scbaInspectedBy = trim((string) ($record['scbaInspectedBy'] ?? $record['scba_inspected_by'] ?? ''));
     $scbaInspectionDate = trim((string) ($record['scbaInspectionDate'] ?? $record['scba_inspection_date'] ?? ''));
     $hseInspectedBy = $hse['inspectedBy'];
-    $hseInspectionDate = $hse['inspectionDate'];
     $hseSelections = $hse['selections'];
     $hseSelectionLabels = $hse['selectionLabels'];
-    $hseSeverity = $hse['severity'];
     $hasHseObservation = $isHseInspection && $hse['hasObservation'];
     $submittedBy = trim((string) ($record['submittedBy'] ?? ''));
     $submittedAtRaw = trim((string) ($record['submittedAt'] ?? ''));
