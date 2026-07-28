@@ -147,6 +147,10 @@ class SendUserInvitationEmailJobTest extends TestCase
             ->toMail($user)
             ->render();
 
+        $this->assertStringContainsString('VMECC OS', $rendered);
+        $this->assertStringContainsString('border-top: 4px solid #007e7a', $rendered);
+        $this->assertStringContainsString('background-color: #007e7a', $rendered);
+        $this->assertStringContainsString('Set your password', $rendered);
         $this->assertStringContainsString('email=invited%2Boperations%40example.test', $rendered);
         $this->assertStringNotContainsString('email=invited+operations@example.test', $rendered);
     }

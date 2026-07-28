@@ -1,4 +1,7 @@
 @component('mail::message')
+<x-mail.preheader>A new feedback report is ready for administrator review.</x-mail.preheader>
+<x-mail.category>System feedback</x-mail.category>
+
 # New Feedback Report
 
 A new feedback report was submitted in {{ config('app.name') }}.
@@ -21,5 +24,5 @@ Review Feedback Reports
 @endcomponent
 
 Thanks,<br>
-{{ config('app.name') }}
+{{ config('mail.branding.product_name', config('app.name')) }}
 @endcomponent

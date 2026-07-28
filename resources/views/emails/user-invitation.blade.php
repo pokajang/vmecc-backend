@@ -1,4 +1,7 @@
 <x-mail::message>
+<x-mail.preheader>Your VMECC OS account is ready. Set your password to get started.</x-mail.preheader>
+<x-mail.category>Account invitation</x-mail.category>
+
 # Welcome to {{ config('app.name') }}
 
 Hello **{{ $name }}**,
@@ -27,5 +30,5 @@ Your password link expires in **{{ $expiryHours }}**. If it expires, contact you
 If you weren't expecting this email, you can safely ignore it — no action is required.
 
 Regards,
-{{ config('app.name') }}
+{{ config('mail.branding.product_name', config('app.name')) }}
 </x-mail::message>

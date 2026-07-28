@@ -30,6 +30,6 @@ class WorkflowDigestNotificationMail extends Mailable
                 $this->windowStart->format('d M H:i'),
                 $this->windowEnd->format('d M H:i')
             ))
-            ->view('emails.workflow-digest');
+            ->markdown('emails.workflow-digest');
     }
 }
