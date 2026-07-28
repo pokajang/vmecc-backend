@@ -250,14 +250,34 @@ TEXT;
 
     private function assertTranslationPreservesCriticalTokens(string $recordRequest, string $content): void
     {
-        $decoded = json_decode($recordRequest, true);
-        $sourceText = is_array($decoded)
-            ? (string) ($decoded['sourceText'] ?? data_get($decoded, 'source_text', ''))
-            : $recordRequest;
+        $sourceText = $this->translationSourceText($recordRequest);
         $missing = array_values(array_diff($this->criticalTokens($sourceText), $this->criticalTokens($content)));
         if ($missing !== []) {
             throw new RuntimeException('Embedded AI translation omitted a number, date, time, or identifier from the source text.');
         }
+    }
+
+    private function translationSourceText(string $recordRequest): string
+    {
+        $decoded = json_decode($recordRequest, true);
+        if (is_array($decoded)) {
+            return (string) ($decoded['sourceText'] ?? data_get($decoded, 'source_text', ''));
+        }
+
+        // Older clients wrapped the JSON record in a prose prompt. Read only
+        // its field payload so unrelated numeric context (for example zone 1)
+        // is not mistaken for part of the text that must be translated.
+        $marker = 'Field payload:';
+        $markerPosition = strpos($recordRequest, $marker);
+        if ($markerPosition !== false) {
+            $legacyPayload = trim(substr($recordRequest, $markerPosition + strlen($marker)));
+            $decodedLegacyPayload = json_decode($legacyPayload, true);
+            if (is_array($decodedLegacyPayload)) {
+                return (string) ($decodedLegacyPayload['sourceText'] ?? data_get($decodedLegacyPayload, 'source_text', ''));
+            }
+        }
+
+        return $recordRequest;
     }
 
     /** @return array<int, string> */

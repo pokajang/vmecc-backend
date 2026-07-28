@@ -141,6 +141,42 @@ class AiHelperEmbeddedTaskServiceTest extends TestCase
         );
     }
 
+    public function test_it_preserves_source_tokens_without_requiring_numeric_legacy_context(): void
+    {
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('structuredResponse')->once()->andReturn([
+                'data' => ['text' => 'The emergency exit was obstructed.'],
+            ]);
+        });
+
+        $legacyRequest = <<<'TEXT'
+Translate and polish this General/HSE inspection finding description into concise professional English.
+
+Field payload:
+{
+  "inspectionType": "General Inspection",
+  "zone": "1",
+  "mainLocation": "Manjung Hub",
+  "subLocation": "Reception",
+  "field": "description",
+  "sourceText": "laluan emergency exit terhalang"
+}
+TEXT;
+
+        $result = app(AiHelperEmbeddedTaskService::class)->execute(
+            AiHelperEmbeddedTaskService::INSPECTION_TRANSLATE_FINDING,
+            $legacyRequest,
+            'en',
+            AiHelperRequestDeadline::fromSeconds(20),
+            'vmecc-user-legacy',
+        );
+
+        $this->assertSame(
+            ['text' => 'The emergency exit was obstructed.'],
+            $result['embedded_result'],
+        );
+    }
+
     public function test_it_rejects_a_critical_number_invented_by_the_provider(): void
     {
         $this->mock(AiHelperOpenAiService::class, function ($mock) {
