@@ -28,10 +28,11 @@ class AdminResetPasswordNotification extends BaseResetPassword
 
         return (new MailMessage)
             ->subject('Password Reset (Admin Initiated)')
-            ->greeting("Hello {$notifiable->name},")
-            ->line($adminLine)
-            ->action('Reset Password', $url)
-            ->line("This password reset link will expire in {$expire} minutes.")
-            ->line('If you did not expect this, please contact your administrator.');
+            ->markdown('emails.admin-reset-password', [
+                'recipientName' => $notifiable->name,
+                'adminLine' => $adminLine,
+                'resetUrl' => $url,
+                'expireMinutes' => $expire,
+            ]);
     }
 }

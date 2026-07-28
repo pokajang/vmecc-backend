@@ -23,6 +23,6 @@ class WorkflowImmediateNotificationMail extends Mailable
     {
         return $this
             ->subject(sprintf('[%s Workflow] %s', ucfirst((string) $this->notification->module), (string) $this->notification->title))
-            ->view('emails.workflow-immediate');
+            ->markdown('emails.workflow-immediate');
     }
 }

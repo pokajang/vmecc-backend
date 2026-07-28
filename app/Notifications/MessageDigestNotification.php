@@ -23,29 +23,14 @@ class MessageDigestNotification extends Notification
         $frontendUrl = config('app.frontend_url', config('app.url'));
         $messagesUrl = rtrim($frontendUrl, '/').'/messages';
 
-        $mail = (new MailMessage)
+        return (new MailMessage)
             ->subject('You have unread messages')
-            ->greeting("Hello {$notifiable->name},")
-            ->line("You have {$this->count} unread message(s).");
-
-        if (! empty($this->topSenders)) {
-            $summary = collect($this->topSenders)
-                ->map(fn ($entry) => "{$entry['name']} ({$entry['count']})")
-                ->implode(', ');
-            $mail->line("Top senders: {$summary}");
-        }
-
-        if (! empty($this->items)) {
-            $mail->line('Unread messages:');
-            foreach ($this->items as $item) {
-                $time = $item['time'] ?? '';
-                $label = $time ? "{$item['name']} ({$time})" : $item['name'];
-                $mail->line("- {$label}: \"{$item['snippet']}\"");
-            }
-        }
-
-        return $mail
-            ->action('Open Messages', $messagesUrl)
-            ->line('If you already read them, you can ignore this email.');
+            ->markdown('emails.message-digest', [
+                'recipientName' => $notifiable->name,
+                'count' => $this->count,
+                'topSenders' => $this->topSenders,
+                'items' => $this->items,
+                'messagesUrl' => $messagesUrl,
+            ]);
     }
 }

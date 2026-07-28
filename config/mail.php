@@ -112,6 +112,11 @@ return [
         'name' => env('MAIL_FROM_NAME', 'Example'),
     ],
 
+    'branding' => [
+        'product_name' => env('MAIL_PRODUCT_NAME', 'VMECC OS'),
+        'automated_sender_name' => env('MAIL_FROM_NAME') ?: 'VMECC OS Alert',
+    ],
+
     'workflow_notifications' => [
         'enabled' => env('WORKFLOW_EMAIL_ENABLED', false),
         'digest_times' => array_values(array_filter(array_map(
