@@ -53,14 +53,10 @@ class InspectionReportVisualAuditTest extends TestCase
                 $this->assertLessThan(10 * 1024 * 1024, strlen($pdf), "{$type} PDF exceeded 10 MB.");
                 $this->assertLessThan(20_000, $durationMs, "{$type} PDF exceeded the audit render budget.");
                 $this->assertStringContainsString('WORKFLOW SIGN-OFFS', $normalizedText);
-                if ($type === 'hse-v2') {
+                if ($type === 'hse') {
                     $this->assertStringNotContainsString('ADDITIONAL REPORT EVIDENCE', $normalizedText);
                     $this->assertStringContainsString('UNSAFE CONDITION', $normalizedText);
                     $this->assertStringContainsString('STOPPED ACCESS', $normalizedText);
-                    $this->assertStringNotContainsString('STALE UNSAFE-ACT', $normalizedText);
-                    $this->assertStringNotContainsString('CRITICAL', $normalizedText);
-                    $this->assertStringNotContainsString('LEGACY CORRECTIVE', $normalizedText);
-                    $this->assertStringNotContainsString('LEGACY RESPONSIBLE', $normalizedText);
                 } else {
                     $this->assertStringContainsString('ADDITIONAL REPORT EVIDENCE', $normalizedText);
                     $this->assertLessThan(

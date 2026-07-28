@@ -261,7 +261,7 @@ class InspectionReportViewDataBuilderTest extends TestCase
         ], $viewData['inspectionLocationPaths']);
     }
 
-    public function test_it_builds_a_versioned_hse_view_model_that_owns_report_evidence(): void
+    public function test_it_builds_the_current_hse_view_model_that_owns_report_evidence(): void
     {
         $viewData = app(InspectionReportViewDataBuilder::class)->build([
             'incidentType' => 'Health Safety Environment Inspection',
@@ -271,16 +271,13 @@ class InspectionReportViewDataBuilderTest extends TestCase
             'hseSelections' => ['unsafeCondition'],
             'hseUnsafeConditionDetails' => 'Open edge without protection.',
             'hseImmediateAction' => 'Access was stopped.',
-            'hseSeverity' => 'Critical',
             'photos' => [[
                 'description' => 'Open edge',
                 'url' => 'data:image/png;base64,AA==',
             ]],
         ]);
 
-        $this->assertTrue($viewData['hse']['isVersion2']);
         $this->assertTrue($viewData['hse']['consumesReportEvidence']);
-        $this->assertSame('', $viewData['hse']['severity']);
         $this->assertSame('Description', $viewData['hse']['details'][0]['label']);
         $this->assertSame('Immediate Corrective Action', $viewData['hse']['optional'][0]['label']);
         $this->assertSame(1, $viewData['hse']['photoCount']);

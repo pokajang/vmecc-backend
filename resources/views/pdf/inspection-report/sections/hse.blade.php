@@ -11,24 +11,15 @@
                 @endif
             </div>
             <div class="meta-cell">
-                <div class="meta-label">{{ $hse['isVersion2'] ? 'Observed At' : 'Inspection Date' }}</div>
-                <div class="meta-value">
-                    {{ $hse['isVersion2'] ? ($hse['observedAt'] !== '' ? $fmtDateTime($hse['observedAt']) : '--') : ($hseInspectionDate !== '' ? $hseInspectionDate : '--') }}
-                </div>
+                <div class="meta-label">Observed At</div>
+                <div class="meta-value">{{ $hse['observedAt'] !== '' ? $fmtDateTime($hse['observedAt']) : '--' }}</div>
             </div>
-            @if ($hse['isVersion2'])
-                <div class="meta-cell">
-                    <div class="meta-label">Location</div>
-                    <div class="meta-value">{{ $hse['location'] !== '' ? $hse['location'] : '--' }}</div>
-                </div>
-            @else
-                <div class="meta-cell">
-                    <div class="meta-label">Severity</div>
-                    <div class="meta-value">{{ $hseSeverity !== '' ? $hseSeverity : '--' }}</div>
-                </div>
-            @endif
             <div class="meta-cell">
-                <div class="meta-label">{{ $hse['isVersion2'] ? 'Observation Type' : 'Outcome' }}</div>
+                <div class="meta-label">Location</div>
+                <div class="meta-value">{{ $hse['location'] !== '' ? $hse['location'] : '--' }}</div>
+            </div>
+            <div class="meta-cell">
+                <div class="meta-label">Observation Type</div>
                 <div class="meta-value">
                     @forelse ($hseSelections as $selection)
                         <span class="pill">{{ $hseSelectionLabels[$selection] ?? $selection }}</span>
@@ -51,7 +42,7 @@
             <div class="text-block-value">{{ $field['value'] }}</div>
         @endforeach
 
-        @if ($hse['isVersion2'] && $hse['photoCount'] > 0)
+        @if ($hse['photoCount'] > 0)
             <div class="divider"></div>
             <div class="text-block-label">Observation Photos ({{ $hse['photoCount'] }})</div>
             @include('pdf.inspection-report.partials.evidence-gallery', ['evidenceGroups' => $hse['photoGroups']])

@@ -623,6 +623,8 @@ class InspectionReportPdfTest extends TestCase
             ],
             'hse' => [
                 'incidentType' => 'Health Safety Environment Inspection',
+                'hsePayloadVersion' => 2,
+                'inspectedAt' => '2026-07-14T09:30:00+08:00',
                 'hseSelections' => ['unsafeAct'],
                 'hseUnsafeActDetails' => 'HSE item marker',
                 'marker' => 'HSE item marker',
@@ -643,7 +645,8 @@ class InspectionReportPdfTest extends TestCase
             ])->render();
 
             $itemPosition = strpos($html, $marker);
-            $evidencePosition = strpos($html, 'Additional report evidence');
+            $evidenceHeading = $type === 'hse' ? 'Observation Photos (1)' : 'Additional report evidence';
+            $evidencePosition = strpos($html, $evidenceHeading);
             $signoffPosition = strpos($html, 'Workflow Sign-offs');
 
             $this->assertNotFalse($itemPosition, "Missing {$type} item marker.");
@@ -653,7 +656,12 @@ class InspectionReportPdfTest extends TestCase
                 $itemPosition < $evidencePosition && $evidencePosition < $signoffPosition,
                 "Report evidence is out of order for {$type}.",
             );
-            $this->assertStringContainsString('Whole-report remarks for '.$type.'.', $html);
+            if ($type === 'hse') {
+                $this->assertStringNotContainsString('Additional report evidence', $html);
+                $this->assertStringNotContainsString('Whole-report remarks for hse.', $html);
+            } else {
+                $this->assertStringContainsString('Whole-report remarks for '.$type.'.', $html);
+            }
             $this->assertStringContainsString('Whole-report evidence photo.', $html);
         }
     }
@@ -699,7 +707,6 @@ class InspectionReportPdfTest extends TestCase
                     ],
                     'hseSelections' => ['unsafeAct'],
                     'hseUnsafeActDetails' => 'HSE SHOULD NOT LEAK INTO ER AUX',
-                    'hseSeverity' => 'Critical',
                 ],
                 'expected' => ['ER Aux Equipment Checks', 'ER Aux Unique Pump'],
                 'forbidden' => ['HSE Observation', 'HSE SHOULD NOT LEAK INTO ER AUX'],
@@ -713,7 +720,6 @@ class InspectionReportPdfTest extends TestCase
                     'description' => 'HSE leak guard.',
                     'hseSelections' => ['unsafeCondition'],
                     'hseUnsafeConditionDetails' => 'HSE Unique Finding',
-                    'hseSeverity' => 'High',
                     'erAuxChecks' => [
                         ['location' => 'Store', 'equipment' => 'ER AUX SHOULD NOT LEAK', 'condition' => 'Missing'],
                     ],
@@ -827,7 +833,7 @@ class InspectionReportPdfTest extends TestCase
         }
     }
 
-    public function test_pdf_template_renders_general_and_hse_repeatable_finding_cards(): void
+    public function test_pdf_template_renders_general_findings_without_restoring_old_hse_findings(): void
     {
         $pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
 
@@ -878,6 +884,8 @@ class InspectionReportPdfTest extends TestCase
                 'incidentType' => 'Health Safety Environment Inspection',
                 'location' => 'Zone 1 > Dock',
                 'description' => 'HSE inspection completed.',
+                'hsePayloadVersion' => 2,
+                'inspectedAt' => '2026-07-14T09:30:00+08:00',
                 'hseSelections' => ['unsafeCondition'],
                 'hseUnsafeConditionDetails' => 'Guardrail gap observed.',
                 'issues' => [
@@ -897,16 +905,19 @@ class InspectionReportPdfTest extends TestCase
 
         foreach ([
             'HSE Observation',
+            'Unsafe Condition',
+            'Guardrail gap observed.',
+        ] as $text) {
+            $this->assertStringContainsString($text, $hseHtml);
+        }
+        foreach ([
             'Findings (1)',
-            'Finding 1',
             'Oil spill near walkway.',
             'Barricade and clean area.',
             'Oil spill finding evidence.',
         ] as $text) {
-            $this->assertStringContainsString($text, $hseHtml);
+            $this->assertStringNotContainsString($text, $hseHtml);
         }
-        $this->assertStringNotContainsString('Issues (1)', $hseHtml);
-        $this->assertStringNotContainsString('Issue Photos', $hseHtml);
 
         $highAngleHtml = view('pdf.inspection_report', [
             'record' => [
@@ -981,8 +992,8 @@ class InspectionReportPdfTest extends TestCase
                     'operationalCondition' => 'Good',
                 ],
             ],
-            'hseSelections' => ['environmental'],
-            'hseEnvironmentalDetails' => 'HSE SHOULD NOT LEAK INTO FE',
+            'hseSelections' => ['unsafeCondition'],
+            'hseUnsafeConditionDetails' => 'HSE SHOULD NOT LEAK INTO FE',
             'erAuxChecks' => [
                 ['equipment' => 'ER AUX SHOULD NOT LEAK INTO FE'],
             ],
@@ -1542,51 +1553,7 @@ class InspectionReportPdfTest extends TestCase
         );
     }
 
-    public function test_pdf_template_renders_hse_observation_section(): void
-    {
-        $record = [
-            'displayId' => 'INS-HSE-29062026',
-            'status' => 'Submitted',
-            'incidentType' => 'Health Safety Environment Inspection',
-            'location' => 'Zone A > Dock',
-            'description' => 'HSE inspection found unsafe act and environmental issue.',
-            'hseInspectedBy' => 'Inspector HSE',
-            'hseInspectionDate' => '2026-06-29',
-            'hseSelections' => ['unsafeAct', 'environmental'],
-            'hseUnsafeActDetails' => 'Worker crossed active barricade.',
-            'hseEnvironmentalDetails' => 'Minor oil sheen observed near drain.',
-            'hseSeverity' => 'High',
-            'hseImmediateAction' => 'Stopped work and placed absorbent pads.',
-            'hseCorrectiveAction' => 'Brief contractor team before restart.',
-            'hseResponsiblePerson' => 'Area Supervisor',
-            'hseTargetDate' => '2026-06-30',
-            'hseRemarks' => 'Follow up during next patrol.',
-        ];
-
-        $html = view('pdf.inspection_report', [
-            'record' => $record,
-        ])->render();
-
-        foreach ([
-            'HSE Observation',
-            'Inspector HSE',
-            '2026-06-29',
-            'Unsafe Act',
-            'Environmental',
-            'High',
-            'Worker crossed active barricade.',
-            'Minor oil sheen observed near drain.',
-            'Stopped work and placed absorbent pads.',
-            'Brief contractor team before restart.',
-            'Area Supervisor',
-            '2026-06-30',
-            'Follow up during next patrol.',
-        ] as $text) {
-            $this->assertStringContainsString($text, $html);
-        }
-    }
-
-    public function test_pdf_template_renders_lean_hse_v2_without_duplicate_legacy_sections(): void
+    public function test_pdf_template_renders_current_hse_without_duplicate_generic_sections(): void
     {
         $record = [
             'displayId' => 'INS-HSE-V2-14072026',
@@ -1600,7 +1567,6 @@ class InspectionReportPdfTest extends TestCase
             'hseSelections' => ['unsafeCondition'],
             'hseUnsafeConditionDetails' => 'Open edge without protection.',
             'hseImmediateAction' => 'Stopped access and installed a barrier.',
-            'hseSeverity' => 'Critical',
             'inspectionIssues' => [[
                 'description' => 'Duplicate finding must not render.',
                 'actionRequired' => 'Duplicate action must not render.',
@@ -1628,7 +1594,6 @@ class InspectionReportPdfTest extends TestCase
         }
         $this->assertStringNotContainsString('Additional report evidence', $html);
         $this->assertStringNotContainsString('Duplicate finding must not render.', $html);
-        $this->assertStringNotContainsString('Critical', $html);
     }
 
     private function grantInspectionPermission(User $user, string $roleName = 'Inspection Pdf Tester'): void
