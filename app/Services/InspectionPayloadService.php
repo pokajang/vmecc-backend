@@ -2181,13 +2181,13 @@ class InspectionPayloadService
         $value = $payload['reportRemarks'] ?? $payload['report_remarks'] ?? '';
         if (is_array($value) || is_object($value)) {
             throw ValidationException::withMessages([
-                'payload.reportRemarks' => ['Additional report remarks must be text.'],
+                'payload.reportRemarks' => ['General report remarks must be text.'],
             ]);
         }
 
         if (mb_strlen(trim((string) $value), 'UTF-8') > self::INSPECTION_REPORT_REMARKS_MAX_LENGTH) {
             throw ValidationException::withMessages([
-                'payload.reportRemarks' => ['Additional report remarks may not exceed 2000 characters.'],
+                'payload.reportRemarks' => ['General report remarks may not exceed 2000 characters.'],
             ]);
         }
     }

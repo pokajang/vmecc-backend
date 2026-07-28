@@ -502,7 +502,7 @@ class InspectionReportPdfTest extends TestCase
             'Housekeeping 5S Inspection',
             'Warehouse Block A',
             'Housekeeping inspection found minor labelling gaps.',
-            'Additional report remarks',
+            'General report remarks',
             'Additional report remark for the full warehouse.',
             'Label on aisle rack requires replacement.',
             'Area clean',
@@ -529,7 +529,7 @@ class InspectionReportPdfTest extends TestCase
         }
     }
 
-    public function test_pdf_template_omits_empty_additional_report_remarks(): void
+    public function test_pdf_template_omits_empty_general_report_remarks(): void
     {
         $html = view('pdf.inspection_report', [
             'record' => [
@@ -544,8 +544,8 @@ class InspectionReportPdfTest extends TestCase
         ])->render();
 
         $this->assertStringContainsString('Routine inspection summary.', $html);
-        $this->assertStringNotContainsString('Additional report remarks', $html);
-        $this->assertStringNotContainsString('Additional report evidence', $html);
+        $this->assertStringNotContainsString('General report remarks', $html);
+        $this->assertStringNotContainsString('General photos and remarks', $html);
         $this->assertStringNotContainsString('No photos uploaded.', $html);
     }
 
@@ -645,7 +645,7 @@ class InspectionReportPdfTest extends TestCase
             ])->render();
 
             $itemPosition = strpos($html, $marker);
-            $evidenceHeading = $type === 'hse' ? 'Observation Photos (1)' : 'Additional report evidence';
+            $evidenceHeading = $type === 'hse' ? 'Observation Photos (1)' : 'General photos and remarks';
             $evidencePosition = strpos($html, $evidenceHeading);
             $signoffPosition = strpos($html, 'Workflow Sign-offs');
 
@@ -657,7 +657,7 @@ class InspectionReportPdfTest extends TestCase
                 "Report evidence is out of order for {$type}.",
             );
             if ($type === 'hse') {
-                $this->assertStringNotContainsString('Additional report evidence', $html);
+                $this->assertStringNotContainsString('General photos and remarks', $html);
                 $this->assertStringNotContainsString('Whole-report remarks for hse.', $html);
             } else {
                 $this->assertStringContainsString('Whole-report remarks for '.$type.'.', $html);
@@ -1592,7 +1592,7 @@ class InspectionReportPdfTest extends TestCase
         ] as $text) {
             $this->assertStringContainsString($text, $html);
         }
-        $this->assertStringNotContainsString('Additional report evidence', $html);
+        $this->assertStringNotContainsString('General photos and remarks', $html);
         $this->assertStringNotContainsString('Duplicate finding must not render.', $html);
     }
 
