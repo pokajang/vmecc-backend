@@ -108,12 +108,11 @@ return new class extends Migration
                 ->update(['salary_period_key' => (string) $row->period_value]);
         }
 
-        Schema::table('salary_assignments', function (Blueprint $table) {
-            $table->string('public_id', 26)->nullable(false)->change();
-        });
-        Schema::table('payroll_claims', function (Blueprint $table) {
-            $table->string('public_id', 26)->nullable(false)->change();
-        });
+        // The columns already have their final varchar(26) type. Using change() here makes
+        // Laravel append PostgreSQL identity syntax that is unsupported by the production
+        // server, so apply only the required nullability constraint.
+        DB::statement('ALTER TABLE salary_assignments ALTER COLUMN public_id SET NOT NULL');
+        DB::statement('ALTER TABLE payroll_claims ALTER COLUMN public_id SET NOT NULL');
     }
 
     public function down(): void
