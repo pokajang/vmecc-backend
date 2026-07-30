@@ -3,6 +3,8 @@
 namespace App\Console\Commands;
 
 use App\Models\AiHelperKnowledgeChunk;
+use App\Models\AiHelperKnowledgeEntity;
+use App\Models\AiHelperKnowledgeEntityAlias;
 use App\Models\AiHelperKnowledgeEntry;
 use App\Services\AiHelperEmbeddingService;
 use App\Services\AiHelperKnowledgeProcessingService;
@@ -265,6 +267,17 @@ class CheckAiHelperKnowledgeReadiness extends Command
         $roleAwareReady = $catalogErrors === []
             && $legacyActive === 0
             && $systemReady;
+        $entitySchemaReady = Schema::hasTable('ai_helper_knowledge_entities')
+            && Schema::hasTable('ai_helper_knowledge_entity_aliases');
+        $activeEntityCount = $entitySchemaReady
+            ? AiHelperKnowledgeEntity::query()->where('active', true)->count()
+            : 0;
+        $activeAliasCount = $entitySchemaReady
+            ? AiHelperKnowledgeEntityAlias::query()
+                ->whereHas('entity', fn ($query) => $query->where('active', true))
+                ->count()
+            : 0;
+        $entityIndexReady = $entitySchemaReady && $activeEntityCount > 0 && $activeAliasCount > 0;
         $ready = $referenceReady
             && $verificationValid
             && $retrievalConfigurationValid
@@ -282,6 +295,7 @@ class CheckAiHelperKnowledgeReadiness extends Command
             'reference_knowledge_ready' => $referenceReady,
             'system_guides_ready' => $systemReady,
             'role_aware_retrieval_ready' => $roleAwareReady,
+            'entity_index_ready' => $entityIndexReady,
             'system_guides_runtime_enabled' => $systemGuidesEnabled,
             'product_workflows_runtime_enabled' => $productWorkflowsEnabled,
             'final_corpus_enforced' => $finalCorpusEnforced,
@@ -289,6 +303,11 @@ class CheckAiHelperKnowledgeReadiness extends Command
             'deployment_state' => $deploymentState,
             'reference_knowledge' => $referencePayload,
             'system_guides' => $systemPayload,
+            'entity_index' => [
+                'schema_ready' => $entitySchemaReady,
+                'active_entities' => $activeEntityCount,
+                'active_aliases' => $activeAliasCount,
+            ],
             'retrieval' => [
                 'pipeline_version' => (int) config('ai_helper.pipeline_version', 4),
                 'index_fingerprint' => $embeddings->indexFingerprint(),

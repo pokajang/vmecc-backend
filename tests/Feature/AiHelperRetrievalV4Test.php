@@ -7,6 +7,8 @@ use App\Models\AiHelperKnowledgeEntry;
 use App\Models\AiHelperMessage;
 use App\Models\AiHelperRun;
 use App\Models\User;
+use App\Services\AiHelperKnowledgeProcessingService;
+use App\Services\AiHelperKnowledgeQueryAnalyzer;
 use App\Services\AiHelperKnowledgeRetriever;
 use App\Services\AiHelperKnowledgeService;
 use App\Services\AiHelperOpenAiService;
@@ -767,7 +769,7 @@ class AiHelperRetrievalV4Test extends TestCase
         ]);
         foreach ([
             'The service provides a Tactical Response Team for VMM.',
-            'VMM covers about 1196 acres at Teluk Rubiah. The site is accessible from Jalan Semarak Api. Coverage also includes other areas permanently or temporarily under VMM control.',
+            'VMM covers about 1196 acres at Teluk Rubiah. The site is accessible from Jalan Semarak Api. Coverage also includes other areas permanent or temporarily determined under VMM control.',
         ] as $index => $content) {
             AiHelperKnowledgeChunk::create([
                 'knowledge_entry_id' => $entry->id,
@@ -798,7 +800,95 @@ class AiHelperRetrievalV4Test extends TestCase
             fn (array $item) => str_contains($item['content'], 'Jalan Semarak Api'),
         );
         $this->assertNotNull($coverage);
+        $this->assertStringContainsString(
+            'permanent or temporarily determined under VMM control',
+            collect($result['guidance'])->pluck('content')->join("\n"),
+        );
         $this->assertSame([2, 2], [$coverage['page_start'], $coverage['page_end']]);
+    }
+
+    public function test_trt_member_role_retrieves_the_exact_member_passage_before_osc(): void
+    {
+        $user = $this->userWithPermissions([]);
+        $sow = AiHelperKnowledgeEntry::create([
+            'knowledge_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
+            'title' => 'SOW ER Service 2023-2024 - Sanitized Operational Edition',
+            'content' => 'pending',
+            'source_filename' => 'sow-er-service.md',
+            'source_mime' => 'text/markdown',
+            'source_path' => 'seed:test:sow-trt-role',
+            'scope_type' => AiHelperKnowledgeEntry::SCOPE_GLOBAL,
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+            'status' => AiHelperKnowledgeEntry::STATUS_PROCESSING,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'active' => true,
+        ]);
+        $annex = AiHelperKnowledgeEntry::create([
+            'knowledge_type' => AiHelperKnowledgeEntry::KNOWLEDGE_REFERENCE_DOCUMENT,
+            'title' => 'ANNEX 2 Roles, Responsibilities and Authorities',
+            'content' => 'pending',
+            'source_filename' => 'annex-2.md',
+            'source_mime' => 'text/markdown',
+            'source_path' => 'seed:test:annex-2-roles',
+            'scope_type' => AiHelperKnowledgeEntry::SCOPE_GLOBAL,
+            'visibility' => AiHelperKnowledgeEntry::VISIBILITY_SHARED,
+            'status' => AiHelperKnowledgeEntry::STATUS_PROCESSING,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'active' => true,
+        ]);
+        app(AiHelperKnowledgeProcessingService::class)->processTextEntry($sow, <<<'MD'
+# SOW ER Service
+
+## QUALIFICATION AND RESPONSIBILITIES
+
+| ROLES | RESPONSIBILITIES |
+| --- | --- |
+| TACTICAL RESPONSE TEAM MEMBER | Familiarize with the shift roster. Conduct inspections on emergency response tools. Perform emergency response under command of On Scene Commander. |
+MD);
+        app(AiHelperKnowledgeProcessingService::class)->processTextEntry($annex, <<<'MD'
+# ANNEX 2 Roles, Responsibilities and Authorities
+
+## ON SCENE COMMANDER (OSC)
+
+- Organizing and managing the on-scene tactical response and resources.
+
+## EMERGENCY RESPONSE TEAM MEMBER (ERTM)
+
+- Personnel to assist OSC on firefighting.
+- Follow clear instructions from OSC.
+MD);
+
+        $result = app(AiHelperKnowledgeRetriever::class)->retrieve(
+            ['path' => '/dashboard'],
+            $user,
+            'What is the role of a TRT member?',
+        );
+
+        $this->assertSame('required', $result['analysis']['retrieval_policy']);
+        $this->assertContains('emergency_response_role', $result['analysis']['topic_keys']);
+        $this->assertContains($sow->id, $result['trace']['document_ids']);
+        $this->assertStringContainsString(
+            'TACTICAL RESPONSE TEAM MEMBER',
+            $result['guidance'][0]['content'],
+        );
+        $this->assertSame('adequate', $result['trace']['evidence_adequacy']['status']);
+    }
+
+    public function test_trt_follow_up_retains_the_original_role_and_member_facet(): void
+    {
+        $analysis = app(AiHelperKnowledgeQueryAnalyzer::class)->analyze(
+            'Can you find it specifically in this corpus?',
+            [
+                'What is the role of a TRT member?',
+                'Are you sure you cannot find a TRT member in our corpus?',
+                'Can you look for tactical response team?',
+            ],
+        );
+
+        $this->assertSame('What is the role of a TRT member?', $analysis['conversation_anchor']);
+        $this->assertContains('tactical_response_team_member', $analysis['resolved_entities']);
+        $this->assertContains('role_responsibilities', $analysis['requested_facets']);
+        $this->assertSame('required', $analysis['retrieval_policy']);
     }
 
     private function userWithPermissions(array $permissionNames): User

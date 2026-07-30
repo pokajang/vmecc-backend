@@ -221,6 +221,11 @@ class AiHelperKnowledgeEntry extends Model
         return $this->hasMany(AiHelperKnowledgeChunk::class, 'knowledge_entry_id');
     }
 
+    public function entities(): HasMany
+    {
+        return $this->hasMany(AiHelperKnowledgeEntity::class, 'knowledge_entry_id');
+    }
+
     public function pages(): HasMany
     {
         return $this->hasMany(AiHelperKnowledgePage::class, 'knowledge_entry_id');

@@ -135,6 +135,38 @@ class AiHelperKnowledgeServiceReliabilityTest extends TestCase
         $this->assertStringContainsString('Do not answer a conduct question with issue verification', $instructions);
         $this->assertStringContainsString('separate those scopes', $instructions);
         $this->assertStringContainsString('useful partial answer', $instructions);
+        $this->assertStringContainsString('include directly relevant totals, per-unit quantities', $instructions);
+        $this->assertStringContainsString('Answer only the facts needed', $instructions);
+        $this->assertStringContainsString('Copy proper nouns, place names, document titles, codes', $instructions);
+    }
+
+    public function test_available_document_revisions_are_rendered_deterministically_from_authorized_titles(): void
+    {
+        $response = app(AiHelperKnowledgeService::class)->deterministicResponseFor([
+            'guidance' => [
+                [
+                    'source_id' => 'S1',
+                    'source_type' => 'reference_document',
+                    'title' => 'ANNEX 18 ERP for Man Overboard (MOB).Rev 001 - Feb 2026',
+                ],
+                [
+                    'source_id' => 'S2',
+                    'source_type' => 'reference_document',
+                    'title' => 'ANNEX 18 ERP for Man Overboard (MOB)',
+                ],
+            ],
+            'query_analysis' => [
+                'intent' => 'knowledge_question',
+                'message' => 'Which Annex 18 revisions are available?',
+            ],
+            'retrieval' => ['mode' => 'hybrid'],
+        ], 'en');
+
+        $this->assertNotNull($response);
+        $this->assertStringContainsString('Rev 001', $response);
+        $this->assertStringContainsString('revision not stated', $response);
+        $this->assertStringContainsString('[S1]', $response);
+        $this->assertStringContainsString('[S2]', $response);
     }
 
     public function test_inspection_type_questions_use_the_canonical_capability_catalogue(): void

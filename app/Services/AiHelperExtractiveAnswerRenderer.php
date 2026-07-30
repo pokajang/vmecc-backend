@@ -67,6 +67,7 @@ final class AiHelperExtractiveAnswerRenderer
         $content = collect($lines)
             ->map(fn (string $line) => rtrim($line))
             ->reject(fn (string $line) => preg_match('/^\s*#{1,6}\s+/u', $line) === 1)
+            ->reject(fn (string $line) => preg_match('/^\s*!\S/u', $line) === 1)
             ->reject(fn (string $line) => preg_match('/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/u', $line) === 1)
             ->reject(fn (string $line) => substr_count($line, '|') >= 2)
             ->join("\n");

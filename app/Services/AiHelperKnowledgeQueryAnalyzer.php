@@ -10,12 +10,21 @@ class AiHelperKnowledgeQueryAnalyzer
 
     private readonly AiHelperAnswerModeResolver $answerModes;
 
+    private readonly AiHelperConversationQueryResolver $conversationResolver;
+
+    private readonly AiHelperQuestionFacetAnalyzer $facetAnalyzer;
+
     public function __construct(
         ?AiHelperTopicAliasRegistry $topics = null,
         ?AiHelperAnswerModeResolver $answerModes = null,
+        ?AiHelperConversationQueryResolver $conversationResolver = null,
+        ?AiHelperQuestionFacetAnalyzer $facetAnalyzer = null,
     ) {
         $this->topics = $topics ?? new AiHelperTopicAliasRegistry;
         $this->answerModes = $answerModes ?? new AiHelperAnswerModeResolver;
+        $this->facetAnalyzer = $facetAnalyzer ?? new AiHelperQuestionFacetAnalyzer;
+        $this->conversationResolver = $conversationResolver
+            ?? new AiHelperConversationQueryResolver($this->topics, $this->facetAnalyzer);
     }
 
     /** @return array<string, mixed> */
@@ -34,7 +43,7 @@ class AiHelperKnowledgeQueryAnalyzer
         $previousTopics = is_string($previous)
             ? $this->topics->topicKeys((string) $previousNormalized)
             : [];
-        $followUp = is_string($previous)
+        $legacyFollowUp = is_string($previous)
             && $this->looksLikeFollowUp($normalized)
             && $this->topicsAreCompatible(
                 $currentTopics,
@@ -42,12 +51,21 @@ class AiHelperKnowledgeQueryAnalyzer
                 $normalized,
                 (string) $previousNormalized,
             );
-        $followUpConfidence = $this->followUpConfidence($normalized, $currentTopics, $previousTopics, $followUp);
-        $retrievalQuery = $followUp && is_string($previous)
-            ? $previous."\n".$message
-            : $message;
+        $conversation = $this->conversationResolver->resolve($message, $previousUserMessages);
+        $followUp = (bool) $conversation['follow_up'] || $legacyFollowUp;
+        $followUpConfidence = (bool) $conversation['follow_up']
+            ? (string) $conversation['confidence']
+            : $this->followUpConfidence($normalized, $currentTopics, $previousTopics, $legacyFollowUp);
+        $retrievalQuery = (bool) $conversation['follow_up']
+            ? (string) $conversation['query']
+            : ($legacyFollowUp && is_string($previous) ? $previous."\n".$message : $message);
+        $conversationAnchor = (bool) $conversation['follow_up']
+            ? $conversation['anchor']
+            : ($legacyFollowUp ? $previous : null);
         $normalizedQuery = $this->normalize($retrievalQuery);
         $topicKeys = $this->topics->topicKeys($normalizedQuery);
+        $resolvedEntities = $this->facetAnalyzer->entities($normalizedQuery);
+        $requestedFacets = $this->facetAnalyzer->facets($normalizedQuery);
         $operationKeys = $this->operationKeys($normalizedQuery, $topicKeys);
         $intent = $this->intent($normalized);
         $taskKeys = $this->taskKeys($normalizedQuery, $topicKeys, $operationKeys, $intent);
@@ -83,6 +101,18 @@ class AiHelperKnowledgeQueryAnalyzer
         if ($this->isSensitiveRequest($normalized)) {
             $answerMode = 'sensitive';
         }
+        $evidenceRequired = $this->answerModes->evidenceRequired($answerMode);
+        $retrievalPolicy = $this->retrievalPolicy(
+            $intent,
+            $answerMode,
+            $sourceMode,
+            $normalized,
+            $topicKeys,
+            $resolvedEntities,
+            $requestedFacets,
+            $evidenceRequired,
+        );
+        $unknownAcronyms = $this->facetAnalyzer->unknownAcronyms($message, $resolvedEntities);
         $contextDependency = $this->contextDependency($normalized, $currentTopics);
         $queryScope = $this->queryScope(
             $normalizedQuery,
@@ -106,9 +136,13 @@ class AiHelperKnowledgeQueryAnalyzer
             language: $this->language($normalized),
             message: $message,
             query: trim($retrievalQuery),
+            conversationAnchor: is_string($conversationAnchor) ? $conversationAnchor : null,
             normalizedQuery: $normalizedQuery,
             terms: $this->terms($retrievalQuery),
-            expandedTerms: $this->topics->expandedTerms($topicKeys),
+            expandedTerms: collect([
+                ...$this->topics->expandedTerms($topicKeys),
+                ...$this->facetAnalyzer->expansionTerms($resolvedEntities, $requestedFacets),
+            ])->unique()->take(40)->values()->all(),
             topicKeys: $topicKeys,
             operationKeys: $operationKeys,
             taskKeys: $taskKeys,
@@ -133,7 +167,11 @@ class AiHelperKnowledgeQueryAnalyzer
             sensitiveRequest: $this->isSensitiveRequest($normalized),
             answerMode: $answerMode,
             entityKeys: $entityKeys,
-            evidenceRequired: $this->answerModes->evidenceRequired($answerMode),
+            resolvedEntities: $resolvedEntities,
+            requestedFacets: $requestedFacets,
+            unknownAcronyms: $unknownAcronyms,
+            retrievalPolicy: $retrievalPolicy,
+            evidenceRequired: $evidenceRequired,
             clarificationRequired: $clarification !== null,
             clarificationReason: $clarification['reason'] ?? null,
             clarificationOptionKeys: $clarification['option_keys'] ?? [],
@@ -526,7 +564,7 @@ class AiHelperKnowledgeQueryAnalyzer
     private function sourceMode(string $message): string
     {
         $system = preg_match('/\b(?:how (?:do|can|should) i|how to|what are the steps|steps for|instructions? for|guide for|where (?:do|can) i|which button|what status|navigate|screen|page|form|field|apply|submit|save|edit|delete|cancel|ada (?:tak )?panduan|nak buat|langkah untuk|cara(?: buat)?|macam (?:mana|nak)|bagaimana|butang|status|halaman|borang|medan|mohon|hantar|simpan|kemas kini|padam|batal)\b/u', $message) === 1;
-        $reference = preg_match('/\b(?:emergency procedure|physical (?:inspection|maintenance)|maintenance|servicing|maintenance procedure|servicing procedure|policy|telephone|phone number|procedure|annex|erp|rescue|prosedur kecemasan|penyelenggaraan|selenggara|prosedur penyelenggaraan|polisi|nombor telefon|lampiran|menyelamat)\b/u', $message) === 1;
+        $reference = preg_match('/\b(?:emergency procedure|physical (?:inspection|maintenance)|maintenance|servicing|maintenance procedure|servicing procedure|policy|telephone|phone number|procedure|annex|erp|rescue|our corpus|corpus|knowledge base|our documents?|uploaded documents?|available guidance|company procedure|according to vmecc|prosedur kecemasan|penyelenggaraan|selenggara|prosedur penyelenggaraan|polisi|nombor telefon|lampiran|menyelamat|korpus|pangkalan pengetahuan|dokumen kami|dokumen dimuat naik|panduan tersedia|prosedur syarikat|menurut vmecc)\b/u', $message) === 1;
 
         if ($system && $reference) {
             return 'mixed';
@@ -539,6 +577,40 @@ class AiHelperKnowledgeQueryAnalyzer
         }
 
         return 'any';
+    }
+
+    /**
+     * @param  array<int, string>  $topicKeys
+     * @param  array<int, string>  $resolvedEntities
+     * @param  array<int, string>  $requestedFacets
+     */
+    private function retrievalPolicy(
+        string $intent,
+        string $answerMode,
+        string $sourceMode,
+        string $message,
+        array $topicKeys,
+        array $resolvedEntities,
+        array $requestedFacets,
+        bool $evidenceRequired,
+    ): string {
+        if ($answerMode === 'sensitive' || $intent === 'casual') {
+            return 'none';
+        }
+        if ($evidenceRequired
+            || in_array($sourceMode, ['reference', 'mixed'], true)
+            || $topicKeys !== []
+            || $resolvedEntities !== []) {
+            return 'required';
+        }
+        if (preg_match('/\b(?:write|draft|compose|rewrite|translate|brainstorm|suggest|recommend|cadangkan|tulis|karang|terjemah)\b/u', $message) === 1) {
+            return 'none';
+        }
+        $factShaped = $requestedFacets !== []
+            || preg_match('/^(?:what|who|when|where|which|define|explain|apa|siapa|bila|di mana|yang mana|jelaskan)\b/u', $message) === 1
+            || preg_match('/\b(?:acronym|abbreviation|stands for|means|singkatan|maksud)\b/u', $message) === 1;
+
+        return $factShaped ? 'probe' : 'none';
     }
 
     private function language(string $message): string

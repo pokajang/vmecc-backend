@@ -75,6 +75,17 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
         $this->assertStringContainsString('Who calls mutual aid', $analysis['subqueries'][0]);
     }
 
+    public function test_it_recognizes_staffing_quantity_and_schedule_facets(): void
+    {
+        $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze(
+            'For the emergency response service, what positions and quantities are required per shift, '
+            .'how many TRT members are required in total, and what operating coverage schedule is required?',
+        );
+
+        $this->assertContains('numbers_capacity', $analysis['requested_facets']);
+        $this->assertContains('timing_frequency', $analysis['requested_facets']);
+    }
+
     public function test_it_keeps_greetings_and_generic_page_help_out_of_the_knowledge_not_found_gate(): void
     {
         $analyzer = new AiHelperKnowledgeQueryAnalyzer;
@@ -380,6 +391,58 @@ class AiHelperKnowledgeQueryAnalyzerTest extends TestCase
         $staffingAnalysis = $analyzer->analyze('What is the response perimeter and TRT staffing requirement?');
         $this->assertContains('tactical', $staffingAnalysis['terms']);
         $this->assertContains('manpower', $staffingAnalysis['terms']);
+    }
+
+    public function test_emergency_response_roles_and_explicit_corpus_requests_are_grounded(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        foreach ([
+            'What is the role of a TRT member?',
+            'What are the responsibilities of a Tactical Response Team Member?',
+            'What does an ERTM do?',
+            'Apakah tugas anggota pasukan tindak balas?',
+        ] as $message) {
+            $analysis = $analyzer->analyze($message);
+
+            $this->assertSame('required', $analysis['retrieval_policy'], $message);
+            $this->assertSame('operational_knowledge', $analysis['answer_mode'], $message);
+            $this->assertTrue($analysis['evidence_required'], $message);
+            $this->assertContains('emergency_response_role', $analysis['topic_keys'], $message);
+            $this->assertContains('role_responsibilities', $analysis['requested_facets'], $message);
+        }
+
+        $corpus = $analyzer->analyze('Can you find the shift commander duties in our corpus?');
+        $this->assertSame('reference', $corpus['source_mode']);
+        $this->assertSame('required', $corpus['retrieval_policy']);
+        $this->assertTrue($corpus['evidence_required']);
+    }
+
+    public function test_unknown_fact_questions_probe_without_gating_casual_or_writing_requests(): void
+    {
+        $analyzer = new AiHelperKnowledgeQueryAnalyzer;
+
+        $this->assertSame('probe', $analyzer->analyze('What is ZQRT?')['retrieval_policy']);
+        $this->assertSame('none', $analyzer->analyze('Hello')['retrieval_policy']);
+        $this->assertSame('none', $analyzer->analyze('Write a polite email')['retrieval_policy']);
+    }
+
+    public function test_referential_follow_up_keeps_the_best_topic_bearing_anchor(): void
+    {
+        $analysis = (new AiHelperKnowledgeQueryAnalyzer)->analyze(
+            'Can you find it specifically in this corpus?',
+            [
+                'What is the role of a TRT member?',
+                'Are you sure you cannot find a TRT member in our corpus?',
+                'Can you look for tactical response team?',
+            ],
+        );
+
+        $this->assertTrue($analysis['follow_up']);
+        $this->assertSame('high', $analysis['follow_up_confidence']);
+        $this->assertSame('What is the role of a TRT member?', $analysis['conversation_anchor']);
+        $this->assertStringContainsString('role of a TRT member', $analysis['query']);
+        $this->assertContains('role_responsibilities', $analysis['requested_facets']);
     }
 
     public function test_follow_up_analysis_tracks_confidence_and_scope_hint(): void

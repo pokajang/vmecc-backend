@@ -21,6 +21,7 @@ class AiHelperDocumentCandidateSelector
         $topicLimit = max(1, (int) config('ai_helper.retrieval_v4_topic_candidate_limit', 6));
         $pageLimit = max(1, (int) config('ai_helper.retrieval_v4_page_candidate_limit', 4));
         $globalLimit = max($baseLimit, (int) config('ai_helper.retrieval_v4_global_candidate_limit', 12));
+        $entityLimit = max(1, (int) config('ai_helper.retrieval_v4_entity_candidate_limit', 6));
         $contextDependency = (string) ($analysis['context_dependency'] ?? 'neutral');
         $queryScope = (string) ($analysis['query_scope'] ?? 'local');
         $isGlobalScope = $queryScope === 'global';
@@ -32,6 +33,7 @@ class AiHelperDocumentCandidateSelector
                 'documents' => $exact->take($limit)->values(),
                 'lanes' => [
                     'exact' => $exact->count(),
+                    'entity' => 0,
                     'topic' => 0,
                     'topic_intersection' => 0,
                     'global' => 0,
@@ -39,6 +41,12 @@ class AiHelperDocumentCandidateSelector
                 ],
             ];
         }
+        $entityEntryIds = array_map('intval', (array) ($analysis['entity_entry_ids'] ?? []));
+        $entity = $eligible
+            ->filter(fn (array $item) => in_array((int) $item['entry']->id, $entityEntryIds, true))
+            ->sortByDesc('score')
+            ->take($entityLimit)
+            ->values();
         $topic = $eligible->filter(fn (array $item) => (int) ($item['topic_score'] ?? 0) > 0)
             ->sort(function (array $left, array $right): int {
                 foreach (['task_score', 'topic_coverage', 'topic_score', 'operation_score', 'score'] as $field) {
@@ -63,6 +71,7 @@ class AiHelperDocumentCandidateSelector
             : collect();
 
         $documents = $exact
+            ->concat($entity)
             ->concat($topic)
             ->concat($global)
             ->concat($page)
@@ -74,6 +83,7 @@ class AiHelperDocumentCandidateSelector
             'documents' => $documents,
             'lanes' => [
                 'exact' => $exact->count(),
+                'entity' => $entity->count(),
                 'topic' => $topic->count(),
                 'topic_intersection' => $topic->where('topic_coverage', '>=', 1.0)->count(),
                 'global' => $global->count(),

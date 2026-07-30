@@ -193,6 +193,39 @@ class AiHelperKnowledgeAtomicIndexTest extends TestCase
         $this->assertTrue($entry->chunks()->firstOrFail()->active);
     }
 
+    public function test_entity_index_is_staged_and_promoted_with_the_same_atomic_version_as_chunks(): void
+    {
+        $runId = (string) Str::uuid();
+        $entry = AiHelperKnowledgeEntry::create([
+            'title' => 'Role ingestion',
+            'content' => 'Role content.',
+            'source_filename' => 'role.md',
+            'source_mime' => 'text/markdown',
+            'source_path' => 'seed:test:role-ingestion',
+            'status' => AiHelperKnowledgeEntry::STATUS_PROCESSING,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'active' => false,
+            'ingestion_run_id' => $runId,
+            'ingestion_version' => 1,
+        ]);
+        app(AiHelperKnowledgeProcessingService::class)->processTextEntry(
+            $entry,
+            "# Roles\n\n## EMERGENCY RESPONSE TEAM MEMBER (ERTM)\n\nAssist the OSC.",
+            expectedRunId: $runId,
+        );
+
+        $staged = $entry->entities()->where('ingestion_version', 1)->get();
+        $this->assertNotEmpty($staged);
+        $this->assertTrue($staged->every(fn ($entity) => ! $entity->active));
+
+        $this->assertTrue($this->successfulEmbeddingService()->embedEntry($entry->fresh(), 1, $runId));
+
+        $active = $entry->entities()->where('ingestion_version', 1)->get();
+        $this->assertNotEmpty($active);
+        $this->assertTrue($active->every(fn ($entity) => $entity->active));
+        $this->assertTrue($active->flatMap->aliases->contains('normalized_alias', 'ertm'));
+    }
+
     public function test_embedding_disabled_ingestion_replaces_the_lexical_index_immediately(): void
     {
         config(['ai_helper.embedding_enabled' => false]);
