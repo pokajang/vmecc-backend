@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\OvertimeRecord;
 use App\Models\PayrollClaim;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
@@ -79,7 +80,7 @@ class PayrollClaimWorkflowRbacTest extends TestCase
         $claim = $this->claim($owner);
 
         $this->actingAs($manager)
-            ->postJson($this->actionUrl($owner, $claim, 'check'))
+            ->postJson($this->actionUrl($owner, $claim, 'check'), ['expected_version' => 1])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('role');
 
@@ -99,7 +100,7 @@ class PayrollClaimWorkflowRbacTest extends TestCase
         $claim = $this->claim($owner);
 
         $this->actingAs($actor)
-            ->postJson($this->actionUrl($owner, $claim, 'check'))
+            ->postJson($this->actionUrl($owner, $claim, 'check'), ['expected_version' => 1])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('role');
 
@@ -116,7 +117,7 @@ class PayrollClaimWorkflowRbacTest extends TestCase
         ]);
 
         $this->actingAs($finance)
-            ->postJson($this->actionUrl($owner, $claim, 'approve'))
+            ->postJson($this->actionUrl($owner, $claim, 'approve'), ['expected_version' => 1])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('stage');
 
@@ -133,7 +134,7 @@ class PayrollClaimWorkflowRbacTest extends TestCase
         $claim = $this->claim($owner, ['next_action_role' => null]);
 
         $this->actingAs($manager)
-            ->postJson($this->actionUrl($owner, $claim, 'check'))
+            ->postJson($this->actionUrl($owner, $claim, 'check'), ['expected_version' => 1])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('role');
 
@@ -151,7 +152,7 @@ class PayrollClaimWorkflowRbacTest extends TestCase
         ]);
 
         $this->actingAs($approver)
-            ->postJson($this->actionUrl($owner, $claim, 'approve'))
+            ->postJson($this->actionUrl($owner, $claim, 'approve'), ['expected_version' => 1])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('status');
 
@@ -178,6 +179,51 @@ class PayrollClaimWorkflowRbacTest extends TestCase
         $this->assertSame('check', $claim->workflow_stage);
         $this->assertSame([], $claim->approval_history);
         $this->assertSame(0, WorkflowNotification::query()->count());
+    }
+
+    public function test_salary_approval_rejects_changed_approved_overtime_snapshot(): void
+    {
+        $owner = User::factory()->create(['status' => 'Active']);
+        $approver = $this->workflowActor('Contract Manager', 'Snapshot Approver');
+        $overtime = OvertimeRecord::query()->create([
+            'user_id' => $owner->id,
+            'display_id' => 'OT-SNAPSHOT-APPROVAL',
+            'overtime_type' => 'weekday',
+            'claim_date' => '2026-07-14',
+            'start_time' => '18:00',
+            'end_time' => '19:00',
+            'is_overnight' => false,
+            'duration_minutes' => 60,
+            'reason' => 'Approved overtime included in salary claim.',
+            'status' => 'Approved',
+            'workflow_stage' => 'done',
+            'approval_history' => [],
+            'version' => 1,
+        ]);
+        $claim = $this->claim($owner, [
+            'claim_type' => 'salary',
+            'workflow_stage' => 'approve',
+            'next_action_role' => 'Contract Manager',
+            'overtime_rows' => [[
+                'overtimeRecordId' => $overtime->id,
+                'overtimePublicId' => $overtime->public_id,
+                'overtimeRecordVersion' => 1,
+            ]],
+        ]);
+        $overtime->update(['status' => 'Cancelled', 'version' => 2]);
+
+        $this->actingAs($approver)
+            ->postJson($this->actionUrl($owner, $claim, 'approve'), [
+                'expected_version' => 1,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('overtime_snapshot');
+
+        $claim->refresh();
+        $this->assertSame('Pending', $claim->status);
+        $this->assertSame('approve', $claim->workflow_stage);
+        $this->assertSame(1, $claim->version);
+        $this->assertSame([], $claim->approval_history);
     }
 
     private function workflowActor(string $roleName, string $name): User

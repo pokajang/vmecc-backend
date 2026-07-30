@@ -14,11 +14,13 @@ class OvertimeDraft extends Model
         'user_id',
         'payload',
         'saved_at',
+        'version',
     ];
 
     protected $casts = [
         'payload' => 'array',
         'saved_at' => 'datetime',
+        'version' => 'integer',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];

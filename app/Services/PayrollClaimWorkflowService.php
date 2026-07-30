@@ -255,6 +255,8 @@ class PayrollClaimWorkflowService
             return [
                 'overtimeId' => $row->display_id,
                 'overtimeRecordId' => $row->id,
+                'overtimePublicId' => $row->public_id,
+                'overtimeRecordVersion' => (int) ($row->version ?: 1),
                 'overtimeType' => $type,
                 'claimDate' => optional($row->claim_date)->toDateString(),
                 'durationMinutes' => (int) $row->duration_minutes,

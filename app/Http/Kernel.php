@@ -8,7 +8,9 @@ use App\Http\Middleware\EnsureModuleEnabled;
 use App\Http\Middleware\PermissionAssignmentMiddleware;
 use App\Http\Middleware\PermissionAssignmentScopeMiddleware;
 use App\Http\Middleware\PreventRequestsDuringMaintenance;
+use App\Http\Middleware\PreventSensitiveResponseCaching;
 use App\Http\Middleware\RedirectIfAuthenticated;
+use App\Http\Middleware\RequireOrganizationWidePermission;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SessionAuth;
 use App\Http\Middleware\SystemMaintenanceMiddleware;
@@ -94,6 +96,8 @@ class Kernel extends HttpKernel
         'can' => Authorize::class,
         'guest' => RedirectIfAuthenticated::class,
         'session.auth' => SessionAuth::class,
+        'sensitive.no-store' => PreventSensitiveResponseCaching::class,
+        'permission.assignment.organization' => RequireOrganizationWidePermission::class,
         'password.confirm' => RequirePassword::class,
         'precognitive' => HandlePrecognitiveRequests::class,
         'signed' => ValidateSignature::class,

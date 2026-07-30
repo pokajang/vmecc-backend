@@ -10,6 +10,7 @@ use App\Models\WorkflowNotificationOutbox;
 use App\Models\WorkflowNotificationRecipientState;
 use App\Services\WorkflowNotifications\WorkflowEmailModuleGate;
 use App\Services\WorkflowNotifications\WorkflowNotificationChannelPolicy;
+use App\Services\WorkflowNotifications\WorkflowNotificationLinkResolver;
 use App\Services\WorkflowNotifications\WorkflowNotificationPolicyResolver;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -21,6 +22,7 @@ class WorkflowNotificationService
     public function __construct(
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly WorkflowNotificationPolicyResolver $policyResolver,
+        private readonly WorkflowNotificationLinkResolver $linkResolver,
     ) {}
 
     private const EVENT_TITLES = [
@@ -233,7 +235,7 @@ class WorkflowNotificationService
         int $limit = 50,
         ?string $module = null,
     ): Collection {
-        [$normalizedViewerRoles, $isSystemAdministrator] = $this->viewerContext($userId);
+        [$normalizedViewerRoles, $isSystemAdministrator, $viewer] = $this->viewerContext($userId);
         $queryLimit = $actionRequiredOnly ? min(max($limit * 3, $limit), 300) : $limit;
 
         $rows = $this->viewerQuery($userId, $isSystemAdministrator)
@@ -248,7 +250,12 @@ class WorkflowNotificationService
             ->get();
 
         $formatted = $rows->map(
-            fn (WorkflowNotification $item) => $this->format($item, $normalizedViewerRoles, $isSystemAdministrator),
+            fn (WorkflowNotification $item) => $this->format(
+                $item,
+                $normalizedViewerRoles,
+                $isSystemAdministrator,
+                $viewer,
+            ),
         );
 
         if ($actionRequiredOnly) {
@@ -361,6 +368,7 @@ class WorkflowNotificationService
         return [
             $normalizedViewerRoles,
             in_array('system administrator', $normalizedViewerRoles, true),
+            $viewer,
         ];
     }
 
@@ -493,8 +501,12 @@ class WorkflowNotificationService
         return $message;
     }
 
-    private function format(WorkflowNotification $item, array $viewerRoles, bool $isSystemAdministrator): array
-    {
+    private function format(
+        WorkflowNotification $item,
+        array $viewerRoles,
+        bool $isSystemAdministrator,
+        ?User $viewer,
+    ): array {
         $metadata = is_array($item->metadata) ? $item->metadata : [];
         $recordType = trim((string) $item->record_type);
         $recordId = $item->record_id ? (string) $item->record_id : '';
@@ -524,6 +536,7 @@ class WorkflowNotificationService
             'severity' => $item->severity,
             'channelPolicy' => $item->viewer_channel_policy ?? $item->channel_policy,
             'metadata' => $metadata,
+            'deepLink' => $this->linkResolver->resolveRelative($item, $viewer),
             'createdAt' => optional($item->created_at)->toIso8601String(),
             'updatedAt' => optional($item->updated_at)->toIso8601String(),
             'read' => $item->viewer_read_at !== null,
@@ -541,7 +554,15 @@ class WorkflowNotificationService
         }
 
         $status = strtolower(trim((string) ($metadata['status'] ?? 'pending')));
-        if (! in_array($status, ['pending', 'submitted', 'reviewed', 'in progress', 'in_progress'], true)) {
+        if (! in_array($status, [
+            'pending',
+            'pending review',
+            'pending approval',
+            'submitted',
+            'reviewed',
+            'in progress',
+            'in_progress',
+        ], true)) {
             return false;
         }
 

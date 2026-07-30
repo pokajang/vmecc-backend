@@ -7,6 +7,7 @@ use App\Models\PayrollClaim;
 use App\Models\PayrollClaimItem;
 use App\Models\WorkflowAttachment;
 use App\Services\AssignmentAuthorizationService;
+use App\Services\OvertimeManagementScopeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -14,7 +15,10 @@ use Illuminate\Validation\ValidationException;
 
 class WorkflowAttachmentController extends Controller
 {
-    public function __construct(private readonly AssignmentAuthorizationService $authorizationService) {}
+    public function __construct(
+        private readonly AssignmentAuthorizationService $authorizationService,
+        private readonly OvertimeManagementScopeService $overtimeScopeService,
+    ) {}
 
     public function store(Request $request): JsonResponse
     {
@@ -56,9 +60,7 @@ class WorkflowAttachmentController extends Controller
         $attachment = WorkflowAttachment::findOrFail($id);
 
         if (! $this->canAccessAttachment($user, $attachment)) {
-            throw ValidationException::withMessages([
-                'attachment' => ['You are not allowed to access this attachment.'],
-            ]);
+            abort(404);
         }
 
         if (! Storage::disk($attachment->disk)->exists($attachment->path)) {
@@ -76,9 +78,7 @@ class WorkflowAttachmentController extends Controller
         $attachment = WorkflowAttachment::findOrFail($id);
 
         if (! $this->canAccessAttachment($user, $attachment)) {
-            throw ValidationException::withMessages([
-                'attachment' => ['You are not allowed to delete this attachment.'],
-            ]);
+            abort(404);
         }
 
         $this->assertAttachmentNotInUse($attachment);
@@ -95,7 +95,38 @@ class WorkflowAttachmentController extends Controller
             return true;
         }
 
-        return $this->authorizationService->hasPermission($user, 'staff.leave.manage|staff.salary.manage|staff.manage');
+        $attachmentId = (int) $attachment->id;
+        $usedByPayroll = PayrollClaim::query()
+            ->where('attachment_id', $attachmentId)
+            ->orWhereHas('items', fn ($query) => $query->where('attachment_id', $attachmentId))
+            ->exists();
+        $overtimeRecords = OvertimeRecord::query()
+            ->where('attachment_id', $attachmentId)
+            ->with('user')
+            ->get();
+        $usedByOvertime = $overtimeRecords->isNotEmpty();
+        $canManageLinkedOvertime = $usedByOvertime && $overtimeRecords->every(
+            fn (OvertimeRecord $record) => $this->overtimeScopeService->canManageRecord($user, $record),
+        );
+
+        if ($usedByPayroll && $usedByOvertime) {
+            return $this->authorizationService->hasOrganizationWidePermission(
+                $user,
+                'staff.salary.manage',
+            )
+                && $canManageLinkedOvertime;
+        }
+        if ($usedByPayroll) {
+            return $this->authorizationService->hasOrganizationWidePermission(
+                $user,
+                'staff.salary.manage',
+            );
+        }
+        if ($usedByOvertime) {
+            return $canManageLinkedOvertime;
+        }
+
+        return false;
     }
 
     private function assertAttachmentNotInUse(WorkflowAttachment $attachment): void

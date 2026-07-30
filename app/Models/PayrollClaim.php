@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
 
 class PayrollClaim extends Model
 {
@@ -14,6 +15,7 @@ class PayrollClaim extends Model
     use SoftDeletes;
 
     protected $fillable = [
+        'public_id',
         'user_id',
         'display_id',
         'submission_key',
@@ -21,6 +23,7 @@ class PayrollClaim extends Model
         'category',
         'period',
         'period_value',
+        'salary_period_key',
         'amount',
         'approved_overtime_payout',
         'adjustments_total',
@@ -36,6 +39,9 @@ class PayrollClaim extends Model
         'next_action_role',
         'approval_history',
         'payroll_snapshot',
+        'salary_assignment_id',
+        'salary_assignment_version',
+        'calculation_engine_version',
         'overtime_rows',
         'overtime_rate_snapshot',
         'payslip_snapshot',
@@ -67,7 +73,15 @@ class PayrollClaim extends Model
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
         'version' => 'integer',
+        'salary_assignment_version' => 'integer',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (PayrollClaim $claim) {
+            $claim->public_id = $claim->public_id ?: (string) Str::ulid();
+        });
+    }
 
     public function user(): BelongsTo
     {

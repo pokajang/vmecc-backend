@@ -5,9 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\PayrollClaim;
 use App\Models\PayrollClaimDraft;
 use App\Models\PayrollClaimItem;
+use App\Models\User;
 use App\Models\WorkflowAttachment;
 use App\Services\AuditLogger;
 use App\Services\PayrollClaimWorkflowService;
+use App\Services\PayrollSalaryBaselineService;
 use App\Services\WorkflowNotificationService;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
@@ -15,6 +17,7 @@ use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -23,6 +26,7 @@ class PayrollClaimController extends Controller
 {
     public function __construct(
         private readonly PayrollClaimWorkflowService $workflowService,
+        private readonly PayrollSalaryBaselineService $baselineService,
         private readonly WorkflowNotificationService $notificationService,
     ) {}
 
@@ -58,7 +62,7 @@ class PayrollClaimController extends Controller
         $sortDir = ($sort[1] ?? 'desc') === 'asc' ? 'asc' : 'desc';
 
         $rows = $query->orderBy($sortCol, $sortDir)->orderByDesc('id')->get()
-            ->map(fn (PayrollClaim $row) => self::formatClaim($row));
+            ->map(fn (PayrollClaim $row) => self::formatClaim($row, $user));
 
         return response()->json(['data' => $rows]);
     }
@@ -71,7 +75,7 @@ class PayrollClaimController extends Controller
             ->with(['items.attachment', 'attachment', 'paidByUser'])
             ->findOrFail($id);
 
-        return response()->json(['data' => self::formatClaim($row)]);
+        return response()->json(['data' => self::formatClaim($row, $user)]);
     }
 
     public function store(Request $request): JsonResponse
@@ -89,14 +93,6 @@ class PayrollClaimController extends Controller
         );
 
         $claimType = $this->normalizeClaimType($data['claim_type'] ?? 'expense');
-        $payrollBaselineConfirmed = filter_var(
-            $data['payroll_baseline_confirmed'] ?? $data['payrollBaselineConfirmed'] ?? false,
-            FILTER_VALIDATE_BOOLEAN,
-        );
-        $payrollSnapshot = $this->normalizePayrollSnapshot(
-            $data['payroll_snapshot'] ?? null,
-            $claimType === 'salary' ? $payrollBaselineConfirmed : null,
-        );
         $sourceDraftId = trim((string) ($data['source_draft_id'] ?? $data['sourceDraftId'] ?? ''));
         $sourceDraftType = $this->normalizeClaimType($data['source_draft_type'] ?? $data['sourceDraftType'] ?? $claimType);
         $submissionKey = $this->normalizeSubmissionKey($data['submission_key'] ?? $data['submissionKey'] ?? '');
@@ -109,7 +105,7 @@ class PayrollClaimController extends Controller
             if ($existingClaim instanceof PayrollClaim) {
                 return response()->json([
                     'data' => array_merge(
-                        self::formatClaim($existingClaim),
+                        self::formatClaim($existingClaim, $user),
                         [
                             'consumed_draft_id' => null,
                             'consumed_draft_type' => null,
@@ -122,46 +118,50 @@ class PayrollClaimController extends Controller
         $workflow = $this->workflowService->buildWorkflowForSubmission();
         $periodValue = trim((string) ($data['period_value'] ?? ''));
         $periodLabel = trim((string) ($data['period'] ?? ''));
-        $this->assertUniqueSalaryClaimPeriod(
-            ownerUserId: (int) $user->id,
-            claimType: $claimType,
-            periodValue: $periodValue,
-        );
-        $basicSalary = (float) data_get($payrollSnapshot, 'basic', 0);
-
-        $overtimeSnapshot = $claimType === 'salary' && preg_match('/^\d{4}-\d{2}$/', $periodValue)
-            ? $this->workflowService->calculateSalaryOvertimeSnapshot(
-                userId: (int) $user->id,
-                periodValue: $periodValue,
-                assignedBasicSalary: $basicSalary,
-                applicantRoles: $user->roles?->pluck('name')->values()->all() ?? [],
-            )
-            : ['rows' => [], 'totals' => ['allHours' => 0, 'approvedHours' => 0, 'approvedPayout' => 0, 'approvedCount' => 0], 'rateSnapshot' => null];
-
-        $submittedAt = now();
-        $displayId = $this->workflowService->generateDisplayId($user->id, (int) $submittedAt->format('Y'));
-        $historyEntry = [
-            'id' => (string) Str::uuid(),
-            'action' => 'Submitted',
-            'by' => (string) ($user->name ?? ''),
-            'byUserId' => (string) $user->id,
-            'at' => $submittedAt->toIso8601String(),
-            'remarks' => 'Claim submitted.',
-        ];
         $manualAmount = round((float) collect($items)->reject(fn ($item) => $this->isOtFallbackItem($item))->sum(fn ($item) => (float) ($item['amount'] ?? 0)), 2);
-        $approvedOtPayout = round((float) data_get($overtimeSnapshot, 'totals.approvedPayout', 0), 2);
-        $totalAmount = round($manualAmount + $approvedOtPayout, 2);
-
-        [$adjustmentsTotal, $projectedNetPayout] = $this->computeSalaryTotals(
-            claimType: $claimType,
-            items: $items,
-            approvedOtPayout: $approvedOtPayout,
-            snapshotNet: (float) data_get($payrollSnapshot, 'net', 0),
-        );
 
         $consumedDraftId = null;
         try {
-            $row = DB::transaction(function () use ($user, $data, $claimType, $displayId, $workflow, $historyEntry, $items, $periodLabel, $periodValue, $payrollSnapshot, $overtimeSnapshot, $approvedOtPayout, $totalAmount, $adjustmentsTotal, $projectedNetPayout, $submittedAt, $claimAttachmentId, $sourceDraftId, $sourceDraftType, $submissionKey, &$consumedDraftId) {
+            $row = DB::transaction(function () use ($user, $data, $claimType, $workflow, $items, $periodLabel, $periodValue, $manualAmount, $claimAttachmentId, $sourceDraftId, $sourceDraftType, $submissionKey, &$consumedDraftId) {
+                User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
+                $this->assertUniqueSalaryClaimPeriod(
+                    ownerUserId: (int) $user->id,
+                    claimType: $claimType,
+                    periodValue: $periodValue,
+                );
+                $payrollSnapshot = $claimType === 'salary'
+                    ? $this->baselineService->resolve($user, $periodValue)
+                    : null;
+                $basicSalary = (float) data_get($payrollSnapshot, 'basic', 0);
+                $overtimeSnapshot = $claimType === 'salary'
+                    ? $this->workflowService->calculateSalaryOvertimeSnapshot(
+                        userId: (int) $user->id,
+                        periodValue: $periodValue,
+                        assignedBasicSalary: $basicSalary,
+                        applicantRoles: $user->roles?->pluck('name')->values()->all() ?? [],
+                    )
+                    : ['rows' => [], 'totals' => ['allHours' => 0, 'approvedHours' => 0, 'approvedPayout' => 0, 'approvedCount' => 0], 'rateSnapshot' => null];
+                $approvedOtPayout = round((float) data_get($overtimeSnapshot, 'totals.approvedPayout', 0), 2);
+                $totalAmount = round($manualAmount + $approvedOtPayout, 2);
+                [$adjustmentsTotal, $projectedNetPayout] = $this->computeSalaryTotals(
+                    claimType: $claimType,
+                    items: $items,
+                    approvedOtPayout: $approvedOtPayout,
+                    snapshotNet: (float) data_get($payrollSnapshot, 'net', 0),
+                );
+                $submittedAt = now();
+                $displayId = $this->workflowService->generateDisplayId(
+                    (int) $user->id,
+                    (int) $submittedAt->format('Y'),
+                );
+                $historyEntry = [
+                    'id' => (string) Str::uuid(),
+                    'action' => 'Submitted',
+                    'by' => (string) ($user->name ?? ''),
+                    'byUserId' => (string) $user->id,
+                    'at' => $submittedAt->toIso8601String(),
+                    'remarks' => 'Claim submitted.',
+                ];
                 $claim = PayrollClaim::query()->create([
                     'user_id' => $user->id,
                     'display_id' => $displayId,
@@ -170,6 +170,7 @@ class PayrollClaimController extends Controller
                     'category' => trim((string) ($data['category'] ?? '')),
                     'period' => $periodLabel,
                     'period_value' => $periodValue,
+                    'salary_period_key' => $claimType === 'salary' ? $periodValue : null,
                     'amount' => $totalAmount,
                     'approved_overtime_payout' => $approvedOtPayout,
                     'adjustments_total' => $adjustmentsTotal,
@@ -185,6 +186,9 @@ class PayrollClaimController extends Controller
                     'next_action_role' => $workflow['nextActionRole'],
                     'approval_history' => [$historyEntry],
                     'payroll_snapshot' => $payrollSnapshot,
+                    'salary_assignment_id' => data_get($payrollSnapshot, 'salaryAssignmentId'),
+                    'salary_assignment_version' => data_get($payrollSnapshot, 'salaryAssignmentVersion'),
+                    'calculation_engine_version' => data_get($payrollSnapshot, 'calculationEngineVersion'),
                     'overtime_rows' => is_array($overtimeSnapshot['rows'] ?? null) ? $overtimeSnapshot['rows'] : [],
                     'overtime_rate_snapshot' => is_array($overtimeSnapshot['rateSnapshot'] ?? null) ? $overtimeSnapshot['rateSnapshot'] : null,
                     'notes' => trim((string) ($data['notes'] ?? '')),
@@ -212,6 +216,31 @@ class PayrollClaimController extends Controller
                     sourceDraftType: $sourceDraftType,
                 );
 
+                $module = $claimType === 'salary'
+                    ? 'salary'
+                    : ($claimType === 'exceptional' ? 'exceptional' : 'expense');
+                $nextRole = trim((string) ($workflow['nextActionRole'] ?? ''));
+                $this->notificationService->emit(
+                    module: $module,
+                    eventType: 'submitted',
+                    recordType: 'payroll_claim',
+                    recordId: $claim->id,
+                    recordDisplayId: $claim->display_id,
+                    ownerUserId: (int) $claim->user_id,
+                    actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
+                    targetRoles: $nextRole !== '' ? [$nextRole] : [],
+                    actionRequired: $nextRole !== '',
+                    metadata: [
+                        'module' => $module,
+                        'status' => 'Pending',
+                        'workflowStage' => $workflow['workflowStage'],
+                        'nextActionRole' => $nextRole !== '' ? $nextRole : null,
+                        'claimType' => $claimType,
+                        'detailRouteKey' => (string) $claim->public_id,
+                    ],
+                    excludeOwner: true,
+                );
+
                 return $claim;
             });
         } catch (QueryException $exception) {
@@ -224,7 +253,7 @@ class PayrollClaimController extends Controller
                 if ($existingClaim instanceof PayrollClaim) {
                     return response()->json([
                         'data' => array_merge(
-                            self::formatClaim($existingClaim),
+                            self::formatClaim($existingClaim, $user),
                             [
                                 'consumed_draft_id' => null,
                                 'consumed_draft_type' => null,
@@ -234,31 +263,18 @@ class PayrollClaimController extends Controller
                     ]);
                 }
             }
+            if ($claimType === 'salary' && $this->isSalaryPeriodDuplicateException($exception)) {
+                throw ValidationException::withMessages([
+                    'period_value' => [
+                        sprintf(
+                            'Salary claim for %s already exists.',
+                            $this->formatPeriodValueLabel($periodValue),
+                        ),
+                    ],
+                ]);
+            }
             throw $exception;
         }
-
-        $module = $claimType === 'salary' ? 'salary' : ($claimType === 'exceptional' ? 'exceptional' : 'expense');
-        $nextRole = trim((string) ($workflow['nextActionRole'] ?? ''));
-
-        $this->notificationService->emit(
-            module: $module,
-            eventType: 'submitted',
-            recordType: 'payroll_claim',
-            recordId: $row->id,
-            recordDisplayId: $row->display_id,
-            ownerUserId: (int) $row->user_id,
-            actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            targetRoles: $nextRole !== '' ? [$nextRole] : [],
-            actionRequired: $nextRole !== '',
-            metadata: [
-                'module' => $module,
-                'status' => 'Pending',
-                'workflowStage' => $workflow['workflowStage'],
-                'nextActionRole' => $nextRole !== '' ? $nextRole : null,
-                'claimType' => $claimType,
-            ],
-            excludeOwner: true,
-        );
 
         AuditLogger::log($request, 'payroll_claim_submitted', $user, [
             'claim_id' => $row->id,
@@ -292,10 +308,6 @@ class PayrollClaimController extends Controller
         }
 
         $data = $this->validatePayload($request);
-        $payrollBaselineConfirmed = filter_var(
-            $data['payroll_baseline_confirmed'] ?? $data['payrollBaselineConfirmed'] ?? false,
-            FILTER_VALIDATE_BOOLEAN,
-        );
         $claimAttachmentId = $this->normalizeAttachmentId($data['attachment_id'] ?? $data['attachmentId'] ?? null);
         $claimAttachmentProvided =
             array_key_exists('attachment_id', $data) || array_key_exists('attachmentId', $data);
@@ -308,73 +320,78 @@ class PayrollClaimController extends Controller
             ),
         );
         $claimType = $this->normalizeClaimType($data['claim_type'] ?? $row->claim_type);
-        $payrollSnapshot = $this->normalizePayrollSnapshot(
-            $data['payroll_snapshot'] ?? $row->payroll_snapshot,
-            $claimType === 'salary' ? $payrollBaselineConfirmed : null,
-        );
         $sourceDraftId = trim((string) ($data['source_draft_id'] ?? $data['sourceDraftId'] ?? ''));
         $sourceDraftType = $this->normalizeClaimType($data['source_draft_type'] ?? $data['sourceDraftType'] ?? $claimType);
 
         $workflow = $this->workflowService->buildWorkflowForSubmission();
         $periodValue = trim((string) ($data['period_value'] ?? $row->period_value ?? ''));
-        $this->assertUniqueSalaryClaimPeriod(
-            ownerUserId: (int) $user->id,
-            claimType: $claimType,
-            periodValue: $periodValue,
-            ignoreClaimId: (int) $row->id,
-        );
-        $basicSalary = (float) data_get($payrollSnapshot, 'basic', data_get($row->payroll_snapshot, 'basic', 0));
-
-        $overtimeSnapshot = $claimType === 'salary' && preg_match('/^\d{4}-\d{2}$/', $periodValue)
-            ? $this->workflowService->calculateSalaryOvertimeSnapshot(
-                userId: (int) $user->id,
-                periodValue: $periodValue,
-                assignedBasicSalary: $basicSalary,
-                applicantRoles: $user->roles?->pluck('name')->values()->all() ?? [],
-            )
-            : ['rows' => [], 'totals' => ['allHours' => 0, 'approvedHours' => 0, 'approvedPayout' => 0, 'approvedCount' => 0], 'rateSnapshot' => null];
-
-        $history = collect(is_array($row->approval_history) ? $row->approval_history : [])
-            ->push([
-                'id' => (string) Str::uuid(),
-                'action' => 'Edited',
-                'by' => (string) ($user->name ?? ''),
-                'byUserId' => (string) $user->id,
-                'at' => now()->toIso8601String(),
-                'remarks' => 'Claim edited and resubmitted.',
-            ])
-            ->take(-20)
-            ->values()
-            ->all();
-
         $manualAmount = round((float) collect($items)->reject(fn ($item) => $this->isOtFallbackItem($item))->sum(fn ($item) => (float) ($item['amount'] ?? 0)), 2);
-        $approvedOtPayout = round((float) data_get($overtimeSnapshot, 'totals.approvedPayout', 0), 2);
-        $totalAmount = round($manualAmount + $approvedOtPayout, 2);
-
-        [$adjustmentsTotal, $projectedNetPayout] = $this->computeSalaryTotals(
-            claimType: $claimType,
-            items: $items,
-            approvedOtPayout: $approvedOtPayout,
-            snapshotNet: (float) data_get($payrollSnapshot, 'net', data_get($row->payroll_snapshot, 'net', 0)),
-        );
 
         $consumedDraftId = null;
-        DB::transaction(function () use (&$row, $data, $workflow, $history, $items, $claimType, $periodValue, $payrollSnapshot, $overtimeSnapshot, $approvedOtPayout, $totalAmount, $adjustmentsTotal, $projectedNetPayout, $user, $sourceDraftId, $sourceDraftType, $claimAttachmentProvided, $claimAttachmentId, &$consumedDraftId) {
+        DB::transaction(function () use (&$row, $data, $workflow, $items, $claimType, $periodValue, $manualAmount, $user, $sourceDraftId, $sourceDraftType, $claimAttachmentProvided, $claimAttachmentId, &$consumedDraftId) {
+            User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
             $row = PayrollClaim::query()
                 ->where('user_id', $user->id)
                 ->lockForUpdate()
                 ->findOrFail($row->id);
-            $this->assertExpectedVersion($row, $data['expected_version'] ?? null);
+            $this->assertExpectedVersion($row, $data['expected_version'] ?? null, $user);
             if (! in_array($row->status, ['Pending', 'Draft'], true)) {
                 throw ValidationException::withMessages([
                     'status' => ['Only pending or draft claims can be edited.'],
                 ]);
             }
+            $this->assertUniqueSalaryClaimPeriod(
+                ownerUserId: (int) $user->id,
+                claimType: $claimType,
+                periodValue: $periodValue,
+                ignoreClaimId: (int) $row->id,
+            );
+            $payrollSnapshot = $claimType === 'salary'
+                ? $this->baselineService->resolve($user, $periodValue)
+                : null;
+            $basicSalary = (float) data_get(
+                $payrollSnapshot,
+                'basic',
+                data_get($row->payroll_snapshot, 'basic', 0),
+            );
+            $overtimeSnapshot = $claimType === 'salary'
+                ? $this->workflowService->calculateSalaryOvertimeSnapshot(
+                    userId: (int) $user->id,
+                    periodValue: $periodValue,
+                    assignedBasicSalary: $basicSalary,
+                    applicantRoles: $user->roles?->pluck('name')->values()->all() ?? [],
+                )
+                : ['rows' => [], 'totals' => ['allHours' => 0, 'approvedHours' => 0, 'approvedPayout' => 0, 'approvedCount' => 0], 'rateSnapshot' => null];
+            $approvedOtPayout = round((float) data_get($overtimeSnapshot, 'totals.approvedPayout', 0), 2);
+            $totalAmount = round($manualAmount + $approvedOtPayout, 2);
+            [$adjustmentsTotal, $projectedNetPayout] = $this->computeSalaryTotals(
+                claimType: $claimType,
+                items: $items,
+                approvedOtPayout: $approvedOtPayout,
+                snapshotNet: (float) data_get(
+                    $payrollSnapshot,
+                    'net',
+                    data_get($row->payroll_snapshot, 'net', 0),
+                ),
+            );
+            $history = collect(is_array($row->approval_history) ? $row->approval_history : [])
+                ->push([
+                    'id' => (string) Str::uuid(),
+                    'action' => 'Edited',
+                    'by' => (string) ($user->name ?? ''),
+                    'byUserId' => (string) $user->id,
+                    'at' => now()->toIso8601String(),
+                    'remarks' => 'Claim edited and resubmitted.',
+                ])
+                ->take(-20)
+                ->values()
+                ->all();
             $row->update([
                 'claim_type' => $claimType,
                 'category' => trim((string) ($data['category'] ?? $row->category)),
                 'period' => trim((string) ($data['period'] ?? $row->period)),
                 'period_value' => $periodValue,
+                'salary_period_key' => $claimType === 'salary' ? $periodValue : null,
                 'amount' => $totalAmount,
                 'approved_overtime_payout' => $approvedOtPayout,
                 'adjustments_total' => $adjustmentsTotal,
@@ -387,6 +404,9 @@ class PayrollClaimController extends Controller
                 'next_action_role' => $workflow['nextActionRole'],
                 'approval_history' => $history,
                 'payroll_snapshot' => $payrollSnapshot,
+                'salary_assignment_id' => data_get($payrollSnapshot, 'salaryAssignmentId'),
+                'salary_assignment_version' => data_get($payrollSnapshot, 'salaryAssignmentVersion'),
+                'calculation_engine_version' => data_get($payrollSnapshot, 'calculationEngineVersion'),
                 'overtime_rows' => is_array($overtimeSnapshot['rows'] ?? null) ? $overtimeSnapshot['rows'] : [],
                 'overtime_rate_snapshot' => is_array($overtimeSnapshot['rateSnapshot'] ?? null) ? $overtimeSnapshot['rateSnapshot'] : null,
                 'notes' => trim((string) ($data['notes'] ?? $row->notes)),
@@ -414,31 +434,34 @@ class PayrollClaimController extends Controller
                 sourceDraftId: $sourceDraftId,
                 sourceDraftType: $sourceDraftType,
             );
+
+            $module = $claimType === 'salary'
+                ? 'salary'
+                : ($claimType === 'exceptional' ? 'exceptional' : 'expense');
+            $nextRole = trim((string) ($row->next_action_role ?? ''));
+            $this->notificationService->emit(
+                module: $module,
+                eventType: 'edited',
+                recordType: 'payroll_claim',
+                recordId: $row->id,
+                recordDisplayId: $row->display_id,
+                ownerUserId: (int) $row->user_id,
+                actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
+                targetRoles: $nextRole !== '' ? [$nextRole] : [],
+                actionRequired: $nextRole !== '',
+                metadata: [
+                    'module' => $module,
+                    'status' => 'Pending',
+                    'workflowStage' => $row->workflow_stage,
+                    'nextActionRole' => $row->next_action_role,
+                    'claimType' => $claimType,
+                    'detailRouteKey' => (string) $row->public_id,
+                ],
+                excludeOwner: true,
+            );
         });
 
         $row->refresh()->load(['items.attachment', 'attachment']);
-
-        $module = $claimType === 'salary' ? 'salary' : ($claimType === 'exceptional' ? 'exceptional' : 'expense');
-        $nextRole = trim((string) ($row->next_action_role ?? ''));
-        $this->notificationService->emit(
-            module: $module,
-            eventType: 'edited',
-            recordType: 'payroll_claim',
-            recordId: $row->id,
-            recordDisplayId: $row->display_id,
-            ownerUserId: (int) $row->user_id,
-            actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            targetRoles: $nextRole !== '' ? [$nextRole] : [],
-            actionRequired: $nextRole !== '',
-            metadata: [
-                'module' => $module,
-                'status' => 'Pending',
-                'workflowStage' => $row->workflow_stage,
-                'nextActionRole' => $row->next_action_role,
-                'claimType' => $claimType,
-            ],
-            excludeOwner: true,
-        );
 
         AuditLogger::log($request, 'payroll_claim_edited', $user, [
             'claim_id' => $row->id,
@@ -460,15 +483,28 @@ class PayrollClaimController extends Controller
     public function destroy(Request $request, int $id): JsonResponse
     {
         $user = $request->user();
-        $row = PayrollClaim::query()->where('user_id', $user->id)->findOrFail($id);
+        $payload = $request->validate([
+            'expected_version' => ['required', 'integer', 'min:1'],
+        ]);
+        $row = DB::transaction(function () use ($user, $id, $payload) {
+            $row = PayrollClaim::query()
+                ->where('user_id', $user->id)
+                ->lockForUpdate()
+                ->findOrFail($id);
+            $this->assertExpectedVersion($row, $payload['expected_version'], $user);
+            if (! in_array($row->status, ['Draft', 'Cancelled'], true)) {
+                throw ValidationException::withMessages([
+                    'status' => ['Only draft or cancelled claims can be deleted.'],
+                ]);
+            }
 
-        if (! in_array($row->status, ['Draft', 'Cancelled'], true)) {
-            throw ValidationException::withMessages([
-                'status' => ['Only draft or cancelled claims can be deleted.'],
-            ]);
-        }
+            if ($row->claim_type === 'salary' && $row->salary_period_key !== null) {
+                $row->update(['salary_period_key' => null]);
+            }
+            $row->delete();
 
-        $row->delete();
+            return $row;
+        });
 
         AuditLogger::log($request, 'payroll_claim_deleted', $user, [
             'claim_id' => $row->id,
@@ -483,7 +519,7 @@ class PayrollClaimController extends Controller
         $user = $request->user();
         $payload = $request->validate([
             'remarks' => ['nullable', 'string', 'max:1000'],
-            'expected_version' => ['nullable', 'integer', 'min:1'],
+            'expected_version' => ['required', 'integer', 'min:1'],
         ]);
         $row = DB::transaction(function () use ($user, $id, $payload) {
             $row = PayrollClaim::query()
@@ -496,7 +532,7 @@ class PayrollClaimController extends Controller
                     'status' => ['Only pending or approved claims can be cancelled.'],
                 ]);
             }
-            $this->assertExpectedVersion($row, $payload['expected_version'] ?? null);
+            $this->assertExpectedVersion($row, $payload['expected_version'] ?? null, $user);
             $updates = $this->toColumnKeys($this->workflowService->advanceWorkflow(
                 snapshot: is_array($row->workflow_snapshot) ? $row->workflow_snapshot : [],
                 history: is_array($row->approval_history) ? $row->approval_history : [],
@@ -505,31 +541,36 @@ class PayrollClaimController extends Controller
                 actorName: (string) ($user->name ?? ''),
                 remarks: $payload['remarks'] ?? null,
             ));
+            if ($row->claim_type === 'salary') {
+                $updates['salary_period_key'] = null;
+            }
             $updates['version'] = ((int) $row->version) + 1;
             $row->update($updates);
 
-            return $row->fresh(['items.attachment', 'attachment']);
-        });
+            $row = $row->fresh(['items.attachment', 'attachment']);
+            $module = $row->claim_type === 'salary' ? 'salary' : ($row->claim_type === 'exceptional' ? 'exceptional' : 'expense');
+            $this->notificationService->emit(
+                module: $module,
+                eventType: 'cancelled',
+                recordType: 'payroll_claim',
+                recordId: $row->id,
+                recordDisplayId: $row->display_id,
+                ownerUserId: (int) $row->user_id,
+                actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
+                remarks: $payload['remarks'] ?? null,
+                metadata: [
+                    'module' => $module,
+                    'status' => 'Cancelled',
+                    'workflowStage' => 'done',
+                    'nextActionRole' => null,
+                    'claimType' => $row->claim_type,
+                    'detailRouteKey' => (string) $row->public_id,
+                ],
+                excludeOwner: true,
+            );
 
-        $module = $row->claim_type === 'salary' ? 'salary' : ($row->claim_type === 'exceptional' ? 'exceptional' : 'expense');
-        $this->notificationService->emit(
-            module: $module,
-            eventType: 'cancelled',
-            recordType: 'payroll_claim',
-            recordId: $row->id,
-            recordDisplayId: $row->display_id,
-            ownerUserId: (int) $row->user_id,
-            actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            remarks: $payload['remarks'] ?? null,
-            metadata: [
-                'module' => $module,
-                'status' => 'Cancelled',
-                'workflowStage' => 'done',
-                'nextActionRole' => null,
-                'claimType' => $row->claim_type,
-            ],
-            excludeOwner: true,
-        );
+            return $row;
+        });
 
         AuditLogger::log($request, 'payroll_claim_cancelled', $user, [
             'claim_id' => $row->id,
@@ -562,11 +603,11 @@ class PayrollClaimController extends Controller
 
     private function validatePayload(Request $request): array
     {
-        return $request->validate([
+        $validator = Validator::make($request->all(), [
             'claim_type' => ['required', Rule::in(['expense', 'salary', 'exceptional', 'other'])],
             'category' => ['nullable', 'string', 'max:255'],
             'period' => ['nullable', 'string', 'max:100'],
-            'period_value' => ['nullable', 'regex:/^\d{4}-\d{2}$/'],
+            'period_value' => ['required', 'date_format:Y-m'],
             'source_draft_id' => ['nullable', 'string', 'max:120'],
             'sourceDraftId' => ['nullable', 'string', 'max:120'],
             'source_draft_type' => ['nullable', Rule::in(['expense', 'salary', 'exceptional', 'other'])],
@@ -578,8 +619,9 @@ class PayrollClaimController extends Controller
             'payrollBaselineConfirmed' => ['nullable', 'boolean'],
             'attachment_id' => ['nullable', 'integer', 'exists:workflow_attachments,id'],
             'attachmentId' => ['nullable', 'integer', 'exists:workflow_attachments,id'],
+            // Accepted during the compatibility window, but never used for calculation.
             'payroll_snapshot' => ['nullable', 'array'],
-            'items' => ['nullable', 'array', 'max:200'],
+            'items' => ['present', 'array', 'max:200'],
             'items.*' => ['array'],
             'items.*.item_type' => ['nullable', 'string', 'max:120'],
             'items.*.itemType' => ['nullable', 'string', 'max:120'],
@@ -589,7 +631,7 @@ class PayrollClaimController extends Controller
             'items.*.claim_date' => ['nullable', 'date'],
             'items.*.claimDate' => ['nullable', 'date'],
             'items.*.expenseDate' => ['nullable', 'date'],
-            'items.*.amount' => ['nullable', 'numeric'],
+            'items.*.amount' => ['required', 'numeric', 'min:0.01', 'max:99999999.99'],
             'items.*.notes' => ['nullable', 'string', 'max:2000'],
             'items.*.lineNotes' => ['nullable', 'string', 'max:2000'],
             'items.*.approval_note' => ['nullable', 'string', 'max:255'],
@@ -622,18 +664,84 @@ class PayrollClaimController extends Controller
             'items.*.uploadState' => ['nullable', Rule::in(['idle', 'uploading', 'uploaded', 'failed'])],
             'items.*.needs_reattach' => ['nullable', 'boolean'],
             'items.*.needsReattach' => ['nullable', 'boolean'],
-            'expected_version' => ['nullable', 'integer', 'min:1'],
+            'expected_version' => [
+                $request->isMethod('put') || $request->isMethod('patch') ? 'required' : 'nullable',
+                'integer',
+                'min:1',
+            ],
         ]);
+
+        $validator->after(function ($validator) {
+            $data = $validator->getData();
+            $claimType = $this->normalizeClaimType($data['claim_type'] ?? '');
+            $items = is_array($data['items'] ?? null) ? $data['items'] : [];
+
+            if ($claimType !== 'salary' && $items === []) {
+                $validator->errors()->add('items', 'At least one claim item is required.');
+            }
+
+            foreach ($items as $index => $item) {
+                if (! is_array($item)) {
+                    continue;
+                }
+                $itemType = trim((string) (
+                    $item['item_type']
+                    ?? $item['itemType']
+                    ?? $item['claimType']
+                    ?? $item['category']
+                    ?? ''
+                ));
+                if ($itemType === '') {
+                    $validator->errors()->add("items.$index.item_type", 'Item type is required.');
+                }
+                if ($claimType === 'salary' && ! in_array($itemType, ['Addition', 'Deduction'], true)) {
+                    $validator->errors()->add(
+                        "items.$index.item_type",
+                        'Salary adjustment type must be Addition or Deduction.',
+                    );
+                }
+                $claimDate = trim((string) (
+                    $item['claim_date']
+                    ?? $item['claimDate']
+                    ?? $item['expenseDate']
+                    ?? ''
+                ));
+                if ($claimDate === '') {
+                    $validator->errors()->add("items.$index.claim_date", 'Claim date is required.');
+                }
+                if (
+                    $claimType === 'salary'
+                    && $claimDate !== ''
+                    && preg_match('/^\d{4}-\d{2}/', $claimDate, $matches)
+                    && $matches[0] !== (string) ($data['period_value'] ?? '')
+                ) {
+                    $validator->errors()->add(
+                        "items.$index.claim_date",
+                        'Salary adjustment date must be within the selected payroll period.',
+                    );
+                }
+            }
+        });
+
+        return $validator->validate();
     }
 
-    private function assertExpectedVersion(PayrollClaim $claim, ?int $expectedVersion): void
-    {
-        if ($expectedVersion !== null && $expectedVersion !== (int) $claim->version) {
+    private function assertExpectedVersion(
+        PayrollClaim $claim,
+        ?int $expectedVersion,
+        mixed $actor = null,
+    ): void {
+        if ($expectedVersion === null) {
+            throw ValidationException::withMessages([
+                'expected_version' => ['The expected version field is required.'],
+            ]);
+        }
+        if ($expectedVersion !== (int) $claim->version) {
             throw new HttpResponseException(response()->json([
                 'code' => 'PAYROLL_CLAIM_VERSION_CONFLICT',
                 'message' => 'This payroll claim changed. Reload the latest record before trying again.',
                 'currentVersion' => (int) $claim->version,
-                'currentRecord' => self::formatClaim($claim),
+                'currentRecord' => self::formatClaim($claim, $actor),
             ], 409));
         }
     }
@@ -888,6 +996,17 @@ class PayrollClaimController extends Controller
             || (str_contains($message, 'submission_key') && str_contains($message, 'duplicate'));
     }
 
+    private function isSalaryPeriodDuplicateException(QueryException $exception): bool
+    {
+        $message = strtolower((string) $exception->getMessage());
+
+        return str_contains($message, 'payroll_claims_user_salary_period_unique')
+            || (
+                str_contains($message, 'salary_period_key')
+                && (str_contains($message, 'duplicate') || str_contains($message, 'unique'))
+            );
+    }
+
     private function consumeSourceDraft(int $ownerUserId, string $sourceDraftId, string $sourceDraftType): ?string
     {
         if ($sourceDraftId === '') {
@@ -971,6 +1090,7 @@ class PayrollClaimController extends Controller
 
         return [
             'id' => $row->id,
+            'public_id' => $row->public_id,
             'display_id' => $row->display_id,
             'submission_key' => $row->submission_key,
             'user_id' => $row->user_id,
@@ -1006,6 +1126,9 @@ class PayrollClaimController extends Controller
                 ? trim((string) ($row->paidByUser->name ?? ''))
                 : null,
             'payroll_snapshot' => $payrollSnapshot,
+            'salary_assignment_public_id' => data_get($payrollSnapshot, 'salaryAssignmentPublicId'),
+            'salary_assignment_version' => $row->salary_assignment_version,
+            'calculation_engine_version' => $row->calculation_engine_version,
             'payroll_baseline_confirmed' => $payrollBaselineConfirmed,
             'overtime_rows' => $overtimeRows,
             'overtime_rate_snapshot' => $overtimeRateSnapshot,
@@ -1032,6 +1155,13 @@ class PayrollClaimController extends Controller
         $canUnmarkPaid = false;
         $status = trim((string) ($row->status ?? ''));
         $claimType = trim((string) ($row->claim_type ?? ''));
+        $isOwner = is_object($actor)
+            && (int) ($actor->id ?? 0) > 0
+            && (int) ($actor->id ?? 0) === (int) $row->user_id;
+        $canEdit = $isOwner && in_array($status, ['Pending', 'Draft'], true);
+        $canCancel = $isOwner && in_array($status, ['Pending', 'Approved'], true);
+        $canDelete = $isOwner && in_array($status, ['Draft', 'Cancelled'], true);
+        $canDownload = $isOwner && $claimType === 'salary' && in_array($status, ['Approved', 'Paid'], true);
 
         if ($claimType !== 'salary') {
             $markPaidBlockedReason = 'Only salary claims can be marked as paid.';
@@ -1051,6 +1181,22 @@ class PayrollClaimController extends Controller
         }
 
         return [
+            'edit' => [
+                'enabled' => $canEdit,
+                'blockedReason' => $canEdit ? '' : 'Only the owner can edit a pending or draft claim.',
+            ],
+            'cancel' => [
+                'enabled' => $canCancel,
+                'blockedReason' => $canCancel ? '' : 'Only the owner can cancel a pending or approved claim.',
+            ],
+            'delete' => [
+                'enabled' => $canDelete,
+                'blockedReason' => $canDelete ? '' : 'Only the owner can delete a draft or cancelled claim.',
+            ],
+            'download' => [
+                'enabled' => $canDownload,
+                'blockedReason' => $canDownload ? '' : 'Only an approved or paid salary record can be downloaded.',
+            ],
             'mark_paid' => [
                 'enabled' => $canMarkPaid,
                 'blockedReason' => $canMarkPaid ? '' : $markPaidBlockedReason,

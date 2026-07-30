@@ -114,9 +114,23 @@ class OvertimeManagementController extends Controller
             ->with(['user', 'attachment'])
             ->findOrFail($recordId);
         if (! $this->scopeService->canManageRecord($request->user(), $row)) {
-            abort(403, 'You are not allowed to access this overtime record.');
+            abort(404);
         }
 
+        return $this->detailResponse($request, $row);
+    }
+
+    public function showByPublicId(Request $request, string $publicId): JsonResponse
+    {
+        $row = $this->baseQuery($request->user())
+            ->where('public_id', $publicId)
+            ->firstOrFail();
+
+        return $this->detailResponse($request, $row);
+    }
+
+    private function detailResponse(Request $request, OvertimeRecord $row): JsonResponse
+    {
         $teamByUserId = $this->resolveCanonicalTeamByUserId([(int) $row->user_id]);
         $base = $this->formatManagementRecord($row, $teamByUserId, $request->user());
         if ($this->guidanceGate->staffVisibilityEnabledForUser($request->user())) {
@@ -372,7 +386,7 @@ class OvertimeManagementController extends Controller
         $base['employee_email'] = $row->user?->email ?? '';
         $base['avatar_url'] = $this->resolveProfileImageUrl($row->user?->profile_image_url);
         $base['team'] = $teamByUserId[$ownerId] ?? 'Unassigned';
-        $base['record_key'] = $ownerId.'::'.$row->id;
+        $base['record_key'] = (string) ($row->public_id ?: $ownerId.'::'.$row->id);
         $base['permitted_actions'] = $this->resolvePermittedActions($row, $actor);
 
         return $base;

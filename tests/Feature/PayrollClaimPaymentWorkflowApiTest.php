@@ -2,9 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\OvertimeRecord;
 use App\Models\PayrollClaim;
 use App\Models\User;
 use App\Models\WorkflowNotification;
+use App\Services\WorkflowNotificationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -198,6 +200,77 @@ class PayrollClaimPaymentWorkflowApiTest extends TestCase
 
         $claim->refresh();
         $this->assertSame('Approved', $claim->status);
+        $this->assertNull($claim->paid_at);
+        $this->assertDatabaseCount('payroll_claim_payment_events', 0);
+    }
+
+    public function test_mark_paid_rolls_back_when_notification_outbox_persistence_fails(): void
+    {
+        $manager = User::factory()->create(['status' => 'Active']);
+        $this->grantPermission($manager, 'staff.salary.pay');
+        $owner = User::factory()->create(['status' => 'Active']);
+        $claim = $this->createSalaryClaim($owner, ['status' => 'Approved']);
+        $notificationService = \Mockery::mock(WorkflowNotificationService::class);
+        $notificationService->shouldReceive('emit')
+            ->once()
+            ->andThrow(new \RuntimeException('Simulated notification persistence failure.'));
+        $this->app->instance(WorkflowNotificationService::class, $notificationService);
+
+        $this->actingAs($manager)
+            ->postJson("/api/staff/salary-claims/records/{$owner->id}/{$claim->id}/mark-paid", [
+                'payment_date' => '2026-04-23',
+                'expected_version' => 1,
+            ])
+            ->assertStatus(500);
+
+        $claim->refresh();
+        $this->assertSame('Approved', $claim->status);
+        $this->assertSame(1, $claim->version);
+        $this->assertNull($claim->paid_at);
+        $this->assertDatabaseCount('payroll_claim_payment_events', 0);
+    }
+
+    public function test_mark_paid_rejects_changed_approved_overtime_snapshot(): void
+    {
+        $manager = User::factory()->create(['status' => 'Active']);
+        $this->grantPermission($manager, 'staff.salary.pay');
+        $owner = User::factory()->create(['status' => 'Active']);
+        $overtime = OvertimeRecord::query()->create([
+            'user_id' => $owner->id,
+            'display_id' => 'OT-SNAPSHOT-PAYMENT',
+            'overtime_type' => 'weekday',
+            'claim_date' => '2026-04-14',
+            'start_time' => '18:00',
+            'end_time' => '19:00',
+            'is_overnight' => false,
+            'duration_minutes' => 60,
+            'reason' => 'Approved overtime included in salary payment.',
+            'status' => 'Approved',
+            'workflow_stage' => 'done',
+            'approval_history' => [],
+            'version' => 1,
+        ]);
+        $claim = $this->createSalaryClaim($owner, [
+            'status' => 'Approved',
+            'overtime_rows' => [[
+                'overtimeRecordId' => $overtime->id,
+                'overtimePublicId' => $overtime->public_id,
+                'overtimeRecordVersion' => 1,
+            ]],
+        ]);
+        $overtime->update(['version' => 2]);
+
+        $this->actingAs($manager)
+            ->postJson("/api/staff/salary-claims/records/{$owner->id}/{$claim->id}/mark-paid", [
+                'payment_date' => '2026-04-23',
+                'expected_version' => 1,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('overtime_snapshot');
+
+        $claim->refresh();
+        $this->assertSame('Approved', $claim->status);
+        $this->assertSame(1, $claim->version);
         $this->assertNull($claim->paid_at);
         $this->assertDatabaseCount('payroll_claim_payment_events', 0);
     }

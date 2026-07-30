@@ -6,8 +6,10 @@ use App\Models\OvertimeRecord;
 use App\Models\Team;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
+use App\Models\WorkflowAttachment;
 use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -100,19 +102,71 @@ class OvertimeWorkflowSecurityTest extends TestCase
             ->assertJsonPath('data.0.display_id', 'OT-ALPHA-1');
 
         $this->getJson("/api/staff/overtime/records/{$betaApplicant->id}/{$betaRecord->id}")
-            ->assertForbidden();
+            ->assertNotFound();
 
         $this->postJson("/api/staff/overtime/records/{$betaApplicant->id}/{$betaRecord->id}/review", [
             'expected_version' => 1,
         ])
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('role');
+            ->assertNotFound();
 
         $this->postJson("/api/staff/overtime/records/{$alphaApplicant->id}/{$alphaRecord->id}/review", [
             'expected_version' => 1,
         ])
             ->assertOk()
             ->assertJsonPath('data.workflow_stage', 'recommend');
+    }
+
+    public function test_public_detail_key_is_opaque_and_still_enforces_team_scope(): void
+    {
+        $teamAlpha = Team::query()->create(['name' => 'Alpha Public', 'status' => 'On Duty']);
+        $teamBeta = Team::query()->create(['name' => 'Beta Public', 'status' => 'On Duty']);
+        $alphaRecord = $this->createRecord($this->createApplicant($teamAlpha));
+        $betaRecord = $this->createRecord($this->createApplicant($teamBeta));
+        $manager = $this->createManager(
+            'Client Contract Manager',
+            RoleCatalog::CLIENT_SITE,
+            $teamAlpha,
+        );
+
+        $this->actingAs($manager)
+            ->getJson("/api/staff/overtime/record/{$alphaRecord->public_id}")
+            ->assertOk()
+            ->assertJsonPath('data.record_key', $alphaRecord->public_id)
+            ->assertJsonPath('data.public_id', $alphaRecord->public_id);
+
+        $this->getJson("/api/staff/overtime/record/{$betaRecord->public_id}")
+            ->assertNotFound();
+        $this->getJson('/api/staff/overtime/record/01INVALIDPUBLICIDENTIFIER00')
+            ->assertNotFound();
+    }
+
+    public function test_team_scoped_manager_cannot_download_foreign_overtime_evidence(): void
+    {
+        Storage::fake('local');
+        $teamAlpha = Team::query()->create(['name' => 'Alpha Evidence', 'status' => 'On Duty']);
+        $teamBeta = Team::query()->create(['name' => 'Beta Evidence', 'status' => 'On Duty']);
+        $alphaApplicant = $this->createApplicant($teamAlpha);
+        $betaApplicant = $this->createApplicant($teamBeta);
+        $alphaAttachment = $this->createAttachment($alphaApplicant, 'alpha-evidence.pdf');
+        $betaAttachment = $this->createAttachment($betaApplicant, 'beta-evidence.pdf');
+        $sharedAttachment = $this->createAttachment($alphaApplicant, 'shared-evidence.pdf');
+        $this->createRecord($alphaApplicant, ['attachment_id' => $alphaAttachment->id]);
+        $this->createRecord($betaApplicant, ['attachment_id' => $betaAttachment->id]);
+        $this->createRecord($alphaApplicant, ['attachment_id' => $sharedAttachment->id]);
+        $this->createRecord($betaApplicant, ['attachment_id' => $sharedAttachment->id]);
+        $manager = $this->createManager(
+            'Client Contract Manager',
+            RoleCatalog::CLIENT_SITE,
+            $teamAlpha,
+        );
+
+        $this->actingAs($manager)
+            ->get("/api/workflow/attachments/{$alphaAttachment->id}")
+            ->assertOk();
+        $this->getJson("/api/workflow/attachments/{$betaAttachment->id}")
+            ->assertNotFound();
+        $this->getJson("/api/workflow/attachments/{$sharedAttachment->id}")
+            ->assertNotFound();
     }
 
     private function createApplicant(?Team $team = null): User
@@ -183,5 +237,21 @@ class OvertimeWorkflowSecurityTest extends TestCase
             'submitted_by' => $user->name,
             'version' => 1,
         ], $overrides));
+    }
+
+    private function createAttachment(User $owner, string $name): WorkflowAttachment
+    {
+        $path = "workflow-attachments/{$owner->id}/{$name}";
+        Storage::disk('local')->put($path, 'private overtime evidence');
+
+        return WorkflowAttachment::query()->create([
+            'owner_user_id' => $owner->id,
+            'disk' => 'local',
+            'path' => $path,
+            'original_name' => $name,
+            'mime_type' => 'application/pdf',
+            'size' => 25,
+            'uploaded_at' => now(),
+        ]);
     }
 }

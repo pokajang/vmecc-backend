@@ -108,6 +108,7 @@ class OvertimeApplicantEditLockTest extends TestCase
             'is_overnight' => false,
             'duration_minutes' => 75,
             'reason' => 'Format normalization update',
+            'expected_version' => 1,
         ]);
 
         $response->assertOk();
@@ -174,6 +175,7 @@ class OvertimeApplicantEditLockTest extends TestCase
             'is_overnight' => false,
             'duration_minutes' => 90,
             'reason' => $reason,
+            'expected_version' => 1,
         ];
     }
 }

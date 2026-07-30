@@ -6,6 +6,7 @@ use App\Models\OvertimeRecord;
 use App\Services\AuditLogger;
 use App\Services\OvertimeManagementScopeService;
 use App\Services\OvertimeWorkflowService;
+use App\Services\PayrollOvertimeSnapshotIntegrityService;
 use App\Services\WorkflowNotificationService;
 use App\Services\WorkflowRecipientResolver;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -21,6 +22,7 @@ class OvertimeWorkflowController extends Controller
         private readonly WorkflowNotificationService $notificationService,
         private readonly OvertimeManagementScopeService $scopeService,
         private readonly WorkflowRecipientResolver $recipientResolver,
+        private readonly PayrollOvertimeSnapshotIntegrityService $payrollOvertimeIntegrity,
     ) {}
 
     public function review(Request $request, int $ownerId, int $recordId): JsonResponse
@@ -58,7 +60,7 @@ class OvertimeWorkflowController extends Controller
         $actor = $request->user();
         $payload = $request->validate([
             'remarks' => ['nullable', 'string', 'max:1000'],
-            'expected_version' => ['nullable', 'integer', 'min:1'],
+            'expected_version' => ['required', 'integer', 'min:1'],
         ]);
 
         if ($action === 'request_correction' && ! trim((string) ($payload['remarks'] ?? ''))) {
@@ -67,13 +69,19 @@ class OvertimeWorkflowController extends Controller
             ]);
         }
 
-        [$row, $recipientIds] = DB::transaction(function () use ($ownerId, $recordId, $action, $actor, $payload) {
+        $row = DB::transaction(function () use ($ownerId, $recordId, $action, $actor, $payload) {
             $row = OvertimeRecord::query()
                 ->where('user_id', $ownerId)
                 ->with(['user', 'attachment'])
                 ->lockForUpdate()
                 ->findOrFail($recordId);
 
+            if (! $this->scopeService->canManageRecord($actor, $row)) {
+                abort(404);
+            }
+            if ($action === 'cancel') {
+                $this->payrollOvertimeIntegrity->assertNotLockedByPaidSalary($row);
+            }
             $this->assertActionAllowed($row, $action, $actor);
             $this->assertExpectedVersion($row, $payload['expected_version'] ?? null);
 
@@ -99,42 +107,43 @@ class OvertimeWorkflowController extends Controller
                 $this->throwVersionConflict($row);
             }
 
-            return [$row->fresh(['attachment']), $recipientIds];
+            $updatedRow = $row->fresh(['attachment']);
+            $nextRole = $updatedRow->next_action_role;
+            $eventType = match ($action) {
+                'review' => 'reviewed',
+                'recommend' => 'recommended',
+                'approve' => 'approved',
+                'reject' => 'rejected',
+                'cancel' => 'cancelled',
+                'request_correction' => 'correction_requested',
+                default => $action,
+            };
+            $this->notificationService->emit(
+                module: 'overtime',
+                eventType: $eventType,
+                recordType: 'overtime',
+                recordId: $updatedRow->id,
+                recordDisplayId: $updatedRow->display_id,
+                ownerUserId: (int) $updatedRow->user_id,
+                actor: ['userId' => $actor->id, 'name' => $actor->name, 'email' => $actor->email],
+                targetUserIds: $recipientIds,
+                actionRequired: (bool) $nextRole,
+                remarks: $payload['remarks'] ?? null,
+                metadata: [
+                    'module' => 'overtime',
+                    'status' => $updatedRow->status,
+                    'workflowStage' => $updatedRow->workflow_stage,
+                    'nextActionRole' => $updatedRow->next_action_role,
+                    'workflowTeamId' => $updatedRow->workflow_team_id,
+                    'workflowTeamName' => $updatedRow->workflow_team_name,
+                    'workflowRoutingSource' => $updatedRow->workflow_routing_source,
+                    'detailRouteKey' => (string) $updatedRow->public_id,
+                ],
+                excludeOwner: (bool) $nextRole,
+            );
+
+            return $updatedRow;
         });
-
-        $nextRole = $row->next_action_role;
-        $eventType = match ($action) {
-            'review' => 'reviewed',
-            'recommend' => 'recommended',
-            'approve' => 'approved',
-            'reject' => 'rejected',
-            'cancel' => 'cancelled',
-            'request_correction' => 'correction_requested',
-            default => $action,
-        };
-
-        $this->notificationService->emit(
-            module: 'overtime',
-            eventType: $eventType,
-            recordType: 'overtime',
-            recordId: $row->id,
-            recordDisplayId: $row->display_id,
-            ownerUserId: (int) $row->user_id,
-            actor: ['userId' => $actor->id, 'name' => $actor->name, 'email' => $actor->email],
-            targetUserIds: $recipientIds,
-            actionRequired: (bool) $nextRole,
-            remarks: $payload['remarks'] ?? null,
-            metadata: [
-                'module' => 'overtime',
-                'status' => $row->status,
-                'workflowStage' => $row->workflow_stage,
-                'nextActionRole' => $row->next_action_role,
-                'workflowTeamId' => $row->workflow_team_id,
-                'workflowTeamName' => $row->workflow_team_name,
-                'workflowRoutingSource' => $row->workflow_routing_source,
-            ],
-            excludeOwner: (bool) $nextRole,
-        );
 
         AuditLogger::log($request, "overtime_{$action}", $actor, [
             'overtime_id' => $row->id,

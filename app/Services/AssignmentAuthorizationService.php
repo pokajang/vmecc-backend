@@ -42,6 +42,15 @@ class AssignmentAuthorizationService
         return false;
     }
 
+    public function hasOrganizationWidePermission(User $user, string $requiredPermissions): bool
+    {
+        if (! $this->hasPermission($user, $requiredPermissions)) {
+            return false;
+        }
+
+        return $this->permittedTeamIds($user, $requiredPermissions) === null;
+    }
+
     /**
      * Return null when the permission is organization-wide, otherwise the
      * concrete team IDs where the user holds it.

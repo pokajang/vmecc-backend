@@ -71,20 +71,27 @@ class WorkflowNotificationLinkResolver
         }
 
         if ($recordType === 'salary_assignment') {
-            if ($actionRequiredForViewer && $recordId !== '') {
-                return '/staff/set-salary/assignment/'.rawurlencode($recordId).'/view';
+            $isOwner = $recipient
+                && (int) $recipient->id === (int) ($notification->owner_user_id ?? 0);
+            $canManageSalary = $recipient
+                && $this->authorizationService->hasOrganizationWidePermission(
+                    $recipient,
+                    'staff.salary.manage',
+                );
+            if (! $isOwner && ($actionRequiredForViewer || $canManageSalary) && $recordId !== '') {
+                $assignmentKey = $detailRouteKey !== '' ? $detailRouteKey : $recordId;
+
+                return '/staff/set-salary/assignment/'.rawurlencode($assignmentKey).'/view';
             }
 
-            $assignmentId = $detailRouteKey !== '' ? $detailRouteKey : $recordId;
-
-            return $assignmentId !== ''
-                ? '/staff/set-salary/set-salary?assignmentId='.rawurlencode($assignmentId)
-                : '/staff/set-salary/set-salary';
+            return '/payroll/claims/new/salary';
         }
 
         if (in_array($module, ['salary', 'expense', 'exceptional'], true) || $recordType === 'payroll_claim') {
             if ($actionRequiredForViewer) {
-                $staffKey = $ownerUserId !== '' && $recordId !== '' ? "{$ownerUserId}::{$recordId}" : ($detailRouteKey !== '' ? $detailRouteKey : $displayId);
+                $staffKey = $detailRouteKey !== ''
+                    ? $detailRouteKey
+                    : ($ownerUserId !== '' && $recordId !== '' ? "{$ownerUserId}::{$recordId}" : $displayId);
 
                 return $staffKey !== '' ? '/staff/salary-claims/claim/'.rawurlencode($staffKey) : '/staff/salary-claims/claims';
             }

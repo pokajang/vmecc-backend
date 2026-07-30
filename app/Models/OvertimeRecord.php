@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
 
 class OvertimeRecord extends Model
 {
@@ -14,7 +15,9 @@ class OvertimeRecord extends Model
 
     protected $fillable = [
         'user_id',
+        'public_id',
         'display_id',
+        'submission_key',
         'overtime_type',
         'claim_date',
         'start_time',
@@ -38,6 +41,15 @@ class OvertimeRecord extends Model
         'attachment_id',
         'version',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (OvertimeRecord $record): void {
+            if (! $record->public_id) {
+                $record->public_id = (string) Str::ulid();
+            }
+        });
+    }
 
     protected $casts = [
         'claim_date' => 'date',

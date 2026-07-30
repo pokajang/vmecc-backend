@@ -15,7 +15,10 @@ class PayrollClaimManagementController extends Controller
     public function index(Request $request): JsonResponse
     {
         $actor = $request->user();
-        $query = PayrollClaim::query()->with(['user', 'items.attachment', 'attachment', 'paidByUser'])->orderByDesc('submitted_at')->orderByDesc('id');
+        $query = PayrollClaim::query()
+            ->with(['user', 'items.attachment', 'attachment', 'paidByUser'])
+            ->orderByDesc('submitted_at')
+            ->orderByDesc('id');
         $action = strtolower(trim((string) $request->input('action', '')));
         if ($action !== '' && ! in_array($action, ['check', 'review', 'approve', 'mark_paid'], true)) {
             throw ValidationException::withMessages([
@@ -50,17 +53,18 @@ class PayrollClaimManagementController extends Controller
             });
         }
 
-        $rows = $query->get()->map(function (PayrollClaim $row) use ($actor) {
+        $limit = min(200, max(1, (int) $request->input('limit', 100)));
+        $rows = $query->limit($limit)->get()->map(function (PayrollClaim $row) use ($actor) {
             $data = PayrollClaimController::formatClaim($row, $actor);
             $data['owner_id'] = $row->user_id;
             $data['owner_label'] = $row->user?->name ?? ($row->submitted_by_name ?: "User {$row->user_id}");
             $data['owner_email'] = $row->user?->email ?? '';
-            $data['record_key'] = $row->user_id.'::'.$row->id;
+            $data['record_key'] = $row->public_id ?: $row->user_id.'::'.$row->id;
 
             return $data;
         });
 
-        return response()->json(['data' => $rows]);
+        return response()->json(['data' => $rows, 'meta' => ['limit' => $limit]]);
     }
 
     public function show(Request $request, int $ownerId, int $claimId): JsonResponse
@@ -74,7 +78,7 @@ class PayrollClaimManagementController extends Controller
         $data['owner_id'] = $row->user_id;
         $data['owner_label'] = $row->user?->name ?? ($row->submitted_by_name ?: "User {$row->user_id}");
         $data['owner_email'] = $row->user?->email ?? '';
-        $data['record_key'] = $row->user_id.'::'.$row->id;
+        $data['record_key'] = $row->public_id ?: $row->user_id.'::'.$row->id;
 
         return response()->json(['data' => $data]);
     }

@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
 
 class SalaryAssignment extends Model
 {
@@ -14,10 +15,12 @@ class SalaryAssignment extends Model
     use SoftDeletes;
 
     protected $fillable = [
+        'public_id',
         'reference_id',
         'employee_user_id',
         'status',
         'effective_from',
+        'effective_date_key',
         'basic_salary',
         'allowance_total',
         'allowances',
@@ -25,10 +28,12 @@ class SalaryAssignment extends Model
         'employer_contributions',
         'notes_history',
         'updated_by',
+        'version',
     ];
 
     protected $casts = [
         'effective_from' => 'date',
+        'effective_date_key' => 'date',
         'basic_salary' => 'decimal:2',
         'allowance_total' => 'decimal:2',
         'allowances' => 'array',
@@ -38,7 +43,18 @@ class SalaryAssignment extends Model
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
+        'version' => 'integer',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (SalaryAssignment $assignment) {
+            $assignment->public_id = $assignment->public_id ?: (string) Str::ulid();
+            $assignment->effective_date_key = $assignment->effective_date_key
+                ?: $assignment->effective_from;
+            $assignment->version = max(1, (int) ($assignment->version ?: 1));
+        });
+    }
 
     public function employee(): BelongsTo
     {

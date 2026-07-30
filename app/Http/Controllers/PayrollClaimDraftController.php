@@ -5,8 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\PayrollClaimDraft;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class PayrollClaimDraftController extends Controller
 {
@@ -21,16 +23,10 @@ class PayrollClaimDraftController extends Controller
         }
 
         $rows = $query->get()->map(function (PayrollClaimDraft $row) {
-            [$sanitizedPayload, $didMutate] = $this->sanitizeDraftPayload(
+            [$sanitizedPayload] = $this->sanitizeDraftPayload(
                 payload: is_array($row->payload) ? $row->payload : [],
-                preserveLegacyBinaryForMigration: true,
+                preserveLegacyBinaryForMigration: false,
             );
-
-            if ($didMutate) {
-                $row->payload = $sanitizedPayload;
-                $row->saved_at = now();
-                $row->save();
-            }
 
             return [
                 'id' => $row->id,
@@ -64,6 +60,11 @@ class PayrollClaimDraftController extends Controller
             payload: is_array($payload['payload']) ? $payload['payload'] : [],
             preserveLegacyBinaryForMigration: false,
         );
+        if (strlen((string) json_encode($sanitizedPayload)) > 262144) {
+            throw ValidationException::withMessages([
+                'payload' => ['Payroll draft payload must not exceed 256 KB.'],
+            ]);
+        }
 
         $row = PayrollClaimDraft::query()->updateOrCreate(
             [
@@ -134,6 +135,17 @@ class PayrollClaimDraftController extends Controller
 
     private function sanitizeDraftPayload(array $payload, bool $preserveLegacyBinaryForMigration): array
     {
+        $payload = Arr::only($payload, [
+            'id',
+            'claimType',
+            'period',
+            'periodConfirmed',
+            'payrollBaselineConfirmed',
+            'savedItems',
+            'draftItem',
+            'updatedAt',
+            'storageRedacted',
+        ]);
         $didMutate = false;
 
         foreach ([
@@ -148,6 +160,11 @@ class PayrollClaimDraftController extends Controller
             'approvalHistory',
             'submittedAt',
             'createdAt',
+            'payrollSnapshot',
+            'projectedNetPayout',
+            'approvedOvertimePayout',
+            'overtimeRows',
+            'overtimeRateSnapshot',
         ] as $serverOwnedKey) {
             if (array_key_exists($serverOwnedKey, $payload)) {
                 unset($payload[$serverOwnedKey]);
@@ -185,6 +202,35 @@ class PayrollClaimDraftController extends Controller
         bool $preserveLegacyBinaryForMigration,
         bool &$didMutate,
     ): array {
+        $value = Arr::only($value, [
+            'expenseDate',
+            'claimDate',
+            'category',
+            'claimType',
+            'amount',
+            'lineNotes',
+            'approvalNote',
+            'fromLocation',
+            'toLocation',
+            'distanceKm',
+            'ratePerKm',
+            'destination',
+            'tripDateFrom',
+            'tripDateTo',
+            'billedPeriod',
+            'claimant',
+            'attachmentId',
+            'attachment_id',
+            'attachmentName',
+            'attachmentMimeType',
+            'attachmentSizeBytes',
+            'attachmentUploadState',
+            'needsReattach',
+            'attachmentMigrationAttempted',
+            'attachmentError',
+            'legacyAttachmentDataUrl',
+            'attachmentDataUrl',
+        ]);
         $attachmentId = $this->normalizeAttachmentId($value['attachmentId'] ?? $value['attachment_id'] ?? null);
         $value['attachmentId'] = $attachmentId;
 

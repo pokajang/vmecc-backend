@@ -740,6 +740,7 @@ class PayrollHardeningApiTest extends TestCase
             'claim_type' => 'salary',
             'period' => 'April 2026',
             'period_value' => '2026-04',
+            'expected_version' => $editable->fresh()->version,
             'items' => [],
             'payroll_snapshot' => [
                 'basic' => 2600,
@@ -754,6 +755,11 @@ class PayrollHardeningApiTest extends TestCase
     public function test_salary_claim_submit_uses_role_based_normal_hours_for_overtime_snapshot(): void
     {
         $user = $this->createPayrollUser();
+        $this->createSalaryAssignment($user, [
+            'effective_from' => '2026-04-01',
+            'basic_salary' => 2000,
+            'employee_contributions' => ['epf' => 34, 'perkeso' => 0, 'sip' => 0],
+        ]);
         $systemAdministratorRole = Role::query()->firstOrCreate(
             ['name' => 'System Administrator', 'guard_name' => 'web'],
             ['name' => 'System Administrator', 'guard_name' => 'web'],
@@ -894,6 +900,7 @@ class PayrollHardeningApiTest extends TestCase
             'claim_type' => 'expense',
             'period' => 'April 2026',
             'period_value' => '2026-04',
+            'expected_version' => $claim->fresh()->version,
             'source_draft_id' => 'draft-consume-expense-1',
             'source_draft_type' => 'expense',
             'items' => [[
@@ -1310,6 +1317,11 @@ class PayrollHardeningApiTest extends TestCase
 
         $user = User::factory()->create(array_merge($defaults, $overrides));
         $user->assignRole($role);
+        $this->createSalaryAssignment($user, [
+            'effective_from' => '2020-01-01',
+            'basic_salary' => 2600,
+            'employee_contributions' => ['epf' => 600, 'perkeso' => 0, 'sip' => 0],
+        ]);
 
         return $user;
     }

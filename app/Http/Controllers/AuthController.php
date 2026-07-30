@@ -170,6 +170,11 @@ class AuthController extends Controller
 
         return response()
             ->json(['message' => 'Logged out'])
+            ->withHeaders([
+                'Cache-Control' => 'private, no-store, no-cache, max-age=0, must-revalidate',
+                'Pragma' => 'no-cache',
+                'Clear-Site-Data' => '"cache"',
+            ])
             ->withCookie($this->sessions->forgetSessionCookie())
             ->withCookie($this->sessions->forgetRememberCookie());
     }

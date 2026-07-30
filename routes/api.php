@@ -44,6 +44,7 @@ use App\Http\Controllers\PayrollClaimDraftController;
 use App\Http\Controllers\PayrollClaimManagementController;
 use App\Http\Controllers\PayrollClaimWorkflowController;
 use App\Http\Controllers\PayrollPayslipController;
+use App\Http\Controllers\PayrollSalaryBaselineController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReportDraftController;
 use App\Http\Controllers\ReportMediaController;
@@ -61,9 +62,11 @@ use App\Http\Controllers\WorkflowNotificationController;
 use App\Http\Middleware\LimitPhotoUploadConcurrency;
 use Illuminate\Support\Facades\Route;
 
-Route::post('auth/login', [AuthController::class, 'login']);
-Route::post('auth/logout', [AuthController::class, 'logout']);
-Route::get('auth/session', [AuthController::class, 'session']);
+Route::middleware('sensitive.no-store')->group(function () {
+    Route::post('auth/login', [AuthController::class, 'login']);
+    Route::post('auth/logout', [AuthController::class, 'logout']);
+    Route::get('auth/session', [AuthController::class, 'session']);
+});
 
 Route::get('auth/google/redirect', [SocialAuthController::class, 'redirect']);
 Route::get('auth/google/callback', [SocialAuthController::class, 'callback']);
@@ -85,11 +88,11 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'permis
     Route::get('feedback-reports/{reportId}', [FeedbackReportController::class, 'show']);
     Route::patch('feedback-reports/{reportId}', [FeedbackReportController::class, 'update']);
 });
-Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->prefix('stats')->group(function () {
+Route::middleware(['session.auth', 'session.csrf', 'system.maintenance', 'sensitive.no-store'])->prefix('stats')->group(function () {
     Route::get('', [DashboardController::class, 'stats'])
         ->middleware('permission.assignment:self.dashboard');
     Route::get('payroll', [DashboardController::class, 'payrollStats'])
-        ->middleware(['module.enabled:dashboard.payroll', 'permission.assignment:self.dashboard', 'permission.assignment:dashboard.payroll.view']);
+        ->middleware(['module.enabled:dashboard.payroll', 'permission.assignment:self.dashboard', 'permission.assignment.organization:dashboard.payroll.view']);
     Route::get('overtime', [DashboardController::class, 'overtimeStats'])
         ->middleware(['permission.assignment:self.dashboard', 'permission.assignment:dashboard.overtime.view']);
     Route::get('leave', [DashboardController::class, 'leaveStats'])
@@ -100,7 +103,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->prefi
         ->middleware(['permission.assignment:self.dashboard', 'permission.assignment:dashboard.reports.view']);
 });
 Route::get('dashboard/action-queue', ActionQueueController::class)
-    ->middleware(['session.auth', 'session.csrf', 'system.maintenance', 'permission.assignment:self.dashboard']);
+    ->middleware(['session.auth', 'session.csrf', 'system.maintenance', 'permission.assignment:self.dashboard', 'sensitive.no-store']);
 
 Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])
     ->prefix('ai-helper')
@@ -215,31 +218,35 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::post('settings/system-maintenance', [SettingsController::class, 'updateSystemMaintenance'])->middleware('permission.assignment:settings.manage');
     Route::get('settings/leave-approval-rules', [SettingsController::class, 'getLeaveApprovalRules'])->middleware('permission.assignment:settings.manage');
     Route::post('settings/leave-approval-rules', [SettingsController::class, 'updateLeaveApprovalRules'])->middleware('permission.assignment:settings.manage');
-    Route::get('settings/overtime-approval-rules', [SettingsController::class, 'getOvertimeApprovalRules'])->middleware('permission.assignment:settings.manage');
-    Route::post('settings/overtime-approval-rules', [SettingsController::class, 'updateOvertimeApprovalRules'])->middleware('permission.assignment:settings.manage');
+    Route::get('settings/overtime-approval-rules', [SettingsController::class, 'getOvertimeApprovalRules'])->middleware(['permission.assignment:settings.manage', 'sensitive.no-store']);
+    Route::post('settings/overtime-approval-rules', [SettingsController::class, 'updateOvertimeApprovalRules'])->middleware(['permission.assignment:settings.manage', 'sensitive.no-store']);
     Route::get('settings/inspection-workflow-rules', [SettingsController::class, 'getInspectionWorkflowRules'])->middleware('permission.assignment:settings.manage');
     Route::post('settings/inspection-workflow-rules', [SettingsController::class, 'updateInspectionWorkflowRules'])->middleware('permission.assignment:settings.manage');
     Route::get('settings/reporting-workflow-rules', [SettingsController::class, 'getReportingWorkflowRules'])->middleware('permission.assignment:settings.manage');
     Route::post('settings/reporting-workflow-rules', [SettingsController::class, 'updateReportingWorkflowRules'])->middleware('permission.assignment:settings.manage');
-    Route::get('settings/overtime-rate-settings', [SettingsController::class, 'getOvertimeRateSettings'])->middleware('permission.assignment:settings.manage');
-    Route::post('settings/overtime-rate-settings', [SettingsController::class, 'updateOvertimeRateSettings'])->middleware('permission.assignment:settings.manage');
-    Route::get('settings/salary-workflow-rules', [SettingsController::class, 'getSalaryWorkflowRules'])->middleware(['module.enabled:payroll.workflow_rules', 'permission.assignment:settings.manage']);
-    Route::post('settings/salary-workflow-rules', [SettingsController::class, 'updateSalaryWorkflowRules'])->middleware(['module.enabled:payroll.workflow_rules', 'permission.assignment:settings.manage']);
-    Route::get('settings/salary-statutory-rates', [SettingsController::class, 'getSalaryStatutoryRates'])->middleware(['module.enabled:payroll.statutory_rates', 'permission.assignment:settings.manage|staff.salary.manage']);
-    Route::post('settings/salary-statutory-rates', [SettingsController::class, 'updateSalaryStatutoryRates'])->middleware(['module.enabled:payroll.statutory_rates', 'permission.assignment:settings.manage|staff.salary.manage']);
-    Route::get('settings/payroll-company-profile', [SettingsController::class, 'getPayrollCompanyProfile'])->middleware(['module.enabled:payroll.company_profile', 'permission.assignment:settings.manage|staff.salary.manage']);
-    Route::post('settings/payroll-company-profile', [SettingsController::class, 'updatePayrollCompanyProfile'])->middleware(['module.enabled:payroll.company_profile', 'permission.assignment:settings.manage|staff.salary.manage']);
+    Route::get('settings/overtime-rate-settings', [SettingsController::class, 'getOvertimeRateSettings'])->middleware(['permission.assignment:settings.manage', 'sensitive.no-store']);
+    Route::post('settings/overtime-rate-settings', [SettingsController::class, 'updateOvertimeRateSettings'])->middleware(['permission.assignment:settings.manage', 'sensitive.no-store']);
+    Route::get('settings/salary-workflow-rules', [SettingsController::class, 'getSalaryWorkflowRules'])->middleware(['module.enabled:payroll.workflow_rules', 'permission.assignment.organization:settings.manage', 'sensitive.no-store']);
+    Route::post('settings/salary-workflow-rules', [SettingsController::class, 'updateSalaryWorkflowRules'])->middleware(['module.enabled:payroll.workflow_rules', 'permission.assignment.organization:settings.manage', 'sensitive.no-store']);
+    Route::get('settings/salary-statutory-rates', [SettingsController::class, 'getSalaryStatutoryRates'])->middleware(['module.enabled:payroll.statutory_rates', 'permission.assignment.organization:settings.manage|staff.salary.manage', 'sensitive.no-store']);
+    Route::post('settings/salary-statutory-rates', [SettingsController::class, 'updateSalaryStatutoryRates'])->middleware(['module.enabled:payroll.statutory_rates', 'permission.assignment.organization:settings.manage|staff.salary.manage', 'sensitive.no-store']);
+    Route::get('settings/payroll-company-profile', [SettingsController::class, 'getPayrollCompanyProfile'])->middleware(['module.enabled:payroll.company_profile', 'permission.assignment.organization:settings.manage|staff.salary.manage', 'sensitive.no-store']);
+    Route::post('settings/payroll-company-profile', [SettingsController::class, 'updatePayrollCompanyProfile'])->middleware(['module.enabled:payroll.company_profile', 'permission.assignment.organization:settings.manage|staff.salary.manage', 'sensitive.no-store']);
 
-    Route::post('workflow/attachments', [WorkflowAttachmentController::class, 'store']);
-    Route::get('workflow/attachments/{id}', [WorkflowAttachmentController::class, 'show']);
-    Route::delete('workflow/attachments/{id}', [WorkflowAttachmentController::class, 'destroy']);
+    Route::middleware('sensitive.no-store')->group(function () {
+        Route::post('workflow/attachments', [WorkflowAttachmentController::class, 'store']);
+        Route::get('workflow/attachments/{id}', [WorkflowAttachmentController::class, 'show']);
+        Route::delete('workflow/attachments/{id}', [WorkflowAttachmentController::class, 'destroy']);
+    });
 
-    Route::get('workflow/notifications', [WorkflowNotificationController::class, 'index']);
-    Route::get('workflow/notifications/unread-count', [WorkflowNotificationController::class, 'unreadCount']);
-    Route::post('workflow/notifications/read-all', [WorkflowNotificationController::class, 'markAllRead']);
-    Route::post('workflow/notifications/{id}/read', [WorkflowNotificationController::class, 'markRead']);
-    Route::delete('workflow/notifications', [WorkflowNotificationController::class, 'dismissAll']);
-    Route::delete('workflow/notifications/{id}', [WorkflowNotificationController::class, 'dismiss']);
+    Route::middleware('sensitive.no-store')->group(function () {
+        Route::get('workflow/notifications', [WorkflowNotificationController::class, 'index']);
+        Route::get('workflow/notifications/unread-count', [WorkflowNotificationController::class, 'unreadCount']);
+        Route::post('workflow/notifications/read-all', [WorkflowNotificationController::class, 'markAllRead']);
+        Route::post('workflow/notifications/{id}/read', [WorkflowNotificationController::class, 'markRead']);
+        Route::delete('workflow/notifications', [WorkflowNotificationController::class, 'dismissAll']);
+        Route::delete('workflow/notifications/{id}', [WorkflowNotificationController::class, 'dismiss']);
+    });
 
     Route::middleware('throttle:report-pdf-downloads')->group(function () {
         Route::post('reports/erco/pdf', [ErcoReportPdfController::class, 'download']);
@@ -351,9 +358,9 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::post('migration/ot-payroll/import', [OtPayrollMigrationController::class, 'import'])
         ->middleware('module.enabled:payroll');
     Route::get('overtime/eligibility', [OvertimeController::class, 'eligibility'])
-        ->middleware('permission.assignment:self.overtime|self.payroll');
+        ->middleware(['permission.assignment:self.overtime|self.payroll', 'sensitive.no-store']);
     Route::get('overtime', [OvertimeController::class, 'index'])
-        ->middleware('permission.assignment:self.overtime|self.payroll');
+        ->middleware(['permission.assignment:self.overtime|self.payroll', 'sensitive.no-store']);
 
     // Leave (employee - own records)
     Route::middleware('permission.assignment:self.leave')->group(function () {
@@ -385,7 +392,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
         ->middleware('permission.assignment:self.leave|staff.leave.manage');
 
     // Overtime (employee - own records)
-    Route::middleware('permission.assignment:self.overtime')->group(function () {
+    Route::middleware(['permission.assignment:self.overtime', 'sensitive.no-store'])->group(function () {
         Route::get('overtime/draft', [OvertimeDraftController::class, 'show']);
         Route::post('overtime/draft', [OvertimeDraftController::class, 'store']);
         Route::delete('overtime/draft', [OvertimeDraftController::class, 'destroy']);
@@ -400,7 +407,8 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     });
 
     // Payroll claims (employee - own records)
-    Route::middleware(['module.enabled:payroll.claims', 'permission.assignment:self.payroll'])->group(function () {
+    Route::middleware(['module.enabled:payroll.claims', 'permission.assignment:self.payroll', 'sensitive.no-store'])->group(function () {
+        Route::get('payroll/salary-baseline', [PayrollSalaryBaselineController::class, 'show']);
         Route::get('payroll/claims/drafts', [PayrollClaimDraftController::class, 'index']);
         Route::post('payroll/claims/drafts', [PayrollClaimDraftController::class, 'store']);
         Route::delete('payroll/claims/drafts/{id}', [PayrollClaimDraftController::class, 'destroy']);
@@ -413,7 +421,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
         Route::post('payroll/claims/{id}/cancel', [PayrollClaimController::class, 'cancel']);
     });
 
-    Route::middleware(['module.enabled:payroll.payslips', 'permission.assignment:self.payroll'])->group(function () {
+    Route::middleware(['module.enabled:payroll.payslips', 'permission.assignment:self.payroll', 'sensitive.no-store'])->group(function () {
         Route::get('payroll/payslips', [PayrollPayslipController::class, 'index']);
         Route::get('payroll/payslips/{id}/download', [PayrollPayslipController::class, 'download']);
     });
@@ -456,67 +464,61 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
         ->middleware('permission.assignment:staff.leave.manage');
 
     // Staff overtime management
-    Route::get('staff/overtime/records', [OvertimeManagementController::class, 'index'])
-        ->middleware('permission.assignment:staff.overtime.manage');
-    Route::get('staff/overtime/records/{userId}/{recordId}', [OvertimeManagementController::class, 'show'])
-        ->middleware('permission.assignment:staff.overtime.manage');
-
-    Route::post('staff/overtime/records/{userId}/{recordId}/review', [OvertimeWorkflowController::class, 'review'])
-        ->middleware('permission.assignment:staff.overtime.manage');
-    Route::post('staff/overtime/records/{userId}/{recordId}/recommend', [OvertimeWorkflowController::class, 'recommend'])
-        ->middleware('permission.assignment:staff.overtime.manage');
-    Route::post('staff/overtime/records/{userId}/{recordId}/approve', [OvertimeWorkflowController::class, 'approve'])
-        ->middleware('permission.assignment:staff.overtime.manage');
-    Route::post('staff/overtime/records/{userId}/{recordId}/reject', [OvertimeWorkflowController::class, 'reject'])
-        ->middleware('permission.assignment:staff.overtime.manage');
-    Route::post('staff/overtime/records/{userId}/{recordId}/cancel', [OvertimeWorkflowController::class, 'cancel'])
-        ->middleware('permission.assignment:staff.overtime.manage');
-    Route::post('staff/overtime/records/{userId}/{recordId}/request-correction', [OvertimeWorkflowController::class, 'requestCorrection'])
-        ->middleware('permission.assignment:staff.overtime.manage');
+    Route::middleware(['permission.assignment:staff.overtime.manage', 'sensitive.no-store'])->group(function () {
+        Route::get('staff/overtime/records', [OvertimeManagementController::class, 'index']);
+        Route::get('staff/overtime/record/{publicId}', [OvertimeManagementController::class, 'showByPublicId']);
+        Route::get('staff/overtime/records/{userId}/{recordId}', [OvertimeManagementController::class, 'show']);
+        Route::post('staff/overtime/records/{userId}/{recordId}/review', [OvertimeWorkflowController::class, 'review']);
+        Route::post('staff/overtime/records/{userId}/{recordId}/recommend', [OvertimeWorkflowController::class, 'recommend']);
+        Route::post('staff/overtime/records/{userId}/{recordId}/approve', [OvertimeWorkflowController::class, 'approve']);
+        Route::post('staff/overtime/records/{userId}/{recordId}/reject', [OvertimeWorkflowController::class, 'reject']);
+        Route::post('staff/overtime/records/{userId}/{recordId}/cancel', [OvertimeWorkflowController::class, 'cancel']);
+        Route::post('staff/overtime/records/{userId}/{recordId}/request-correction', [OvertimeWorkflowController::class, 'requestCorrection']);
+    });
 
     // Staff payroll claims management
     Route::get('staff/salary-claims/records', [PayrollClaimManagementController::class, 'index'])
-        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::get('staff/salary-claims/records/{userId}/{claimId}', [PayrollClaimManagementController::class, 'show'])
-        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
 
     Route::post('staff/salary-claims/records/{userId}/{claimId}/check', [PayrollClaimWorkflowController::class, 'check'])
-        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::post('staff/salary-claims/records/{userId}/{claimId}/review', [PayrollClaimWorkflowController::class, 'review'])
-        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::post('staff/salary-claims/records/{userId}/{claimId}/approve', [PayrollClaimWorkflowController::class, 'approve'])
-        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::post('staff/salary-claims/records/{userId}/{claimId}/reject', [PayrollClaimWorkflowController::class, 'reject'])
-        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::post('staff/salary-claims/records/{userId}/{claimId}/cancel', [PayrollClaimWorkflowController::class, 'cancel'])
-        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_claims_management', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::post('staff/salary-claims/records/{userId}/{claimId}/mark-paid', [PayrollClaimWorkflowController::class, 'markPaid'])
-        ->middleware(['module.enabled:payroll.payment_actions', 'permission.assignment:staff.salary.pay']);
+        ->middleware(['module.enabled:payroll.payment_actions', 'permission.assignment.organization:staff.salary.pay', 'sensitive.no-store']);
     Route::post('staff/salary-claims/records/{userId}/{claimId}/unmark-paid', [PayrollClaimWorkflowController::class, 'unmarkPaid'])
-        ->middleware(['module.enabled:payroll.payment_actions', 'permission.assignment:staff.salary.pay']);
+        ->middleware(['module.enabled:payroll.payment_actions', 'permission.assignment.organization:staff.salary.pay', 'sensitive.no-store']);
     Route::post('staff/salary-claims/records/mark-paid/bulk', [PayrollClaimWorkflowController::class, 'markPaidBulk'])
-        ->middleware(['module.enabled:payroll.payment_actions', 'permission.assignment:staff.salary.pay']);
+        ->middleware(['module.enabled:payroll.payment_actions', 'permission.assignment.organization:staff.salary.pay', 'sensitive.no-store']);
     Route::post('staff/salary-claims/records/unmark-paid/bulk', [PayrollClaimWorkflowController::class, 'unmarkPaidBulk'])
-        ->middleware(['module.enabled:payroll.payment_actions', 'permission.assignment:staff.salary.pay']);
+        ->middleware(['module.enabled:payroll.payment_actions', 'permission.assignment.organization:staff.salary.pay', 'sensitive.no-store']);
 
     // Staff salary assignment management
     Route::get('staff/salary-assignments', [SalaryAssignmentController::class, 'index'])
-        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::post('staff/salary-assignments', [SalaryAssignmentController::class, 'store'])
-        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::put('staff/salary-assignments/{id}', [SalaryAssignmentController::class, 'update'])
-        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::delete('staff/salary-assignments/{id}', [SalaryAssignmentController::class, 'destroy'])
-        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::get('staff/salary-assignments/history', [SalaryAssignmentController::class, 'history'])
-        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
 
     Route::get('staff/salary-assignments/drafts', [SalaryAssignmentDraftController::class, 'index'])
-        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::post('staff/salary-assignments/drafts', [SalaryAssignmentDraftController::class, 'store'])
-        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::put('staff/salary-assignments/drafts/{id}', [SalaryAssignmentDraftController::class, 'update'])
-        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
     Route::delete('staff/salary-assignments/drafts/{id}', [SalaryAssignmentDraftController::class, 'destroy'])
-        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment:staff.salary.manage']);
+        ->middleware(['module.enabled:payroll.salary_assignments', 'permission.assignment.organization:staff.salary.manage', 'sensitive.no-store']);
 });

@@ -44,7 +44,10 @@ class DashboardController extends Controller
 
         foreach ($modules as $module) {
             $permission = self::MODULE_PERMISSIONS[$module] ?? null;
-            if (! $permission || ! $authorizationService->hasPermission($user, $permission)) {
+            $hasPermission = $module === 'payroll'
+                ? $authorizationService->hasOrganizationWidePermission($user, (string) $permission)
+                : $authorizationService->hasPermission($user, (string) $permission);
+            if (! $permission || ! $hasPermission) {
                 abort(403, 'Forbidden');
             }
 

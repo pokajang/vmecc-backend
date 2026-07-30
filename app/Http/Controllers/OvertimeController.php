@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\OvertimeRecord;
+use App\Models\User;
 use App\Models\WorkflowAttachment;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
@@ -13,6 +14,7 @@ use App\Services\OvertimeClaimGuardService;
 use App\Services\OvertimeDateClassifier;
 use App\Services\OvertimeEligibilityService;
 use App\Services\OvertimeWorkflowService;
+use App\Services\PayrollOvertimeSnapshotIntegrityService;
 use App\Services\WorkflowNotificationService;
 use App\Services\WorkflowRecipientResolver;
 use App\Services\WorkflowSubmissionContextResolver;
@@ -37,6 +39,7 @@ class OvertimeController extends Controller
         private readonly AssignmentAuthorizationService $authorizationService,
         private readonly OvertimeEligibilityService $overtimeEligibilityService,
         private readonly OvertimeClaimGuardService $claimGuardService,
+        private readonly PayrollOvertimeSnapshotIntegrityService $payrollOvertimeIntegrity,
         private readonly OvertimeDateClassifier $overtimeDateClassifier,
         private readonly HolidayResolver $holidayResolver,
         private readonly HolidayGuidanceFeatureGate $guidanceGate,
@@ -116,7 +119,23 @@ class OvertimeController extends Controller
     public function store(Request $request): JsonResponse
     {
         $user = $request->user();
-        $data = $this->validatePayload($request, (int) $user->id);
+        $data = $this->validatePayload($request, (int) $user->id, validateWindow: false);
+        $submissionKey = trim((string) ($data['submission_key'] ?? ''));
+        if ($submissionKey !== '') {
+            $existing = OvertimeRecord::query()
+                ->where('user_id', $user->id)
+                ->where('submission_key', $submissionKey)
+                ->with('attachment')
+                ->first();
+            if ($existing) {
+                $this->assertSubmissionReplayMatches($existing, $data);
+
+                return response()->json([
+                    'data' => self::formatRecord($existing),
+                    'idempotent_replay' => true,
+                ]);
+            }
+        }
         $effectiveAt = $this->workflowEffectiveAt($data['claim_date'] ?? null, $data['start_time'] ?? null);
         $eligibilityResponse = $this->guardIneligibleUser($user, $effectiveAt);
         if ($eligibilityResponse) {
@@ -134,8 +153,6 @@ class OvertimeController extends Controller
             $derivedOvertimeType = (string) ($data['overtime_type'] ?? 'weekday');
         }
 
-        $claimDate = (string) ($data['claim_date'] ?? now()->toDateString());
-        $displayId = $this->workflowService->generateDisplayId($user->id, (int) date('Y', strtotime($claimDate)));
         $roles = $this->authorizationService->getActiveRoleNames($user)->all();
         $context = $this->submissionContextResolver->resolve($user, $effectiveAt);
         $workflow = $this->workflowService->buildWorkflowForSubmission(array_values(array_unique(array_filter([
@@ -154,61 +171,93 @@ class OvertimeController extends Controller
             'remarks' => '',
         ];
 
-        $row = DB::transaction(function () use ($data, $user, $displayId, $workflow, $context, $entry) {
-            return OvertimeRecord::query()->create([
-                'user_id' => $user->id,
-                'display_id' => $displayId,
-                'overtime_type' => $data['overtime_type'] ?? 'weekday',
-                'claim_date' => $data['claim_date'] ?? null,
-                'start_time' => $data['start_time'] ?? null,
-                'end_time' => $data['end_time'] ?? null,
-                'is_overnight' => (bool) ($data['is_overnight'] ?? false),
-                'duration_minutes' => (int) ($data['duration_minutes'] ?? 0),
-                'reason' => $data['reason'] ?? '',
-                'status' => 'Pending',
-                'applied_at' => now(),
-                'workflow_stage' => $workflow['workflowStage'],
-                'workflow_snapshot' => $workflow['workflowSnapshot'],
-                'workflow_team_id' => $context['teamId'],
-                'workflow_team_name' => $context['teamName'],
-                'workflow_applicant_role' => $context['applicantRole'],
-                'workflow_routing_source' => $context['routingSource'],
-                'duty_coverage_assignment_id' => $context['dutyCoverageAssignmentId'],
-                'next_action_role' => $workflow['nextActionRole'],
-                'applicant_roles' => $workflow['applicantRoles'],
-                'approval_history' => [$entry],
-                'submitted_by' => (string) ($user->name ?? ''),
-                'attachment_id' => $data['attachment_id'] ?? null,
-                'version' => 1,
+        $idempotentReplay = false;
+        try {
+            $row = DB::transaction(function () use ($data, $user, $workflow, $context, $entry, $recipientIds, $submissionKey, &$idempotentReplay) {
+                User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
+                if ($submissionKey !== '') {
+                    $existing = OvertimeRecord::query()
+                        ->where('user_id', $user->id)
+                        ->where('submission_key', $submissionKey)
+                        ->with('attachment')
+                        ->first();
+                    if ($existing) {
+                        $this->assertSubmissionReplayMatches($existing, $data);
+                        $idempotentReplay = true;
+
+                        return $existing;
+                    }
+                }
+                $this->claimGuardService->validateWindow($data, (int) $user->id);
+                $claimDate = (string) ($data['claim_date'] ?? now()->toDateString());
+                $displayId = $this->workflowService->generateDisplayId(
+                    (int) $user->id,
+                    (int) date('Y', strtotime($claimDate)),
+                );
+                $row = OvertimeRecord::query()->create([
+                    'user_id' => $user->id,
+                    'display_id' => $displayId,
+                    'submission_key' => $submissionKey !== '' ? $submissionKey : null,
+                    'overtime_type' => $data['overtime_type'] ?? 'weekday',
+                    'claim_date' => $data['claim_date'] ?? null,
+                    'start_time' => $data['start_time'] ?? null,
+                    'end_time' => $data['end_time'] ?? null,
+                    'is_overnight' => (bool) ($data['is_overnight'] ?? false),
+                    'duration_minutes' => (int) ($data['duration_minutes'] ?? 0),
+                    'reason' => $data['reason'] ?? '',
+                    'status' => 'Pending',
+                    'applied_at' => now(),
+                    'workflow_stage' => $workflow['workflowStage'],
+                    'workflow_snapshot' => $workflow['workflowSnapshot'],
+                    'workflow_team_id' => $context['teamId'],
+                    'workflow_team_name' => $context['teamName'],
+                    'workflow_applicant_role' => $context['applicantRole'],
+                    'workflow_routing_source' => $context['routingSource'],
+                    'duty_coverage_assignment_id' => $context['dutyCoverageAssignmentId'],
+                    'next_action_role' => $workflow['nextActionRole'],
+                    'applicant_roles' => $workflow['applicantRoles'],
+                    'approval_history' => [$entry],
+                    'submitted_by' => (string) ($user->name ?? ''),
+                    'attachment_id' => $data['attachment_id'] ?? null,
+                    'version' => 1,
+                ]);
+
+                $this->emitOvertimeNotification(
+                    row: $row,
+                    actor: $user,
+                    eventType: 'submitted',
+                    recipientIds: $recipientIds,
+                    actionRequired: (bool) $workflow['nextActionRole'],
+                    excludeOwner: true,
+                );
+
+                return $row;
+            });
+        } catch (QueryException $exception) {
+            if ($submissionKey !== '') {
+                $existing = OvertimeRecord::query()
+                    ->where('user_id', $user->id)
+                    ->where('submission_key', $submissionKey)
+                    ->with('attachment')
+                    ->first();
+                if ($existing) {
+                    $this->assertSubmissionReplayMatches($existing, $data);
+
+                    return response()->json([
+                        'data' => self::formatRecord($existing),
+                        'idempotent_replay' => true,
+                    ]);
+                }
+            }
+            throw $exception;
+        }
+
+        if (! $idempotentReplay) {
+            AuditLogger::log($request, 'overtime_submitted', $user, [
+                'overtime_id' => $row->id,
+                'display_id' => $row->display_id,
             ]);
-        });
-
-        $this->notificationService->emit(
-            module: 'overtime',
-            eventType: 'submitted',
-            recordType: 'overtime',
-            recordId: $row->id,
-            recordDisplayId: $row->display_id,
-            ownerUserId: (int) $row->user_id,
-            actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            targetUserIds: $recipientIds,
-            actionRequired: (bool) $workflow['nextActionRole'],
-            metadata: [
-                'module' => 'overtime',
-                'status' => $row->status,
-                'workflowStage' => $row->workflow_stage,
-                'nextActionRole' => $row->next_action_role,
-                'workflowTeamId' => $row->workflow_team_id,
-                'workflowTeamName' => $row->workflow_team_name,
-                'workflowRoutingSource' => $row->workflow_routing_source,
-            ],
-            excludeOwner: true,
-        );
-
-        AuditLogger::log($request, 'overtime_submitted', $user, [
-            'overtime_id' => $row->id,
-            'display_id' => $row->display_id,
-        ]);
+        }
 
         $row->load('attachment');
         $meta = $this->buildClassificationMeta(
@@ -218,7 +267,11 @@ class OvertimeController extends Controller
             'store',
         );
 
-        return response()->json(['data' => self::formatRecord($row), 'meta' => $meta], 201);
+        return response()->json([
+            'data' => self::formatRecord($row),
+            'meta' => $meta,
+            'idempotent_replay' => $idempotentReplay,
+        ], $idempotentReplay ? 200 : 201);
     }
 
     public function update(Request $request, int $id): JsonResponse
@@ -296,36 +349,28 @@ class OvertimeController extends Controller
             'attachment_id' => $data['attachment_id'] ?? $row->attachment_id,
             'version' => ((int) $row->version) + 1,
         ];
-        $this->updateWithVersion($row, $updates, $data['expected_version'] ?? null);
+        $row = DB::transaction(function () use ($row, $updates, $data, $user, $recipientIds, $workflow) {
+            User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
+            $this->claimGuardService->validateWindow($data, (int) $user->id, (int) $row->id);
+            $this->updateWithVersion($row, $updates, $data['expected_version'] ?? null);
+            $updatedRow = $row->fresh(['attachment']);
+            $this->emitOvertimeNotification(
+                row: $updatedRow,
+                actor: $user,
+                eventType: 'edited',
+                recipientIds: $recipientIds,
+                actionRequired: (bool) $workflow['nextActionRole'],
+                excludeOwner: true,
+            );
 
-        $this->notificationService->emit(
-            module: 'overtime',
-            eventType: 'edited',
-            recordType: 'overtime',
-            recordId: $row->id,
-            recordDisplayId: $row->display_id,
-            ownerUserId: (int) $row->user_id,
-            actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            targetUserIds: $recipientIds,
-            actionRequired: (bool) $workflow['nextActionRole'],
-            metadata: [
-                'module' => 'overtime',
-                'status' => $row->status,
-                'workflowStage' => $row->workflow_stage,
-                'nextActionRole' => $row->next_action_role,
-                'workflowTeamId' => $row->workflow_team_id,
-                'workflowTeamName' => $row->workflow_team_name,
-                'workflowRoutingSource' => $row->workflow_routing_source,
-            ],
-            excludeOwner: true,
-        );
+            return $updatedRow;
+        });
 
         AuditLogger::log($request, 'overtime_edited', $user, [
             'overtime_id' => $row->id,
             'display_id' => $row->display_id,
         ]);
 
-        $row->refresh()->load('attachment');
         $meta = $this->buildClassificationMeta(
             $user,
             $derivedOvertimeType,
@@ -353,23 +398,31 @@ class OvertimeController extends Controller
     public function destroy(Request $request, int $id): JsonResponse
     {
         $user = $request->user();
-        $row = OvertimeRecord::query()->where('user_id', $user->id)->findOrFail($id);
         $expectedVersion = $this->validateExpectedVersion($request);
-        $this->assertExpectedVersion($row, $expectedVersion);
+        $row = DB::transaction(function () use ($user, $id, $expectedVersion): OvertimeRecord {
+            $row = OvertimeRecord::query()
+                ->where('user_id', $user->id)
+                ->lockForUpdate()
+                ->findOrFail($id);
+            $this->assertExpectedVersion($row, $expectedVersion);
 
-        if (! in_array($row->status, ['Draft', 'Cancelled'], true)) {
-            throw ValidationException::withMessages([
-                'status' => ['Only draft or cancelled overtime records can be deleted.'],
-            ]);
-        }
+            if (! in_array($row->status, ['Draft', 'Cancelled'], true)) {
+                throw ValidationException::withMessages([
+                    'status' => ['Only draft or cancelled overtime records can be deleted.'],
+                ]);
+            }
+            $this->payrollOvertimeIntegrity->assertNotLockedByPaidSalary($row);
 
-        $deleted = OvertimeRecord::query()
-            ->whereKey($row->id)
-            ->where('version', $expectedVersion ?? $row->version)
-            ->delete();
-        if ($deleted === 0) {
-            $this->throwVersionConflict($row);
-        }
+            $deleted = OvertimeRecord::query()
+                ->whereKey($row->id)
+                ->where('version', $expectedVersion)
+                ->delete();
+            if ($deleted === 0) {
+                $this->throwVersionConflict($row);
+            }
+
+            return $row;
+        });
 
         AuditLogger::log($request, 'overtime_deleted', $user, [
             'overtime_id' => $row->id,
@@ -382,73 +435,68 @@ class OvertimeController extends Controller
     public function cancel(Request $request, int $id): JsonResponse
     {
         $user = $request->user();
-        $row = OvertimeRecord::query()->where('user_id', $user->id)->with('attachment')->findOrFail($id);
-
-        if (! in_array($row->status, ['Pending', 'Approved'], true)) {
-            throw ValidationException::withMessages([
-                'status' => ['Only pending or approved overtime records can be cancelled.'],
-            ]);
-        }
-
         $payload = $request->validate([
             'remarks' => ['nullable', 'string', 'max:1000'],
-            'expected_version' => ['nullable', 'integer', 'min:1'],
+            'expected_version' => ['required', 'integer', 'min:1'],
         ]);
-        $this->assertExpectedVersion($row, $payload['expected_version'] ?? null);
+        $row = DB::transaction(function () use ($id, $payload, $user): OvertimeRecord {
+            $row = OvertimeRecord::query()
+                ->where('user_id', $user->id)
+                ->with('attachment')
+                ->lockForUpdate()
+                ->findOrFail($id);
+            if (! in_array($row->status, ['Pending', 'Approved'], true)) {
+                throw ValidationException::withMessages([
+                    'status' => ['Only pending or approved overtime records can be cancelled.'],
+                ]);
+            }
+            $this->assertExpectedVersion($row, $payload['expected_version'] ?? null);
+            $this->payrollOvertimeIntegrity->assertNotLockedByPaidSalary($row);
 
-        $nextRole = $row->next_action_role;
-        $recipientIds = $this->resolveStageRecipientIds(
-            $nextRole,
-            $row->workflow_team_id ? (int) $row->workflow_team_id : null,
-            now(),
-            (int) $row->user_id,
-            false,
-        );
-        $updates = $this->workflowService->advanceWorkflow(
-            $row,
-            'cancel',
-            (int) $user->id,
-            (string) ($user->name ?? ''),
-            $payload['remarks'] ?? null,
-        );
+            $recipientIds = $this->resolveStageRecipientIds(
+                $row->next_action_role,
+                $row->workflow_team_id ? (int) $row->workflow_team_id : null,
+                now(),
+                (int) $row->user_id,
+                false,
+            );
+            $updates = $this->workflowService->advanceWorkflow(
+                $row,
+                'cancel',
+                (int) $user->id,
+                (string) ($user->name ?? ''),
+                $payload['remarks'] ?? null,
+            );
+            $updates['version'] = ((int) $row->version) + 1;
+            $this->updateWithVersion($row, $updates, $payload['expected_version'] ?? null);
+            $updatedRow = $row->fresh(['attachment']);
+            $this->emitOvertimeNotification(
+                row: $updatedRow,
+                actor: $user,
+                eventType: 'cancelled',
+                recipientIds: $recipientIds,
+                actionRequired: false,
+                remarks: $payload['remarks'] ?? null,
+                excludeOwner: true,
+            );
 
-        $updates['version'] = ((int) $row->version) + 1;
-        $this->updateWithVersion($row, $updates, $payload['expected_version'] ?? null);
-
-        $this->notificationService->emit(
-            module: 'overtime',
-            eventType: 'cancelled',
-            recordType: 'overtime',
-            recordId: $row->id,
-            recordDisplayId: $row->display_id,
-            ownerUserId: (int) $row->user_id,
-            actor: ['userId' => $user->id, 'name' => $user->name, 'email' => $user->email],
-            targetUserIds: $recipientIds,
-            actionRequired: false,
-            remarks: $payload['remarks'] ?? null,
-            metadata: [
-                'module' => 'overtime',
-                'status' => 'Cancelled',
-                'workflowStage' => 'done',
-                'workflowTeamId' => $row->workflow_team_id,
-                'workflowTeamName' => $row->workflow_team_name,
-                'workflowRoutingSource' => $row->workflow_routing_source,
-            ],
-            excludeOwner: true,
-        );
+            return $updatedRow;
+        });
 
         AuditLogger::log($request, 'overtime_cancelled', $user, [
             'overtime_id' => $row->id,
             'display_id' => $row->display_id,
         ]);
 
-        $row->refresh()->load('attachment');
-
         return response()->json(['data' => self::formatRecord($row)]);
     }
 
-    private function validatePayload(Request $request, int $userId, ?int $excludingRecordId = null): array
-    {
+    private function validatePayload(
+        Request $request,
+        int $userId,
+        ?int $excludingRecordId = null,
+        bool $validateWindow = true,
+    ): array {
         $payload = $request->all();
         $payload['start_time'] = $this->normalizeClockTime($payload['start_time'] ?? null);
         $payload['end_time'] = $this->normalizeClockTime($payload['end_time'] ?? null);
@@ -462,9 +510,14 @@ class OvertimeController extends Controller
             'duration_minutes' => ['required', 'integer', 'min:1'],
             'reason' => ['required', 'string', 'min:5', 'max:3000'],
             'attachment_id' => ['nullable', 'integer', 'exists:workflow_attachments,id'],
-            'expected_version' => ['nullable', 'integer', 'min:1'],
+            'expected_version' => $excludingRecordId
+                ? ['required', 'integer', 'min:1']
+                : ['nullable', 'integer', 'min:1'],
+            'submission_key' => ['nullable', 'string', 'max:64'],
         ])->validate();
-        $this->claimGuardService->validateWindow($validated, $userId, $excludingRecordId);
+        if ($validateWindow) {
+            $this->claimGuardService->validateWindow($validated, $userId, $excludingRecordId);
+        }
 
         if (! empty($validated['attachment_id']) && ! WorkflowAttachment::query()
             ->whereKey($validated['attachment_id'])
@@ -590,6 +643,7 @@ class OvertimeController extends Controller
 
         return [
             'id' => $row->id,
+            'public_id' => $row->public_id,
             'display_id' => $row->display_id,
             'user_id' => $row->user_id,
             'overtime_type' => $row->overtime_type,
@@ -662,13 +716,13 @@ class OvertimeController extends Controller
         return $ids;
     }
 
-    private function validateExpectedVersion(Request $request): ?int
+    private function validateExpectedVersion(Request $request): int
     {
         $payload = $request->validate([
-            'expected_version' => ['nullable', 'integer', 'min:1'],
+            'expected_version' => ['required', 'integer', 'min:1'],
         ]);
 
-        return array_key_exists('expected_version', $payload) ? (int) $payload['expected_version'] : null;
+        return (int) $payload['expected_version'];
     }
 
     private function assertExpectedVersion(OvertimeRecord $row, ?int $expectedVersion): void
@@ -697,6 +751,75 @@ class OvertimeController extends Controller
             'message' => 'This overtime claim changed. Reload the latest record before trying again.',
             'currentVersion' => (int) $row->version,
             'currentRecord' => self::formatRecord($row),
+        ], 409));
+    }
+
+    private function emitOvertimeNotification(
+        OvertimeRecord $row,
+        User $actor,
+        string $eventType,
+        array $recipientIds,
+        bool $actionRequired,
+        ?string $remarks = null,
+        bool $excludeOwner = false,
+    ): void {
+        $this->notificationService->emit(
+            module: 'overtime',
+            eventType: $eventType,
+            recordType: 'overtime',
+            recordId: $row->id,
+            recordDisplayId: $row->display_id,
+            ownerUserId: (int) $row->user_id,
+            actor: ['userId' => $actor->id, 'name' => $actor->name, 'email' => $actor->email],
+            targetUserIds: $recipientIds,
+            actionRequired: $actionRequired,
+            remarks: $remarks,
+            metadata: [
+                'module' => 'overtime',
+                'status' => $row->status,
+                'workflowStage' => $row->workflow_stage,
+                'nextActionRole' => $row->next_action_role,
+                'workflowTeamId' => $row->workflow_team_id,
+                'workflowTeamName' => $row->workflow_team_name,
+                'workflowRoutingSource' => $row->workflow_routing_source,
+                'detailRouteKey' => (string) $row->public_id,
+            ],
+            excludeOwner: $excludeOwner,
+        );
+    }
+
+    private function assertSubmissionReplayMatches(OvertimeRecord $record, array $payload): void
+    {
+        $stored = [
+            'overtime_type' => (string) $record->overtime_type,
+            'claim_date' => optional($record->claim_date)->toDateString(),
+            'start_time' => self::normalizeTimeForResponse($record->start_time),
+            'end_time' => self::normalizeTimeForResponse($record->end_time),
+            'is_overnight' => (bool) $record->is_overnight,
+            'duration_minutes' => (int) $record->duration_minutes,
+            'reason' => (string) $record->reason,
+            'attachment_id' => $record->attachment_id ? (int) $record->attachment_id : null,
+        ];
+        $requested = [
+            'overtime_type' => (string) ($payload['overtime_type'] ?? ''),
+            'claim_date' => (string) ($payload['claim_date'] ?? ''),
+            'start_time' => (string) ($payload['start_time'] ?? ''),
+            'end_time' => (string) ($payload['end_time'] ?? ''),
+            'is_overnight' => (bool) ($payload['is_overnight'] ?? false),
+            'duration_minutes' => (int) ($payload['duration_minutes'] ?? 0),
+            'reason' => (string) ($payload['reason'] ?? ''),
+            'attachment_id' => ! empty($payload['attachment_id'])
+                ? (int) $payload['attachment_id']
+                : null,
+        ];
+
+        if ($stored === $requested) {
+            return;
+        }
+
+        throw new HttpResponseException(response()->json([
+            'code' => 'OT_SUBMISSION_KEY_REUSED',
+            'message' => 'This submission key was already used for different overtime data.',
         ], 409));
     }
 

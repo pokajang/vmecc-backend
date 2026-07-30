@@ -2,14 +2,20 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\PayrollClaim;
 use App\Models\SalaryAssignment;
 use App\Models\SalaryAssignmentHistory;
+use App\Models\User;
 use App\Services\AuditLogger;
 use App\Services\SalaryAssignmentService;
 use App\Services\WorkflowNotificationService;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class SalaryAssignmentController extends Controller
 {
@@ -44,19 +50,27 @@ class SalaryAssignmentController extends Controller
             'updated_by' => (string) ($actor->name ?? ''),
         ]));
 
-        $row = SalaryAssignment::query()->create($normalized);
-        $history = $this->assignmentService->writeHistory(
-            $row,
-            'created',
-            [],
-            $row->fresh()->load(['employee'])->toArray(),
-            (string) ($actor->name ?? '')
-        );
+        [$row, $history] = DB::transaction(function () use ($normalized, $actor) {
+            $this->lockEmployeesForAssignmentWrites([(int) $normalized['employee_user_id']]);
+            $this->assertEffectiveDateAvailable(
+                (int) $normalized['employee_user_id'],
+                (string) $normalized['effective_from'],
+            );
+            $row = SalaryAssignment::query()->create(array_merge($normalized, ['version' => 1]));
+            $history = $this->assignmentService->writeHistory(
+                $row,
+                'created',
+                [],
+                $row->fresh()->load(['employee'])->toArray(),
+                (string) ($actor->name ?? '')
+            );
+            $row->load(['employee']);
+            $this->emitAssignmentNotification($row, $actor, 'set_salary');
+
+            return [$row, $history];
+        });
 
         AuditLogger::log($request, 'salary_assignment_created', $actor, ['assignment_id' => $row->id]);
-
-        $row->load(['employee']);
-        $this->emitAssignmentNotification($row, $actor, 'set_salary');
 
         return response()->json([
             'data' => $this->formatRow($row),
@@ -67,28 +81,61 @@ class SalaryAssignmentController extends Controller
     public function update(Request $request, int $id): JsonResponse
     {
         $actor = $request->user();
-        $row = SalaryAssignment::query()->with(['employee'])->findOrFail($id);
-        $before = $row->toArray();
-
         $payload = $this->validatePayload($request);
         $normalized = $this->assignmentService->normalizePayload(array_merge($payload, [
             'updated_by' => (string) ($actor->name ?? ''),
         ]));
         unset($normalized['reference_id']);
 
-        $row->update($normalized);
-        $history = $this->assignmentService->writeHistory(
-            $row,
-            'updated',
-            $before,
-            $row->fresh()->load(['employee'])->toArray(),
-            (string) ($actor->name ?? '')
-        );
+        [$row, $history] = DB::transaction(function () use ($id, $payload, $normalized, $actor) {
+            $employeeUserId = (int) SalaryAssignment::query()
+                ->whereKey($id)
+                ->value('employee_user_id');
+            if ($employeeUserId <= 0) {
+                abort(404);
+            }
+            $this->lockEmployeesForAssignmentWrites([$employeeUserId]);
+
+            $row = SalaryAssignment::query()->with(['employee'])->lockForUpdate()->findOrFail($id);
+            $this->assertExpectedVersion($row, (int) $payload['expected_version']);
+            if ((int) $normalized['employee_user_id'] !== (int) $row->employee_user_id) {
+                throw ValidationException::withMessages([
+                    'employee_user_id' => [
+                        'The employee on a salary assignment cannot be changed. Create a new assignment for the correct employee.',
+                    ],
+                ]);
+            }
+            if (PayrollClaim::query()->where('salary_assignment_id', $row->id)->exists()) {
+                throw ValidationException::withMessages([
+                    'assignment' => [
+                        'This assignment is referenced by a payroll claim and is immutable. Create a new effective-dated assignment instead.',
+                    ],
+                ]);
+            }
+            $before = $row->toArray();
+            $this->assertEffectiveDateAvailable(
+                (int) $normalized['employee_user_id'],
+                (string) $normalized['effective_from'],
+                (int) $row->id,
+            );
+            $row->update(array_merge($normalized, [
+                'effective_date_key' => $normalized['effective_from'],
+                'version' => ((int) $row->version) + 1,
+            ]));
+            $history = $this->assignmentService->writeHistory(
+                $row,
+                'updated',
+                $before,
+                $row->fresh()->load(['employee'])->toArray(),
+                (string) ($actor->name ?? '')
+            );
+            $row->refresh()->load(['employee']);
+            $this->emitAssignmentNotification($row, $actor, 'updated_salary');
+
+            return [$row, $history];
+        });
 
         AuditLogger::log($request, 'salary_assignment_updated', $actor, ['assignment_id' => $row->id]);
-
-        $row->refresh()->load(['employee']);
-        $this->emitAssignmentNotification($row, $actor, 'updated_salary');
 
         return response()->json([
             'data' => $this->formatRow($row),
@@ -99,17 +146,41 @@ class SalaryAssignmentController extends Controller
     public function destroy(Request $request, int $id): JsonResponse
     {
         $actor = $request->user();
-        $row = SalaryAssignment::query()->with(['employee'])->findOrFail($id);
-        $before = $row->toArray();
-        $history = $this->assignmentService->writeHistory(
-            $row,
-            'deleted',
-            $before,
-            [],
-            (string) ($actor->name ?? '')
-        );
-        $this->emitAssignmentNotification($row, $actor, 'deleted_salary');
-        $row->delete();
+        $expectedVersion = $request->validate([
+            'expected_version' => ['required', 'integer', 'min:1'],
+        ])['expected_version'];
+        [$row, $history] = DB::transaction(function () use ($id, $expectedVersion, $actor) {
+            $employeeUserId = (int) SalaryAssignment::query()
+                ->whereKey($id)
+                ->value('employee_user_id');
+            if ($employeeUserId <= 0) {
+                abort(404);
+            }
+            $this->lockEmployeesForAssignmentWrites([$employeeUserId]);
+
+            $row = SalaryAssignment::query()->with(['employee'])->lockForUpdate()->findOrFail($id);
+            $this->assertExpectedVersion($row, (int) $expectedVersion);
+            if (PayrollClaim::query()->where('salary_assignment_id', $row->id)->exists()) {
+                throw ValidationException::withMessages([
+                    'assignment' => [
+                        'This assignment is referenced by a payroll claim and cannot be deleted. Publish a replacement assignment instead.',
+                    ],
+                ]);
+            }
+            $before = $row->toArray();
+            $history = $this->assignmentService->writeHistory(
+                $row,
+                'deleted',
+                $before,
+                [],
+                (string) ($actor->name ?? '')
+            );
+            $row->update(['effective_date_key' => null]);
+            $row->delete();
+            $this->emitAssignmentNotification($row, $actor, 'deleted_salary');
+
+            return [$row, $history];
+        });
 
         AuditLogger::log($request, 'salary_assignment_deleted', $actor, ['assignment_id' => $row->id]);
 
@@ -145,7 +216,7 @@ class SalaryAssignmentController extends Controller
         $validator = Validator::make($request->all(), [
             'reference_id' => ['nullable', 'string', 'max:50'],
             'employee_user_id' => ['required', 'integer', 'exists:users,id'],
-            'status' => ['nullable', 'string', 'max:80'],
+            'status' => ['nullable', Rule::in(['Active', 'Scheduled'])],
             'effective_from' => ['required', 'date'],
             'basic_salary' => ['required', 'numeric', 'min:0', 'max:99999999.99'],
             'allowances' => ['nullable', 'array', 'max:50'],
@@ -166,19 +237,48 @@ class SalaryAssignmentController extends Controller
             'notes_history.*.createdBy' => ['nullable', 'string', 'max:120'],
             'notes_history.*.updatedAt' => ['nullable', 'string', 'max:40'],
             'notes_history.*.updatedBy' => ['nullable', 'string', 'max:120'],
+            'expected_version' => [
+                $request->isMethod('put') || $request->isMethod('patch') ? 'required' : 'nullable',
+                'integer',
+                'min:1',
+            ],
         ]);
 
         $validator->after(function ($validator) {
-            $allowances = $validator->getData()['allowances'] ?? [];
+            $data = $validator->getData();
+            $allowances = $data['allowances'] ?? [];
             if (! is_array($allowances)) {
                 return;
             }
             foreach ($allowances as $index => $allowance) {
+                if (! is_array($allowance)) {
+                    continue;
+                }
                 $amount = is_numeric($allowance['amount'] ?? null) ? (float) $allowance['amount'] : 0.0;
                 $name = trim((string) ($allowance['name'] ?? ''));
                 if ($amount > 0 && $name === '') {
                     $validator->errors()->add("allowances.$index.name", 'Allowance name is required when amount is greater than zero.');
                 }
+            }
+            $gross = (float) ($data['basic_salary'] ?? 0)
+                + (float) collect($allowances)->sum(
+                    fn ($allowance) => is_array($allowance) && is_numeric($allowance['amount'] ?? null)
+                        ? (float) $allowance['amount']
+                        : 0,
+                );
+            $employeeContributions = is_array($data['employee_contributions'] ?? null)
+                ? $data['employee_contributions']
+                : [];
+            $deductions = collect(['epf', 'perkeso', 'sip'])->sum(
+                fn (string $key) => is_numeric($employeeContributions[$key] ?? null)
+                    ? (float) $employeeContributions[$key]
+                    : 0,
+            );
+            if ($deductions > $gross) {
+                $validator->errors()->add(
+                    'employee_contributions',
+                    'Employee deductions must not exceed gross salary.',
+                );
             }
         });
 
@@ -189,6 +289,7 @@ class SalaryAssignmentController extends Controller
     {
         return [
             'id' => $row->id,
+            'public_id' => $row->public_id,
             'reference_id' => $row->reference_id,
             'employee_user_id' => $row->employee_user_id,
             'employee' => $row->employee?->name ?? '',
@@ -205,7 +306,53 @@ class SalaryAssignmentController extends Controller
             'updated_by' => $row->updated_by,
             'created_at' => optional($row->created_at)->toIso8601String(),
             'updated_at' => optional($row->updated_at)->toIso8601String(),
+            'version' => (int) $row->version,
         ];
+    }
+
+    private function assertEffectiveDateAvailable(
+        int $employeeUserId,
+        string $effectiveFrom,
+        ?int $ignoreAssignmentId = null,
+    ): void {
+        $query = SalaryAssignment::query()
+            ->where('employee_user_id', $employeeUserId)
+            ->whereDate('effective_from', $effectiveFrom)
+            ->lockForUpdate();
+        if ($ignoreAssignmentId) {
+            $query->whereKeyNot($ignoreAssignmentId);
+        }
+        if ($query->exists()) {
+            throw ValidationException::withMessages([
+                'effective_from' => ['An assignment already exists for this employee and effective date.'],
+            ]);
+        }
+    }
+
+    private function lockEmployeesForAssignmentWrites(array $employeeUserIds): void
+    {
+        $ids = collect($employeeUserIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+
+        User::query()->whereKey($ids)->orderBy('id')->lockForUpdate()->get(['id']);
+    }
+
+    private function assertExpectedVersion(SalaryAssignment $assignment, int $expectedVersion): void
+    {
+        if ($expectedVersion === (int) $assignment->version) {
+            return;
+        }
+
+        throw new HttpResponseException(response()->json([
+            'code' => 'SALARY_ASSIGNMENT_VERSION_CONFLICT',
+            'message' => 'This salary assignment changed. Reload it before trying again.',
+            'currentVersion' => (int) $assignment->version,
+        ], 409));
     }
 
     private function emitAssignmentNotification(SalaryAssignment $row, $actor, string $eventType): void
@@ -235,7 +382,7 @@ class SalaryAssignmentController extends Controller
                 'status' => (string) ($row->status ?? 'Active'),
                 'workflowStage' => null,
                 'nextActionRole' => self::NOTIFICATION_ROLE_TARGETS[0],
-                'detailRouteKey' => (string) ($row->id ?? ''),
+                'detailRouteKey' => (string) ($row->public_id ?: $row->id),
             ],
         );
     }
