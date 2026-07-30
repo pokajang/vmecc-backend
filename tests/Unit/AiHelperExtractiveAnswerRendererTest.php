@@ -58,4 +58,25 @@ MD,
         $this->assertStringNotContainsString('disahkan', $result['content']);
         $this->assertStringContainsString('[S1]', $result['content']);
     }
+
+    public function test_it_omits_internal_visual_reference_markers_from_fallback_content(): void
+    {
+        $result = app(AiHelperExtractiveAnswerRenderer::class)->render(
+            [[
+                'source_id' => 'S1',
+                'content' => <<<'MD'
+!ANNEX 18 ERP source visual from PDF page 6: Figure 2
+
+Primary search uses the documented rescue pattern.
+MD,
+            ]],
+            [['source_id' => 'S1', 'title' => 'ANNEX 18 ERP']],
+            'en',
+            'validation_failed',
+        );
+
+        $this->assertNotNull($result);
+        $this->assertStringNotContainsString('source visual from PDF', $result['content']);
+        $this->assertStringContainsString('Primary search', $result['content']);
+    }
 }

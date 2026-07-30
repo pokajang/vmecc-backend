@@ -1169,7 +1169,8 @@ class AiHelperController extends Controller
                     (string) $validated['message'],
                     $previousUserMessages,
                 );
-                $knowledgeRequired = (bool) ($preflightAnalysis['evidence_required'] ?? true);
+                $knowledgeRequired = (bool) ($preflightAnalysis['evidence_required'] ?? true)
+                    || ($preflightAnalysis['retrieval_policy'] ?? 'required') !== 'none';
             } catch (Throwable $e) {
                 return $this->safeFailure($request, $e, 'stream_preflight');
             }

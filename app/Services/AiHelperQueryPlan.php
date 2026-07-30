@@ -15,6 +15,9 @@ final readonly class AiHelperQueryPlan
      * @param  array<int, string>  $revisions
      * @param  array<int, string>  $documentCodes
      * @param  array<int, string>  $entityKeys
+     * @param  array<int, string>  $resolvedEntities
+     * @param  array<int, string>  $requestedFacets
+     * @param  array<int, string>  $unknownAcronyms
      */
     public function __construct(
         public string $intent,
@@ -24,6 +27,7 @@ final readonly class AiHelperQueryPlan
         public string $language,
         public string $message,
         public string $query,
+        public ?string $conversationAnchor,
         public string $normalizedQuery,
         public array $terms,
         public array $expandedTerms,
@@ -45,6 +49,10 @@ final readonly class AiHelperQueryPlan
         public bool $sensitiveRequest,
         public string $answerMode,
         public array $entityKeys,
+        public array $resolvedEntities,
+        public array $requestedFacets,
+        public array $unknownAcronyms,
+        public string $retrievalPolicy,
         public bool $evidenceRequired,
         public bool $clarificationRequired,
         public ?string $clarificationReason,
@@ -62,6 +70,8 @@ final readonly class AiHelperQueryPlan
             'language' => $this->language,
             'message' => $this->message,
             'query' => $this->query,
+            'original_query' => $this->message,
+            'conversation_anchor' => $this->conversationAnchor,
             'normalized_query' => $this->normalizedQuery,
             'terms' => $this->terms,
             'expanded_terms' => $this->expandedTerms,
@@ -84,6 +94,10 @@ final readonly class AiHelperQueryPlan
             'sensitive_request' => $this->sensitiveRequest,
             'answer_mode' => $this->answerMode,
             'entity_keys' => $this->entityKeys,
+            'resolved_entities' => $this->resolvedEntities,
+            'requested_facets' => $this->requestedFacets,
+            'unknown_acronyms' => $this->unknownAcronyms,
+            'retrieval_policy' => $this->retrievalPolicy,
             'evidence_required' => $this->evidenceRequired,
             'clarification_required' => $this->clarificationRequired,
             'clarification_reason' => $this->clarificationReason,

@@ -19,6 +19,8 @@ class AiHelperKnowledgeRetriever
         private readonly AiHelperDocumentCandidateSelector $candidateSelector,
         private readonly AiHelperTopicAliasRegistry $topicAliases,
         private readonly AiHelperSystemGuideCatalog $systemGuides,
+        private readonly AiHelperEvidenceAdequacyValidator $evidenceAdequacy,
+        private readonly AiHelperKnowledgeEntityResolver $entityResolver,
     ) {}
 
     /** @return array{analysis: array<string, mixed>, guidance: array<int, array<string, mixed>>, trace: array<string, mixed>} */
@@ -55,9 +57,13 @@ class AiHelperKnowledgeRetriever
                 'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
             ]];
         }
-        if (! ($analysis['evidence_required'] ?? true)) {
+        $retrievalPolicy = (string) ($analysis['retrieval_policy']
+            ?? (($analysis['evidence_required'] ?? true) ? 'required' : 'none'));
+        if ($retrievalPolicy === 'none') {
             return ['analysis' => $analysis, 'guidance' => [], 'trace' => [
                 'mode' => (string) ($analysis['answer_mode'] ?? 'general_conversation'),
+                'retrieval_policy' => $retrievalPolicy,
+                'probe_attempted' => false,
                 'documents_considered' => 0,
                 'documents_selected' => 0,
                 'chunks_selected' => 0,
@@ -74,6 +80,15 @@ class AiHelperKnowledgeRetriever
         $rankingContext['route_key'] = $audience->routeKey;
         $rankingContext['module_key'] = $audience->moduleKey;
         $authorizedIds = $this->authorizedEntryIds($user, $audience, $analysis);
+        $entityResolution = $this->entityResolver->resolve((string) $analysis['query'], $authorizedIds);
+        $analysis['entity_entry_ids'] = $this->preferredEntityEntryIds(
+            (string) $analysis['query'],
+            $entityResolution['matches'],
+        );
+        if ($entityResolution['matches'] !== [] && ($analysis['resolved_entities'] ?? []) === []) {
+            $analysis = $this->mergeCorpusEntities($analysis, $entityResolution);
+            $retrievalPolicy = 'required';
+        }
         $entries = AiHelperKnowledgeEntry::query()
             ->whereKey($authorizedIds)
             ->with('sourceDocument:id,title,source_filename')
@@ -109,6 +124,11 @@ class AiHelperKnowledgeRetriever
             $taskScore = $retrievalV4 ? $this->documentTaskScore($entry, $analysis) : 0;
             $taskConflict = $retrievalV4 && $this->documentTaskConflict($entry, $analysis);
             $entityConflict = $retrievalV4 && $this->documentEntityConflict($entry, $analysis);
+            $entityMatch = in_array(
+                (int) $entry->id,
+                array_map('intval', (array) ($analysis['entity_entry_ids'] ?? [])),
+                true,
+            );
             $exactMatch = $this->isExactDocumentMatch($entry, $analysis);
             $pageMatch = $this->isPageMatch($entry, $rankingContext);
             $semanticCompatible = $semanticCompatibleIds->has((int) $entry->id);
@@ -126,9 +146,10 @@ class AiHelperKnowledgeRetriever
                 'task_score' => $taskScore,
                 'task_conflict' => $taskConflict,
                 'entity_conflict' => $entityConflict,
+                'entity_match' => $entityMatch,
                 'page_match' => $pageMatch,
                 'semantic_compatible' => $semanticCompatible,
-                'protected_match' => $exactMatch || $taskScore > 0 || ($topicScore > 0
+                'protected_match' => $exactMatch || $entityMatch || $taskScore > 0 || ($topicScore > 0
                     && ($analysis['task_keys'] ?? []) === []
                     && in_array($analysis['context_dependency'] ?? null, ['explicit_topic', 'mixed'], true))
                     || ($pageMatch && ($analysis['context_dependency'] ?? null) === 'page_deictic'),
@@ -157,6 +178,8 @@ class AiHelperKnowledgeRetriever
                     || $this->isRelevantCandidate($candidate, $analysis))
                 ->values();
         }
+        $initialAdequacy = $this->evidenceAdequacy->assessCandidates($rankedChunks, $analysis);
+        $rankedChunks = $initialAdequacy['candidates'];
         $recoveryAttempted = false;
         $recoverySucceeded = false;
         $scopeRecoveryReason = null;
@@ -197,6 +220,8 @@ class AiHelperKnowledgeRetriever
                 ->filter(fn (array $candidate) => ($candidate['protected_match'] ?? false)
                     || $this->isRelevantCandidate($candidate, $recoveryAnalysis))
                 ->values();
+            $recoveryAdequacy = $this->evidenceAdequacy->assessCandidates($recoveryChunks, $recoveryAnalysis);
+            $recoveryChunks = $recoveryAdequacy['candidates'];
             if ($recoveryChunks->isNotEmpty()) {
                 $rankedChunks = $recoveryChunks;
                 $selectedDocuments = $recoveryDocuments;
@@ -210,6 +235,12 @@ class AiHelperKnowledgeRetriever
         if ($exactDocuments->count() > 1) {
             $rankedChunks = $this->prioritizeExactDocumentRepresentatives($rankedChunks, $exactDocuments);
         }
+        $rankedChunks = $this->prioritizeProtectedEvidenceRepresentatives($rankedChunks, $analysis);
+        $rankedChunks = $this->prioritizeEvidenceRepresentative(
+            $rankedChunks,
+            $rankedChunks,
+            $analysis,
+        );
         $candidateChunkLimit = max(
             (int) config('ai_helper.knowledge_retrieval_limit', 18),
             (int) config('ai_helper.retrieval_candidate_chunks', 40),
@@ -251,7 +282,15 @@ class AiHelperKnowledgeRetriever
         $subqueryCoverage = $retrievalV3
             ? $this->prioritizeSubqueryCoverage($rankedChunks, $analysis)
             : ['candidates' => $rankedChunks, 'requested' => 1, 'covered' => 1];
-        $rankedChunks = $subqueryCoverage['candidates'];
+        $rankedChunks = $this->prioritizeProtectedEvidenceRepresentatives(
+            $subqueryCoverage['candidates'],
+            $analysis,
+        );
+        $rankedChunks = $this->prioritizeEvidenceRepresentative(
+            $rankedChunks,
+            $preRerankCandidates,
+            $analysis,
+        );
 
         $limit = max(1, (int) config('ai_helper.knowledge_retrieval_limit', 18));
         $perDocument = max(1, (int) config('ai_helper.knowledge_max_chunks_per_document', 4));
@@ -312,9 +351,44 @@ class AiHelperKnowledgeRetriever
             })
             ->all();
 
+        $probePromoted = false;
+        if ($retrievalPolicy === 'probe') {
+            $probeLexicalThreshold = max(
+                0.0,
+                min(1.0, (float) config('ai_helper.retrieval_probe_min_lexical_coverage', 0.5)),
+            );
+            $probeSemanticThreshold = max(
+                0.0,
+                min(1.0, (float) config('ai_helper.retrieval_probe_min_semantic_similarity', 0.52)),
+            );
+            $probePromoted = $guidance !== [] && (
+                (float) ($rankedChunks->max('lexical_coverage') ?? 0) >= $probeLexicalThreshold
+                || (float) ($rankedChunks->max('semantic_score') ?? 0) >= $probeSemanticThreshold
+            );
+            if ($probePromoted) {
+                $analysis['answer_mode'] = 'operational_knowledge';
+                $analysis['evidence_required'] = true;
+                $analysis['retrieval_policy'] = 'required';
+            } else {
+                $guidance = [];
+                $selected = collect();
+                $tokens = 0;
+                if (($analysis['unknown_acronyms'] ?? []) !== []) {
+                    $analysis['answer_mode'] = 'operational_knowledge';
+                    $analysis['evidence_required'] = true;
+                    $analysis['retrieval_policy'] = 'required';
+                    $analysis['clarification_required'] = true;
+                    $analysis['clarification_reason'] = 'unknown_acronym_not_found';
+                }
+            }
+        }
+
         return ['analysis' => $analysis, 'guidance' => $guidance, 'trace' => [
             'pipeline_version' => $pipelineVersion,
             'mode' => $queryEmbedding ? 'hybrid' : 'lexical',
+            'retrieval_policy' => $retrievalPolicy,
+            'probe_attempted' => $retrievalPolicy === 'probe',
+            'probe_promoted' => $probePromoted,
             'documents_considered' => $entries->count(),
             'documents_selected' => $selected->pluck('entry.id')->unique()->count(),
             'document_ids' => $selected->pluck('entry.id')->unique()->values()->all(),
@@ -331,6 +405,20 @@ class AiHelperKnowledgeRetriever
             'token_estimate' => $tokens,
             'semantic_fallback' => $semanticFallback,
             'rerank' => $rerankMetadata,
+            'entity_resolution' => [
+                'matches' => collect($entityResolution['matches'])->map(fn (array $match) => [
+                    'canonical_name' => $match['canonical_name'],
+                    'entity_type' => $match['entity_type'],
+                    'matched_aliases' => $match['matched_aliases'],
+                ])->values()->all(),
+                'ambiguous_aliases' => $entityResolution['ambiguous_aliases'],
+            ],
+            'evidence_adequacy' => [
+                'status' => $initialAdequacy['status'],
+                'reason' => $initialAdequacy['reason'],
+                'matched_entities' => $initialAdequacy['matched_entities'],
+                'requested_facets' => $initialAdequacy['requested_facets'],
+            ],
             'query_plan' => [
                 'intent' => $analysis['intent'] ?? null,
                 'source_mode' => $analysis['source_mode'] ?? null,
@@ -457,6 +545,9 @@ class AiHelperKnowledgeRetriever
         if ($retrievalV4) {
             $score += $this->documentOperationScore($entry, $analysis) * 180;
             $score += $this->documentTaskScore($entry, $analysis) * 1500;
+            if (in_array((int) $entry->id, array_map('intval', (array) ($analysis['entity_entry_ids'] ?? [])), true)) {
+                $score += 2200;
+            }
         }
         foreach ($analysis['annex_numbers'] ?? [] as $number) {
             if (preg_match('/\bannex(?:e)?\s*0*'.preg_quote((string) $number, '/').'\b/i', $title)) {
@@ -859,6 +950,107 @@ class AiHelperKnowledgeRetriever
     }
 
     /**
+     * Keep the strongest deterministic entity/facet match ahead of a model
+     * rerank. This prevents a corpus-exact role definition from being crowded
+     * out by broader documents that repeat the same acronym.
+     *
+     * @param  Collection<int, array<string, mixed>>  $candidates
+     * @param  Collection<int, array<string, mixed>>  $fallbackCandidates
+     */
+    private function prioritizeEvidenceRepresentative(
+        Collection $candidates,
+        Collection $fallbackCandidates,
+        array $analysis,
+    ): Collection {
+        $hasRequestedEvidence = ($analysis['resolved_entities'] ?? []) !== []
+            || ($analysis['requested_facets'] ?? []) !== [];
+        if (! $hasRequestedEvidence || $fallbackCandidates->isEmpty()) {
+            return $candidates->values();
+        }
+
+        $representative = $fallbackCandidates
+            ->sort(function (array $left, array $right): int {
+                $evidenceComparison = $this->evidenceRepresentativeScore($right)
+                    <=> $this->evidenceRepresentativeScore($left);
+                if ($evidenceComparison !== 0) {
+                    return $evidenceComparison;
+                }
+                foreach (['entity_adequacy_score', 'facet_adequacy_score', 'score'] as $field) {
+                    $comparison = ($right[$field] ?? 0) <=> ($left[$field] ?? 0);
+                    if ($comparison !== 0) {
+                        return $comparison;
+                    }
+                }
+
+                return 0;
+            })
+            ->first(fn (array $candidate) => (int) ($candidate['entity_adequacy_score'] ?? 0) > 0);
+
+        if (! $representative) {
+            return $candidates->values();
+        }
+
+        return collect([$representative])
+            ->concat($candidates)
+            ->unique(fn (array $candidate) => (int) $candidate['chunk']->id)
+            ->values();
+    }
+
+    /**
+     * Reserve the strongest entity/facet passage from each protected document
+     * before the global candidate cut. Topic lanes often contain several
+     * documents, and each document must keep its most directly useful passage
+     * available to the model reranker.
+     *
+     * @param  Collection<int, array<string, mixed>>  $candidates
+     */
+    private function prioritizeProtectedEvidenceRepresentatives(
+        Collection $candidates,
+        array $analysis,
+    ): Collection {
+        $hasRequestedEvidence = ($analysis['resolved_entities'] ?? []) !== []
+            || ($analysis['requested_facets'] ?? []) !== [];
+        if (! $hasRequestedEvidence || $candidates->isEmpty()) {
+            return $candidates->values();
+        }
+
+        $representatives = $candidates
+            ->filter(fn (array $candidate) => (bool) ($candidate['protected_match'] ?? false))
+            ->groupBy(fn (array $candidate) => (int) $candidate['entry']->id)
+            ->map(fn (Collection $documentCandidates) => $documentCandidates
+                ->sort(function (array $left, array $right): int {
+                    $evidenceComparison = $this->evidenceRepresentativeScore($right)
+                        <=> $this->evidenceRepresentativeScore($left);
+                    if ($evidenceComparison !== 0) {
+                        return $evidenceComparison;
+                    }
+                    foreach (['entity_adequacy_score', 'facet_adequacy_score', 'score'] as $field) {
+                        $comparison = ($right[$field] ?? 0) <=> ($left[$field] ?? 0);
+                        if ($comparison !== 0) {
+                            return $comparison;
+                        }
+                    }
+
+                    return 0;
+                })
+                ->first())
+            ->filter()
+            ->values();
+
+        return $representatives
+            ->concat($candidates)
+            ->unique(fn (array $candidate) => (int) $candidate['chunk']->id)
+            ->values();
+    }
+
+    /** @param array<string, mixed> $candidate */
+    private function evidenceRepresentativeScore(array $candidate): int
+    {
+        return (int) ($candidate['entity_adequacy_score'] ?? 0)
+            + ((int) ($candidate['facet_adequacy_score'] ?? 0) * 2);
+    }
+
+    /**
      * @param  Collection<int, array<string, mixed>>  $candidates
      * @param  Collection<int, array<string, mixed>>  $exactDocuments
      * @return Collection<int, array<string, mixed>>
@@ -1111,6 +1303,81 @@ class AiHelperKnowledgeRetriever
     private function pipelineVersion(): int
     {
         return max(2, min(4, (int) config('ai_helper.pipeline_version', 4)));
+    }
+
+    /** @param array{matches: array<int, array<string, mixed>>, ambiguous_aliases: array<int, string>} $resolution */
+    private function mergeCorpusEntities(array $analysis, array $resolution): array
+    {
+        $matches = collect($resolution['matches']);
+        $ambiguous = $resolution['ambiguous_aliases'] !== [];
+        $entityTerms = $matches
+            ->flatMap(fn (array $match) => $ambiguous
+                ? $match['matched_aliases']
+                : [
+                    $match['canonical_name'],
+                    ...$match['matched_aliases'],
+                    ...$match['all_aliases'],
+                ])
+            ->flatMap(fn (string $value) => preg_split('/[^\pL\pN]+/u', Str::lower($value)) ?: [])
+            ->filter(fn (string $term) => Str::length($term) >= 2);
+        $analysis['terms'] = collect([
+            ...(array) ($analysis['terms'] ?? []),
+            ...$entityTerms->all(),
+        ])->filter()->unique()->take(48)->values()->all();
+        $analysis['expanded_terms'] = collect([
+            ...(array) ($analysis['expanded_terms'] ?? []),
+            ...$entityTerms->all(),
+        ])->filter()->unique()->take(48)->values()->all();
+        if (! $ambiguous) {
+            $analysis['resolved_entities'] = collect([
+                ...(array) ($analysis['resolved_entities'] ?? []),
+                ...$matches->pluck('normalized_name'),
+            ])->filter()->unique()->values()->all();
+        }
+        $analysis['corpus_entities'] = $matches->values()->all();
+        $analysis['entity_ambiguity'] = $ambiguous;
+        if (! $ambiguous && $matches->contains(fn (array $match) => in_array($match['entity_type'], ['role', 'team'], true))) {
+            $analysis['topic_keys'] = collect([
+                ...(array) ($analysis['topic_keys'] ?? []),
+                'emergency_response_role',
+            ])->unique()->values()->all();
+        }
+        $analysis['answer_mode'] = 'operational_knowledge';
+        $analysis['evidence_required'] = true;
+        $analysis['retrieval_policy'] = 'required';
+
+        return $analysis;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $matches
+     * @return array<int, int>
+     */
+    private function preferredEntityEntryIds(string $query, array $matches): array
+    {
+        $normalizedQuery = Str::lower((string) preg_replace('/[^\pL\pN]+/u', ' ', $query));
+        $scored = collect($matches)->map(function (array $match) use ($normalizedQuery): array {
+            $length = collect($match['matched_aliases'] ?? [])
+                ->filter(fn (string $alias) => str_contains(
+                    $normalizedQuery,
+                    Str::lower((string) preg_replace('/[^\pL\pN]+/u', ' ', $alias)),
+                ))
+                ->map(fn (string $alias) => Str::length($alias))
+                ->max() ?? 0;
+
+            return ['entry_id' => (int) $match['knowledge_entry_id'], 'length' => (int) $length];
+        });
+        $maximum = (int) ($scored->max('length') ?? 0);
+        if ($maximum <= 0) {
+            return [];
+        }
+
+        return $scored
+            ->where('length', $maximum)
+            ->pluck('entry_id')
+            ->unique()
+            ->values()
+            ->all();
     }
 
     private function cosineSimilarity(array $left, array $right): float

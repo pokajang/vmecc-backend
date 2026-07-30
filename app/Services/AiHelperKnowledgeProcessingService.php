@@ -22,6 +22,7 @@ class AiHelperKnowledgeProcessingService
     public function __construct(
         private readonly AiHelperMarkdownStructureParser $markdownStructure,
         private readonly AiHelperEmbeddingService $embeddings,
+        private readonly AiHelperKnowledgeEntityIndexer $entityIndexer,
     ) {}
 
     public function process(int $entryId, ?string $expectedRunId = null): void
@@ -150,6 +151,16 @@ class AiHelperKnowledgeProcessingService
                         'findings' => $this->processingFindings($page['findings'] ?? []),
                     ]);
                 }
+                $versionChunks = $locked->chunks()
+                    ->where('ingestion_version', $ingestionVersion)
+                    ->orderBy('chunk_index')
+                    ->get();
+                $this->entityIndexer->replaceVersion(
+                    $locked,
+                    $versionChunks,
+                    $ingestionVersion,
+                    $activate && ! $requiresEmbedding,
+                );
 
                 $attributes = [
                     'content' => $content,

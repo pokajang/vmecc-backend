@@ -49,4 +49,35 @@ MD;
         $this->assertStringContainsString('| IC | Direct response |', $entry->chunks->firstWhere('content_type', 'table')->content);
         $this->assertLessThan(3000, $entry->chunks->max(fn ($chunk) => mb_strlen((string) $chunk->search_text)));
     }
+
+    public function test_ingestion_builds_an_active_corpus_entity_index_without_model_calls(): void
+    {
+        config(['ai_helper.embedding_enabled' => false]);
+        $markdown = <<<'MD'
+# Emergency roles
+
+## EMERGENCY RESPONSE TEAM MEMBER (ERTM)
+
+| ROLE | RESPONSIBILITIES |
+| --- | --- |
+| TACTICAL RESPONSE TEAM MEMBER | Conduct inspections and respond under OSC command. |
+MD;
+        $entry = AiHelperKnowledgeEntry::create([
+            'title' => 'Role source',
+            'content' => $markdown,
+            'source_filename' => 'roles.md',
+            'source_mime' => 'text/markdown',
+            'source_path' => 'seed:test:roles',
+            'status' => AiHelperKnowledgeEntry::STATUS_PROCESSING,
+            'review_status' => AiHelperKnowledgeEntry::REVIEW_APPROVED,
+            'active' => true,
+        ]);
+
+        $this->assertTrue(app(AiHelperKnowledgeProcessingService::class)->processTextEntry($entry, $markdown));
+
+        $entities = $entry->entities()->where('active', true)->with('aliases')->get();
+        $this->assertNotNull($entities->firstWhere('normalized_name', 'emergency response team member'));
+        $this->assertNotNull($entities->firstWhere('normalized_name', 'tactical response team member'));
+        $this->assertTrue($entities->flatMap->aliases->contains('normalized_alias', 'ertm'));
+    }
 }

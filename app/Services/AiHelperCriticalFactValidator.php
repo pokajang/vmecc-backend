@@ -60,6 +60,13 @@ class AiHelperCriticalFactValidator
                 'required' => 'Label the source without a revision marker as "revision not stated".',
             ];
         }
+        foreach ($this->unsupportedAcronymExpansions($question, $answer, $evidence->join("\n")) as $claim) {
+            $failures[] = [
+                'type' => 'unsupported_acronym_expansion',
+                'acronym' => $claim['acronym'],
+                'expansion' => $claim['expansion'],
+            ];
+        }
 
         return [
             'valid' => $failures === [],
@@ -171,5 +178,49 @@ class AiHelperCriticalFactValidator
         );
 
         return $hasRevisionedTitle && $hasUnrevisionedTitle;
+    }
+
+    /**
+     * @return array<int, array{acronym: string, expansion: string}>
+     */
+    private function unsupportedAcronymExpansions(string $question, string $answer, string $evidence): array
+    {
+        preg_match_all('/(?<![\pL\pN])([A-Za-z]{2,6})(?![\pL\pN])/u', $question, $questionTokens);
+        $ignored = [
+            'what', 'where', 'when', 'which', 'who', 'how', 'the', 'and', 'for', 'with',
+            'role', 'member', 'does', 'our', 'this', 'that', 'can', 'could', 'apa', 'yang',
+            'dan', 'untuk', 'dalam', 'boleh',
+        ];
+        $acronyms = collect($questionTokens[1] ?? [])
+            ->map(fn (string $token) => Str::upper($token))
+            ->reject(fn (string $token) => in_array(Str::lower($token), $ignored, true))
+            ->unique()
+            ->values();
+        if ($acronyms->isEmpty()) {
+            return [];
+        }
+
+        preg_match_all('/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,5})\b/u', $answer, $phrases);
+        $normalizedEvidence = Str::lower((string) preg_replace('/\s+/u', ' ', $evidence));
+
+        return collect($phrases[1] ?? [])
+            ->map(function (string $phrase) use ($acronyms): ?array {
+                $initials = collect(preg_split('/\s+/u', trim($phrase)) ?: [])
+                    ->map(fn (string $word) => Str::upper(Str::substr($word, 0, 1)))
+                    ->join('');
+                if (! $acronyms->contains($initials)) {
+                    return null;
+                }
+
+                return ['acronym' => $initials, 'expansion' => $phrase];
+            })
+            ->filter()
+            ->reject(fn (array $claim) => str_contains(
+                $normalizedEvidence,
+                Str::lower((string) preg_replace('/\s+/u', ' ', $claim['expansion'])),
+            ))
+            ->unique(fn (array $claim) => $claim['acronym'].'|'.Str::lower($claim['expansion']))
+            ->values()
+            ->all();
     }
 }

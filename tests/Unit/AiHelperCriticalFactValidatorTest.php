@@ -83,4 +83,28 @@ class AiHelperCriticalFactValidatorTest extends TestCase
 
         $this->assertTrue($result['valid'], json_encode($result['failures']));
     }
+
+    public function test_it_rejects_an_acronym_expansion_not_present_in_evidence(): void
+    {
+        $guidance = [[
+            'source_id' => 'S1',
+            'title' => 'Emergency roles',
+            'content' => 'A Tactical Response Team Member performs emergency response under OSC command.',
+        ]];
+
+        $unsupported = app(AiHelperCriticalFactValidator::class)->validate(
+            'A TRT member belongs to the Training Review Team. [S1]',
+            $guidance,
+            'What is the role of a trt member?',
+        );
+        $supported = app(AiHelperCriticalFactValidator::class)->validate(
+            'TRT refers to the Tactical Response Team. [S1]',
+            $guidance,
+            'What is TRT?',
+        );
+
+        $this->assertFalse($unsupported['valid']);
+        $this->assertSame('unsupported_acronym_expansion', $unsupported['failures'][0]['type']);
+        $this->assertTrue($supported['valid']);
+    }
 }

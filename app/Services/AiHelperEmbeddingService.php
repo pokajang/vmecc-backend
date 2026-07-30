@@ -366,10 +366,17 @@ class AiHelperEmbeddingService
             // one commit. Readers therefore see either the complete old index
             // or the complete new index, never a partially embedded mixture.
             $entry->chunks()->where('active', true)->update(['active' => false]);
+            $entry->entities()->where('active', true)->update(['active' => false]);
             $entry->chunks()
                 ->where('ingestion_version', $ingestionVersion)
                 ->update(['active' => true]);
+            $entry->entities()
+                ->where('ingestion_version', $ingestionVersion)
+                ->update(['active' => true]);
             $entry->chunks()
+                ->where('ingestion_version', '!=', $ingestionVersion)
+                ->delete();
+            $entry->entities()
                 ->where('ingestion_version', '!=', $ingestionVersion)
                 ->delete();
             $entry->pages()

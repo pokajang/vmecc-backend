@@ -21,6 +21,7 @@ final class AiHelperAnswerModeResolver
         'hydraulic_rescue_inspection',
         'height_rescue',
         'emergency_response_service',
+        'emergency_response_role',
         'erco',
         'drill',
         'fitness',
