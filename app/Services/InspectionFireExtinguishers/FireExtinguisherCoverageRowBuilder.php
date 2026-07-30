@@ -122,7 +122,8 @@ class FireExtinguisherCoverageRowBuilder
     public function formatCoverageRow(
         InspectionFireExtinguisher $row,
         ?array $coverage,
-        int $locatorDuplicateCount,
+        int $barcodeDuplicateCount,
+        int $idLocNoDuplicateCount,
         bool $includeChecks,
         array $monthlyCompliance = [],
     ): array {
@@ -163,7 +164,10 @@ class FireExtinguisherCoverageRowBuilder
             'reportCount' => $reportCount,
             'repeatCount' => max(0, $reportCount - 1),
             'duplicateCount' => $reportCount,
-            'locatorDuplicateCount' => max(1, $locatorDuplicateCount),
+            'barcodeDuplicateCount' => max(1, $barcodeDuplicateCount),
+            'idLocNoDuplicateCount' => max(1, $idLocNoDuplicateCount),
+            // Backward-compatible alias for existing API consumers.
+            'locatorDuplicateCount' => max(1, $barcodeDuplicateCount),
             'latestReportId' => $latestRow instanceof InspectionCheckRow ? (string) $latestRow->display_id : '',
             'latestReportUid' => $latestRow instanceof InspectionCheckRow ? (string) $latestRow->report_uid : '',
             'monthlyCompliance' => $monthlyCompliance,

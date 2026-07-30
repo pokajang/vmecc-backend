@@ -92,6 +92,28 @@ class FireExtinguisherExceptionExportTest extends TestCase
             ->assertJsonPath('data.appliedFilters.0.label', 'Zone: Zone 2');
     }
 
+    public function test_preview_accepts_and_applies_duplicate_id_location_filter(): void
+    {
+        $first = $this->extinguisher('Zone ID Duplicate', 'FE-SHARED-ID', '2026-12-31');
+        $second = $this->extinguisher('Zone ID Duplicate', 'FE-SHARED-ID', '2026-12-31');
+        $second->forceFill(['barcode_no' => 'BAR-UNIQUE-SECOND'])->save();
+        $this->submittedInspection($first, true);
+        $this->submittedInspection($second, true);
+
+        $response = $this->postJson('/api/inspection/fire-extinguishers/exception-export/preview', [
+            'categories' => ['issues'],
+            'scope' => 'current_filters',
+            'filters' => [
+                'zone' => 'Zone ID Duplicate',
+                'duplicateScope' => 'id-loc',
+            ],
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('data.total', 2)
+            ->assertJsonPath('data.appliedFilters.1.label', 'Duplicate ID Loc No.');
+    }
+
     public function test_pdf_and_docx_downloads_return_real_files_with_safe_names(): void
     {
         $row = $this->extinguisher('Zone 1', 'FE-100', '2026-07-01');

@@ -917,6 +917,73 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         }
     }
 
+    public function test_fire_extinguisher_coverage_has_separate_barcode_and_id_location_duplicate_stats(): void
+    {
+        $this->actingAsInspectionUser();
+        $base = [
+            'zone' => 'Zone 1',
+            'main_location_name' => 'Barcode Duplicate Yard',
+            'sub_location_name' => 'Store',
+            'fe_type' => 'DP 6KG',
+            'certification_validity' => '2026-12-31',
+            'source' => 'custom',
+            'is_active' => true,
+        ];
+
+        foreach ([
+            ['id_loc_no' => 'SHARED-ID-LOC', 'barcode_no' => 'BAR-UNIQUE-001'],
+            ['id_loc_no' => 'SHARED-ID-LOC', 'barcode_no' => 'BAR-UNIQUE-002'],
+            ['id_loc_no' => 'UNIQUE-ID-003', 'barcode_no' => 'BAR-SHARED'],
+            ['id_loc_no' => 'UNIQUE-ID-004', 'barcode_no' => 'bar-shared'],
+        ] as $index => $identity) {
+            InspectionFireExtinguisher::query()->create([
+                ...$base,
+                ...$identity,
+                'sort_order' => $index + 1,
+            ]);
+        }
+
+        $response = $this->getJson('/api/inspection/fire-extinguishers/coverage?location='.urlencode('Barcode Duplicate Yard').'&perPage=all');
+
+        $response->assertOk();
+        $response->assertJsonPath('meta.summary.barcodeDuplicates', 2);
+        $response->assertJsonPath('meta.summary.idLocNoDuplicates', 2);
+        $response->assertJsonPath('meta.summary.locatorDuplicates', 2);
+
+        $rows = collect($response->json('data'));
+        $this->assertSame(
+            [1, 1],
+            $rows->where('idLocNo', 'SHARED-ID-LOC')->pluck('barcodeDuplicateCount')->sort()->values()->all(),
+        );
+        $this->assertSame(
+            [2, 2],
+            $rows->where('idLocNo', 'SHARED-ID-LOC')->pluck('idLocNoDuplicateCount')->sort()->values()->all(),
+        );
+        $rows = $rows->keyBy('idLocNo');
+        $this->assertSame(2, $rows['UNIQUE-ID-003']['barcodeDuplicateCount']);
+        $this->assertSame(2, $rows['UNIQUE-ID-004']['barcodeDuplicateCount']);
+        $this->assertSame(1, $rows['UNIQUE-ID-003']['idLocNoDuplicateCount']);
+        $this->assertSame(1, $rows['UNIQUE-ID-004']['idLocNoDuplicateCount']);
+        $this->assertSame(2, $rows['UNIQUE-ID-003']['locatorDuplicateCount']);
+        $this->assertSame(2, $rows['UNIQUE-ID-004']['locatorDuplicateCount']);
+
+        $duplicates = $this->getJson('/api/inspection/fire-extinguishers/coverage?location='.urlencode('Barcode Duplicate Yard').'&duplicateScope=locator&perPage=all');
+
+        $duplicates->assertOk();
+        $this->assertSame(
+            ['UNIQUE-ID-003', 'UNIQUE-ID-004'],
+            collect($duplicates->json('data'))->pluck('idLocNo')->sort()->values()->all(),
+        );
+
+        $idLocNoDuplicates = $this->getJson('/api/inspection/fire-extinguishers/coverage?location='.urlencode('Barcode Duplicate Yard').'&duplicateScope=id-loc&perPage=all');
+
+        $idLocNoDuplicates->assertOk();
+        $this->assertSame(
+            ['BAR-UNIQUE-001', 'BAR-UNIQUE-002'],
+            collect($idLocNoDuplicates->json('data'))->pluck('barcodeNo')->sort()->values()->all(),
+        );
+    }
+
     public function test_fire_extinguisher_coverage_period_keeps_uninspected_catalog_rows_visible(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-07-07 12:00:00'));

@@ -41,11 +41,13 @@ class FireExtinguisherCoverageService
         );
         $coverageRows = $this->rowBuilder->coverageRowsForCatalog($catalogRows, $periodStart, $periodEnd);
         $monthlyComplianceRows = $this->monthlyCompliance->forCatalog($catalogRows);
-        $duplicateCounts = $this->coverageLocatorDuplicateCounts($catalogRows);
+        $barcodeDuplicateCounts = $this->coverageDuplicateCounts($catalogRows, 'barcode_no');
+        $idLocNoDuplicateCounts = $this->coverageDuplicateCounts($catalogRows, 'id_loc_no');
         $data = $catalogRows->map(fn (InspectionFireExtinguisher $row): array => $this->rowBuilder->formatCoverageRow(
             $row,
             $coverageRows[(int) $row->id] ?? null,
-            $duplicateCounts[(int) $row->id] ?? 1,
+            $barcodeDuplicateCounts[(int) $row->id] ?? 1,
+            $idLocNoDuplicateCounts[(int) $row->id] ?? 1,
             $includeChecks,
             $monthlyComplianceRows[(int) $row->id] ?? [],
         ))->values();
@@ -105,11 +107,13 @@ class FireExtinguisherCoverageService
             ->get();
         $coverageRows = $this->rowBuilder->coverageRowsForCatalogPage($catalogRows, $periodStart, $periodEnd);
         $monthlyComplianceRows = $this->monthlyCompliance->forCatalog($catalogRows);
-        $duplicateCounts = $this->coverageLocatorDuplicateCounts($catalogRows);
+        $barcodeDuplicateCounts = $this->coverageDuplicateCounts($catalogRows, 'barcode_no');
+        $idLocNoDuplicateCounts = $this->coverageDuplicateCounts($catalogRows, 'id_loc_no');
         $rows = $catalogRows->map(fn (InspectionFireExtinguisher $row): array => $this->rowBuilder->formatCoverageRow(
             $row,
             $coverageRows[(int) $row->id] ?? null,
-            $duplicateCounts[(int) $row->id] ?? 1,
+            $barcodeDuplicateCounts[(int) $row->id] ?? 1,
+            $idLocNoDuplicateCounts[(int) $row->id] ?? 1,
             false,
             $monthlyComplianceRows[(int) $row->id] ?? [],
         ))->values();
@@ -238,8 +242,11 @@ class FireExtinguisherCoverageService
             ->whereNotNull('certification_validity')
             ->whereDate('certification_validity', '<', now()->toDateString())
             ->count();
-        $locatorRows = $this->catalogQuery($normalized, false)->get(['id', 'barcode_no', 'id_loc_no']);
-        $locatorDuplicates = collect($this->coverageLocatorDuplicateCounts($locatorRows))
+        $identityRows = $this->catalogQuery($normalized, false)->get(['id', 'barcode_no', 'id_loc_no']);
+        $barcodeDuplicates = collect($this->coverageDuplicateCounts($identityRows, 'barcode_no'))
+            ->filter(fn (int $count): bool => $count > 1)
+            ->count();
+        $idLocNoDuplicates = collect($this->coverageDuplicateCounts($identityRows, 'id_loc_no'))
             ->filter(fn (int $count): bool => $count > 1)
             ->count();
 
@@ -250,7 +257,10 @@ class FireExtinguisherCoverageService
             'issues' => $issues,
             'openIssues' => $issues,
             'duplicates' => $monthlySummary['repeatChecks'],
-            'locatorDuplicates' => $locatorDuplicates,
+            'barcodeDuplicates' => $barcodeDuplicates,
+            'idLocNoDuplicates' => $idLocNoDuplicates,
+            // Backward-compatible alias for existing API consumers.
+            'locatorDuplicates' => $barcodeDuplicates,
             'expired' => $expired,
             'cycle' => [
                 ...$monthlySummary['cycle'],
@@ -351,13 +361,15 @@ class FireExtinguisherCoverageService
         $catalogRows = collect([$row]);
         $coverageRows = $this->rowBuilder->coverageRowsForCatalog($catalogRows, $periodStart, $periodEnd);
         $monthlyComplianceRows = $this->monthlyCompliance->forCatalog($catalogRows);
-        $duplicateCounts = $this->coverageLocatorDuplicateCounts($catalogRows);
+        $barcodeDuplicateCounts = $this->coverageDuplicateCounts($catalogRows, 'barcode_no');
+        $idLocNoDuplicateCounts = $this->coverageDuplicateCounts($catalogRows, 'id_loc_no');
 
         return [
             'row' => $this->rowBuilder->formatCoverageRow(
                 $row,
                 $coverageRows[(int) $row->id] ?? null,
-                $duplicateCounts[(int) $row->id] ?? 1,
+                $barcodeDuplicateCounts[(int) $row->id] ?? 1,
+                $idLocNoDuplicateCounts[(int) $row->id] ?? 1,
                 true,
                 $monthlyComplianceRows[(int) $row->id] ?? [],
             ),
@@ -385,43 +397,39 @@ class FireExtinguisherCoverageService
      * @param  Collection<int, InspectionFireExtinguisher>  $catalogRows
      * @return array<int, int>
      */
-    private function coverageLocatorDuplicateCounts(Collection $catalogRows): array
+    private function coverageDuplicateCounts(Collection $catalogRows, string $column): array
     {
-        $locators = $catalogRows->flatMap(fn (InspectionFireExtinguisher $row): array => $this->locatorCandidates([
-            'barcodeNo' => $row->barcode_no ?? '', 'idLocNo' => $row->id_loc_no ?? '',
-        ]))->filter()->unique()->values()->all();
-        if ($locators === []) {
+        $column = match ($column) {
+            'barcode_no' => 'barcode_no',
+            'id_loc_no' => 'id_loc_no',
+            default => throw new \InvalidArgumentException('Unsupported extinguisher identity column.'),
+        };
+        $values = $catalogRows
+            ->map(fn (InspectionFireExtinguisher $row): string => $this->identityPart($row->{$column} ?? ''))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        if ($values === []) {
             return [];
         }
 
-        $targets = array_fill_keys($locators, true);
+        $targets = array_fill_keys($values, true);
         $activeRows = InspectionFireExtinguisher::query()->where('is_active', true)
-            ->where(function ($query) use ($locators): void {
-                $query->whereIn(DB::raw('LOWER(TRIM(barcode_no))'), $locators)
-                    ->orWhereIn(DB::raw('LOWER(TRIM(id_loc_no))'), $locators);
-            })->get(['id', 'barcode_no', 'id_loc_no']);
-        $activeIdsByLocator = [];
+            ->whereIn(DB::raw("LOWER(TRIM({$column}))"), $values)
+            ->get(['id', $column]);
+        $activeIdsByValue = [];
         foreach ($activeRows as $activeRow) {
-            foreach ($this->locatorCandidates([
-                'barcodeNo' => $activeRow->barcode_no ?? '', 'idLocNo' => $activeRow->id_loc_no ?? '',
-            ]) as $locator) {
-                if (isset($targets[$locator])) {
-                    $activeIdsByLocator[$locator][(int) $activeRow->id] = true;
-                }
+            $value = $this->identityPart($activeRow->{$column} ?? '');
+            if (isset($targets[$value])) {
+                $activeIdsByValue[$value][(int) $activeRow->id] = true;
             }
         }
 
-        return $catalogRows->mapWithKeys(function (InspectionFireExtinguisher $row) use ($activeIdsByLocator): array {
-            $matchingIds = [];
-            foreach ($this->locatorCandidates([
-                'barcodeNo' => $row->barcode_no ?? '', 'idLocNo' => $row->id_loc_no ?? '',
-            ]) as $locator) {
-                foreach ($activeIdsByLocator[$locator] ?? [] as $activeId => $_) {
-                    $matchingIds[(int) $activeId] = true;
-                }
-            }
+        return $catalogRows->mapWithKeys(function (InspectionFireExtinguisher $row) use ($activeIdsByValue, $column): array {
+            $value = $this->identityPart($row->{$column} ?? '');
 
-            return [(int) $row->id => max(1, count($matchingIds))];
+            return [(int) $row->id => max(1, count($activeIdsByValue[$value] ?? []))];
         })->all();
     }
 
@@ -484,19 +492,9 @@ class FireExtinguisherCoverageService
         return $endOfDay ? $parsed->endOfDay() : $parsed->startOfDay();
     }
 
-    /** @return array<int, string> */
-    private function locatorCandidates(array $data): array
+    private function identityPart(mixed $value): string
     {
-        return collect([$data['barcodeNo'] ?? '', $data['idLocNo'] ?? ''])
-            ->map(fn ($value): string => $this->locatorPart($value))->filter()->unique()->values()->all();
-    }
-
-    private function locatorPart(mixed $value): string
-    {
-        $locator = trim((string) $value);
-        $locator = preg_replace('/^(?:s\s*\/?\s*n|serial(?:\s*(?:number|no\.?))?|barcode)\s*[:#-]?\s*/i', '', $locator) ?? $locator;
-
-        return Str::of($locator)->squish()->lower()->toString();
+        return Str::of((string) $value)->trim()->lower()->toString();
     }
 
     private function text(mixed $value): string

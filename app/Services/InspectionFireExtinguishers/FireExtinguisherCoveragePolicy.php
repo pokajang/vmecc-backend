@@ -48,7 +48,10 @@ class FireExtinguisherCoveragePolicy
             if ($filters['inspectedBy'] !== 'all' && $this->text($row['inspectedBy'] ?? '') !== $filters['inspectedBy']) {
                 return false;
             }
-            if ($filters['duplicateScope'] === 'locator' && (int) ($row['locatorDuplicateCount'] ?? 0) <= 1) {
+            if ($filters['duplicateScope'] === 'locator' && $this->barcodeDuplicateCount($row) <= 1) {
+                return false;
+            }
+            if ($filters['duplicateScope'] === 'id-loc' && $this->idLocNoDuplicateCount($row) <= 1) {
                 return false;
             }
             if (in_array($filters['duplicateScope'], ['report', 'reports'], true) && (int) ($row['duplicateCount'] ?? 0) <= 1) {
@@ -85,8 +88,12 @@ class FireExtinguisherCoveragePolicy
                 'issues' => $this->compareValues($this->openIssueCount($b), $this->openIssueCount($a)),
                 'duplicates', 'reports' => $this->compareValues((int) ($b['duplicateCount'] ?? 0), (int) ($a['duplicateCount'] ?? 0)),
                 'locator-duplicates' => $this->compareValues(
-                    (int) ($b['locatorDuplicateCount'] ?? 0),
-                    (int) ($a['locatorDuplicateCount'] ?? 0),
+                    $this->barcodeDuplicateCount($b),
+                    $this->barcodeDuplicateCount($a),
+                ),
+                'id-loc-duplicates' => $this->compareValues(
+                    $this->idLocNoDuplicateCount($b),
+                    $this->idLocNoDuplicateCount($a),
                 ),
                 default => $this->compareLocation($a, $b),
             };
@@ -106,7 +113,9 @@ class FireExtinguisherCoveragePolicy
             'notInspected' => $rows->filter(fn (array $row): bool => (string) ($row['latestInspectionAt'] ?? '') === '')->count(),
             'issues' => $rows->filter(fn (array $row): bool => $this->openIssueCount($row) > 0)->count(),
             'duplicates' => $rows->filter(fn (array $row): bool => (int) ($row['duplicateCount'] ?? 0) > 1)->count(),
-            'locatorDuplicates' => $rows->filter(fn (array $row): bool => (int) ($row['locatorDuplicateCount'] ?? 0) > 1)->count(),
+            'barcodeDuplicates' => $rows->filter(fn (array $row): bool => $this->barcodeDuplicateCount($row) > 1)->count(),
+            'idLocNoDuplicates' => $rows->filter(fn (array $row): bool => $this->idLocNoDuplicateCount($row) > 1)->count(),
+            'locatorDuplicates' => $rows->filter(fn (array $row): bool => $this->barcodeDuplicateCount($row) > 1)->count(),
             'expired' => $rows->filter(fn (array $row): bool => $this->text($row['daysLeft'] ?? '') !== '' && (int) $row['daysLeft'] < 0)->count(),
         ];
     }
@@ -177,6 +186,16 @@ class FireExtinguisherCoveragePolicy
     private function openIssueCount(array $row): int
     {
         return (int) ($row['openIssueCount'] ?? $row['issueCount'] ?? 0);
+    }
+
+    private function barcodeDuplicateCount(array $row): int
+    {
+        return (int) ($row['barcodeDuplicateCount'] ?? $row['locatorDuplicateCount'] ?? 0);
+    }
+
+    private function idLocNoDuplicateCount(array $row): int
+    {
+        return (int) ($row['idLocNoDuplicateCount'] ?? 0);
     }
 
     private function text(mixed $value): string

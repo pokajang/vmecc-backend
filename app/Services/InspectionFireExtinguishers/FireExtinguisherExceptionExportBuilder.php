@@ -229,7 +229,11 @@ class FireExtinguisherExceptionExportBuilder
             $append('status', 'Status: '.Str::headline($filters['status']));
         }
         if ($filters['duplicateScope'] !== 'all') {
-            $append('duplicateScope', $filters['duplicateScope'] === 'locator' ? 'Duplicate S/N' : 'Repeat checks');
+            $append('duplicateScope', match ($filters['duplicateScope']) {
+                'locator' => 'Duplicate barcode',
+                'id-loc' => 'Duplicate ID Loc No.',
+                default => 'Repeat checks',
+            });
         }
 
         return $labels;

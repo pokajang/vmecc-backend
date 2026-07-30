@@ -33,7 +33,9 @@ class FireExtinguisherExceptionExportRequest extends FormRequest
             'filters.status' => ['nullable', 'string', Rule::in([
                 'all', 'inspected', 'not-inspected', 'issues', 'duplicates',
             ])],
-            'filters.duplicateScope' => ['nullable', 'string', Rule::in(['all', 'report', 'reports', 'locator'])],
+            'filters.duplicateScope' => ['nullable', 'string', Rule::in([
+                'all', 'report', 'reports', 'locator', 'id-loc',
+            ])],
             'format' => $this->formatRules(),
         ];
     }
