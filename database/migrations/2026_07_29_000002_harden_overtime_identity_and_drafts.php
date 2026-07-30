@@ -27,9 +27,10 @@ return new class extends Migration
                 ->where('id', $row->id)
                 ->update(['public_id' => (string) Str::ulid()]));
 
-        Schema::table('overtime_records', function (Blueprint $table) {
-            $table->string('public_id', 26)->nullable(false)->change();
-        });
+        // The column already has its final varchar(26) type. Using change() here makes
+        // Laravel append identity syntax that is unsupported by the production
+        // PostgreSQL server, so apply only the required nullability constraint.
+        DB::statement('ALTER TABLE overtime_records ALTER COLUMN public_id SET NOT NULL');
 
         Schema::table('overtime_drafts', function (Blueprint $table) {
             $table->unsignedInteger('version')->default(1)->after('saved_at');
