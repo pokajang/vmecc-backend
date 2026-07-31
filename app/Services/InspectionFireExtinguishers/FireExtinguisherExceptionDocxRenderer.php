@@ -6,6 +6,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpWord\IOFactory;
 use PhpOffice\PhpWord\PhpWord;
+use PhpOffice\PhpWord\Settings;
 use PhpOffice\PhpWord\Shared\Converter;
 use PhpOffice\PhpWord\SimpleType\Jc;
 use PhpOffice\PhpWord\SimpleType\VerticalJc;
@@ -17,6 +18,7 @@ class FireExtinguisherExceptionDocxRenderer
     public function render(array $data): string
     {
         $startedAt = microtime(true);
+        Settings::setOutputEscapingEnabled(true);
         $phpWord = new PhpWord;
         $phpWord->setDefaultFontName('Aptos');
         $phpWord->setDefaultFontSize(9);

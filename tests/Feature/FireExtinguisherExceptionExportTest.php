@@ -10,6 +10,7 @@ use App\Models\ReportMediaLink;
 use App\Models\User;
 use App\Services\InspectionFireExtinguishers\FireExtinguisherExceptionExportBuilder;
 use App\Services\InspectionFireExtinguishers\FireExtinguisherExceptionPdfRenderer;
+use DOMDocument;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
@@ -116,7 +117,7 @@ class FireExtinguisherExceptionExportTest extends TestCase
 
     public function test_pdf_and_docx_downloads_return_real_files_with_safe_names(): void
     {
-        $row = $this->extinguisher('Zone 1', 'FE-100', '2026-07-01');
+        $row = $this->extinguisher('Zone 4 & 4B', 'FE-100', '2026-07-01');
         $this->submittedInspection($row, true, true);
         $payload = [
             'categories' => ['issues', 'expired'],
@@ -158,6 +159,17 @@ class FireExtinguisherExceptionExportTest extends TestCase
         $zip->close();
         @unlink($temporary);
         $this->assertIsString($documentXml);
+        $previousLibxmlSetting = libxml_use_internal_errors(true);
+        $document = new DOMDocument;
+        $documentIsValid = $document->loadXML($documentXml);
+        $xmlErrors = array_map(
+            static fn ($error): string => trim($error->message),
+            libxml_get_errors(),
+        );
+        libxml_clear_errors();
+        libxml_use_internal_errors($previousLibxmlSetting);
+        $this->assertTrue($documentIsValid, 'DOCX document.xml is malformed: '.implode('; ', $xmlErrors));
+        $this->assertStringContainsString('Zone 4 &amp; 4B', $documentXml);
         $this->assertStringContainsString('w:tblHeader', $documentXml);
         $this->assertStringContainsString('w:cantSplit', $documentXml);
         $this->assertStringContainsString('w:keepNext', $documentXml);
