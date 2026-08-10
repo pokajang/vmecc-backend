@@ -9,8 +9,6 @@ use App\Models\UserRoleAssignment;
 use App\Models\UserSession;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 use RuntimeException;
 use Spatie\Permission\Models\Role;
 
@@ -20,28 +18,18 @@ class LiveUatUsersSeeder extends Seeder
     {
         $personas = $this->validatedPersonas();
         $team = $this->resolveSiteTeam($personas);
-        $credentials = collect($personas)
-            ->map(fn (array $persona) => [
-                ...$persona,
-                'password' => Str::password(24, true, true, false, false),
-            ])
-            ->all();
 
-        DB::transaction(function () use ($credentials, $team): void {
-            foreach ($credentials as $persona) {
+        DB::transaction(function () use ($personas, $team): void {
+            foreach ($personas as $persona) {
                 $this->seedPersona($persona, $team);
             }
         });
 
-        $this->command?->warn('Copy these temporary credentials now. Rerunning rotates every password.');
+        $this->command?->info('Live UAT users reconciled. Plaintext passwords remain outside Git.');
         $this->command?->table(
-            ['Persona', 'Email', 'Temporary password'],
-            collect($credentials)
-                ->map(fn (array $persona) => [
-                    $persona['key'],
-                    $persona['email'],
-                    $persona['password'],
-                ])
+            ['Persona', 'Email'],
+            collect($personas)
+                ->map(fn (array $persona) => [$persona['key'], $persona['email']])
                 ->all(),
         );
     }
@@ -62,11 +50,15 @@ class LiveUatUsersSeeder extends Seeder
             $email = strtolower(trim((string) ($persona['email'] ?? '')));
             $name = trim((string) ($persona['name'] ?? ''));
             $roleName = trim((string) ($persona['role'] ?? ''));
+            $passwordHash = trim((string) ($persona['password_hash'] ?? ''));
             if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
                 throw new RuntimeException("{$key}: configure a valid live UAT email address.");
             }
             if (! str_starts_with($name, '[Live UAT] ')) {
                 throw new RuntimeException("{$key}: the protected account marker is missing.");
+            }
+            if ((password_get_info($passwordHash)['algoName'] ?? 'unknown') !== 'bcrypt') {
+                throw new RuntimeException("{$key}: a valid bcrypt password hash is required.");
             }
             if (in_array($email, $emails, true)) {
                 throw new RuntimeException("Duplicate live UAT email configured: {$email}");
@@ -131,7 +123,7 @@ class LiveUatUsersSeeder extends Seeder
 
         $user->forceFill([
             'name' => $persona['name'],
-            'password' => Hash::make($persona['password']),
+            'password' => $persona['password_hash'],
             'email_verified_at' => now(),
             'status' => 'Active',
             'failed_login_count' => 0,

@@ -19,10 +19,10 @@ TRT and Incident Commander are assigned to the existing Alpha team. Alpha must r
 
 ## Safety contract
 
-- No password is committed or stored in configuration.
-- Each run generates a different random 24-character password for every persona.
-- The six credentials are shown once in the seeder's terminal table and must be copied into a secure temporary record.
-- Rerunning rotates every password and revokes existing tokens/sessions.
+- No plaintext password is committed or stored in application configuration.
+- Strong random plaintext credentials are retained only in the workspace-level `UAT/creds.md`, outside both repositories.
+- Only one-way bcrypt hashes are committed in the backend persona configuration.
+- Rerunning restores the recorded credentials and revokes existing tokens/sessions.
 - An existing user is updated only when its name exactly matches the protected `[Live UAT]` marker.
 - The exact role, scope, and team membership are reconciled transactionally.
 - Cleanup revokes access, removes role/team assignments, and soft-deletes only exact marked accounts.
@@ -40,9 +40,7 @@ php artisan db:seed --class=LiveUatUsersSeeder --force
 php artisan config:cache
 ```
 
-Copy the resulting credential table immediately. The passwords cannot be recovered from the database. If they are lost, rerun the seeder to rotate all six.
-
-Use the same credential pairs as temporary environment variables in the local frontend Playwright process. Do not commit them or add them to either repository.
+Use the credential pairs from the protected workspace-level `UAT/creds.md` as temporary environment variables in the local frontend Playwright process. Do not commit, upload, or copy that file into either repository.
 
 ## Cleanup before handover
 

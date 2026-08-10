@@ -42,7 +42,8 @@ class LiveUatUsersSeederTest extends TestCase
             $user = User::query()->where('email', $persona['email'])->firstOrFail();
             $this->assertSame($persona['name'], $user->name);
             $this->assertSame('Active', $user->status);
-            $this->assertNotSame($firstHashes[$persona['email']], $user->password);
+            $this->assertSame($firstHashes[$persona['email']], $user->password);
+            $this->assertSame($persona['password_hash'], $user->password);
             $this->assertTrue($user->hasRole($persona['role']));
             $this->assertSame(1, $user->roleAssignments()->count(), $key);
             $this->assertDatabaseHas('user_role_assignments', [
