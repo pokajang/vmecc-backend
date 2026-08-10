@@ -100,13 +100,14 @@ class LiveUatUsersSeeder extends Seeder
             throw new RuntimeException('Set LIVE_UAT_SITE_TEAM_ID to an existing active site team ID.');
         }
 
-        $team = Team::query()
-            ->whereKey($teamId)
-            ->where('group', 'site')
-            ->where('status', 'Active')
-            ->first();
-        if (! $team) {
-            throw new RuntimeException('LIVE_UAT_SITE_TEAM_ID must identify an active site team.');
+        $team = Team::query()->find($teamId);
+        $group = strtolower(trim((string) $team?->group));
+        $status = strtolower(trim((string) $team?->status));
+        $operationalStatus = strtolower(trim((string) config('team.default_status', 'On Duty')));
+        if (! $team || ! in_array($group, ['', 'site'], true) || $status !== $operationalStatus) {
+            throw new RuntimeException(
+                'LIVE_UAT_SITE_TEAM_ID must identify an on-duty site team (legacy null group or site group).'
+            );
         }
 
         return $team;

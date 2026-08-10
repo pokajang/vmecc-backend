@@ -25,8 +25,8 @@ class LiveUatUsersSeederTest extends TestCase
         $this->seed(RolesAndPermissionsSeeder::class);
         $this->siteTeam = Team::query()->create([
             'name' => 'Production-shaped UAT Site',
-            'group' => 'site',
-            'status' => 'Active',
+            'group' => null,
+            'status' => 'On Duty',
         ]);
         $this->configurePersonas();
     }

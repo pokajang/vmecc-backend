@@ -10,7 +10,7 @@ The live-UAT users are temporary production accounts for the read-only frontend 
 - All six passwords must contain at least 16 characters.
 - Configured emails must be unique.
 - An existing user is updated only when its name has the exact protected `[Live UAT]` marker expected for that persona.
-- TRT and Incident Commander must use an existing active site team; the seeder never creates a production team.
+- TRT and Incident Commander must use an existing on-duty site team; both the legacy null group and the newer `site` group are supported. The seeder never creates or modifies a production team.
 - Rerunning rotates the configured passwords, revokes existing tokens/sessions, resets login locks, and reconciles the exact role assignment.
 - Cleanup revokes access, removes role/team assignments, and soft-deletes only exact marked accounts.
 
@@ -44,10 +44,10 @@ From the deployed backend directory, refresh Composer's optimized class map afte
 composer dump-autoload --optimize --no-dev
 ```
 
-List eligible site teams and select the intended team's ID:
+List eligible on-duty teams and select the intended team's ID:
 
 ```bash
-php artisan tinker --execute="dump(App\\Models\\Team::query()->where('group', 'site')->where('status', 'Active')->get(['id', 'name'])->toArray());"
+php artisan tinker --execute="dump(App\\Models\\Team::query()->where('status', config('team.default_status', 'On Duty'))->where(fn ($query) => $query->whereNull('group')->orWhere('group', 'site'))->get(['id', 'name', 'group', 'status'])->toArray());"
 ```
 
 After exporting the required variables:
