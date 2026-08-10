@@ -14,15 +14,6 @@ class LiveUatUsersCleanupSeeder extends Seeder
 {
     public function run(): void
     {
-        if (! config('live_uat.enabled')) {
-            throw new RuntimeException('Set LIVE_UAT_USERS_ENABLED=true before removing live UAT users.');
-        }
-        if (app()->environment('production') && ! config('live_uat.allow_production')) {
-            throw new RuntimeException(
-                'Production cleanup requires LIVE_UAT_USERS_ALLOW_PRODUCTION=true.'
-            );
-        }
-
         $personas = config('live_uat.personas', []);
         DB::transaction(function () use ($personas): void {
             foreach ($personas as $persona) {

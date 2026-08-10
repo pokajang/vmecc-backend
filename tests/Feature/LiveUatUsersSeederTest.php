@@ -9,7 +9,6 @@ use Database\Seeders\LiveUatUsersSeeder;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -24,16 +23,18 @@ class LiveUatUsersSeederTest extends TestCase
         parent::setUp();
         $this->seed(RolesAndPermissionsSeeder::class);
         $this->siteTeam = Team::query()->create([
-            'name' => 'Production-shaped UAT Site',
+            'name' => 'Alpha',
             'group' => null,
             'status' => 'On Duty',
         ]);
-        $this->configurePersonas();
     }
 
     public function test_it_creates_six_idempotent_role_scoped_uat_accounts(): void
     {
         $this->seed(LiveUatUsersSeeder::class);
+        $firstHashes = User::query()
+            ->where('name', 'like', '[Live UAT]%')
+            ->pluck('password', 'email');
         $this->seed(LiveUatUsersSeeder::class);
 
         $this->assertSame(6, User::query()->where('name', 'like', '[Live UAT]%')->count());
@@ -41,7 +42,7 @@ class LiveUatUsersSeederTest extends TestCase
             $user = User::query()->where('email', $persona['email'])->firstOrFail();
             $this->assertSame($persona['name'], $user->name);
             $this->assertSame('Active', $user->status);
-            $this->assertTrue(Hash::check($persona['password'], $user->password));
+            $this->assertNotSame($firstHashes[$persona['email']], $user->password);
             $this->assertTrue($user->hasRole($persona['role']));
             $this->assertSame(1, $user->roleAssignments()->count(), $key);
             $this->assertDatabaseHas('user_role_assignments', [
@@ -68,13 +69,12 @@ class LiveUatUsersSeederTest extends TestCase
         $this->seed(LiveUatUsersSeeder::class);
     }
 
-    public function test_it_requires_explicit_production_permission(): void
+    public function test_it_refuses_a_non_operational_team(): void
     {
-        $this->app['env'] = 'production';
-        config()->set('live_uat.allow_production', false);
+        $this->siteTeam->update(['status' => 'On Leave']);
 
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('LIVE_UAT_USERS_ALLOW_PRODUCTION');
+        $this->expectExceptionMessage('on-duty site team');
 
         $this->seed(LiveUatUsersSeeder::class);
     }
@@ -91,20 +91,5 @@ class LiveUatUsersSeederTest extends TestCase
             $this->assertDatabaseMissing('user_role_assignments', ['user_id' => $user->id]);
             $this->assertDatabaseMissing('team_members', ['user_id' => $user->id]);
         }
-    }
-
-    private function configurePersonas(): void
-    {
-        $personas = config('live_uat.personas');
-        foreach ($personas as $key => &$persona) {
-            $persona['email'] = "live-uat-{$key}@example.test";
-            $persona['password'] = "Unique-UAT-Password-{$key}-2026";
-        }
-        unset($persona);
-
-        config()->set('live_uat.enabled', true);
-        config()->set('live_uat.allow_production', false);
-        config()->set('live_uat.site_team_id', $this->siteTeam->id);
-        config()->set('live_uat.personas', $personas);
     }
 }

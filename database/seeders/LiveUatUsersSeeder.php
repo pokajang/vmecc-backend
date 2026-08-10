@@ -10,6 +10,7 @@ use App\Models\UserSession;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use RuntimeException;
 use Spatie\Permission\Models\Role;
 
@@ -19,12 +20,30 @@ class LiveUatUsersSeeder extends Seeder
     {
         $personas = $this->validatedPersonas();
         $team = $this->resolveSiteTeam($personas);
+        $credentials = collect($personas)
+            ->map(fn (array $persona) => [
+                ...$persona,
+                'password' => Str::password(24, true, true, false, false),
+            ])
+            ->all();
 
-        DB::transaction(function () use ($personas, $team): void {
-            foreach ($personas as $persona) {
+        DB::transaction(function () use ($credentials, $team): void {
+            foreach ($credentials as $persona) {
                 $this->seedPersona($persona, $team);
             }
         });
+
+        $this->command?->warn('Copy these temporary credentials now. Rerunning rotates every password.');
+        $this->command?->table(
+            ['Persona', 'Email', 'Temporary password'],
+            collect($credentials)
+                ->map(fn (array $persona) => [
+                    $persona['key'],
+                    $persona['email'],
+                    $persona['password'],
+                ])
+                ->all(),
+        );
     }
 
     /**
@@ -32,16 +51,6 @@ class LiveUatUsersSeeder extends Seeder
      */
     private function validatedPersonas(): array
     {
-        if (! config('live_uat.enabled')) {
-            throw new RuntimeException('Set LIVE_UAT_USERS_ENABLED=true before seeding live UAT users.');
-        }
-
-        if (app()->environment('production') && ! config('live_uat.allow_production')) {
-            throw new RuntimeException(
-                'Production seeding requires LIVE_UAT_USERS_ALLOW_PRODUCTION=true.'
-            );
-        }
-
         $configured = config('live_uat.personas', []);
         if (! is_array($configured) || count($configured) !== 6) {
             throw new RuntimeException('The live UAT persona configuration must contain exactly six roles.');
@@ -51,14 +60,10 @@ class LiveUatUsersSeeder extends Seeder
         $emails = [];
         foreach ($configured as $key => $persona) {
             $email = strtolower(trim((string) ($persona['email'] ?? '')));
-            $password = (string) ($persona['password'] ?? '');
             $name = trim((string) ($persona['name'] ?? ''));
             $roleName = trim((string) ($persona['role'] ?? ''));
             if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
                 throw new RuntimeException("{$key}: configure a valid live UAT email address.");
-            }
-            if (strlen($password) < 16) {
-                throw new RuntimeException("{$key}: configure a live UAT password of at least 16 characters.");
             }
             if (! str_starts_with($name, '[Live UAT] ')) {
                 throw new RuntimeException("{$key}: the protected account marker is missing.");
@@ -78,7 +83,7 @@ class LiveUatUsersSeeder extends Seeder
             }
 
             $emails[] = $email;
-            $personas[] = [...$persona, 'key' => $key, 'email' => $email, 'password' => $password];
+            $personas[] = [...$persona, 'key' => $key, 'email' => $email];
         }
 
         return $personas;
@@ -93,20 +98,14 @@ class LiveUatUsersSeeder extends Seeder
             return null;
         }
 
-        $teamId = filter_var(config('live_uat.site_team_id'), FILTER_VALIDATE_INT, [
-            'options' => ['min_range' => 1],
-        ]);
-        if (! $teamId) {
-            throw new RuntimeException('Set LIVE_UAT_SITE_TEAM_ID to an existing active site team ID.');
-        }
-
-        $team = Team::query()->find($teamId);
+        $teamName = trim((string) config('live_uat.site_team_name'));
+        $team = Team::query()->where('name', $teamName)->first();
         $group = strtolower(trim((string) $team?->group));
         $status = strtolower(trim((string) $team?->status));
         $operationalStatus = strtolower(trim((string) config('team.default_status', 'On Duty')));
         if (! $team || ! in_array($group, ['', 'site'], true) || $status !== $operationalStatus) {
             throw new RuntimeException(
-                'LIVE_UAT_SITE_TEAM_ID must identify an on-duty site team (legacy null group or site group).'
+                'The configured live UAT team must identify an on-duty site team (legacy null group or site group).'
             );
         }
 

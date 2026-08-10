@@ -1,77 +1,53 @@
 # Live UAT Users
 
-The live-UAT users are temporary production accounts for the read-only frontend Playwright audit. Their seeders are deliberately excluded from `DatabaseSeeder`.
+The live-UAT users are temporary database accounts for the read-only frontend Playwright audit. Their seeders are deliberately excluded from `DatabaseSeeder` and must be run explicitly.
+
+No production `.env` changes are required.
+
+## Accounts
+
+The six dedicated emails and role contracts are defined in `config/live_uat.php`:
+
+- Tactical Response Team;
+- Incident Commander;
+- Contract Manager;
+- Human Resource;
+- Finance;
+- System Administrator.
+
+TRT and Incident Commander are assigned to the existing Alpha team. Alpha must remain `On Duty` and may use either the legacy null group or the newer `site` group. The seeder does not create or modify the team.
 
 ## Safety contract
 
-- No email or password is committed.
-- Seeding is disabled by default.
-- Production requires a second explicit opt-in.
-- All six passwords must contain at least 16 characters.
-- Configured emails must be unique.
-- An existing user is updated only when its name has the exact protected `[Live UAT]` marker expected for that persona.
-- TRT and Incident Commander must use an existing on-duty site team; both the legacy null group and the newer `site` group are supported. The seeder never creates or modifies a production team.
-- Rerunning rotates the configured passwords, revokes existing tokens/sessions, resets login locks, and reconciles the exact role assignment.
+- No password is committed or stored in configuration.
+- Each run generates a different random 24-character password for every persona.
+- The six credentials are shown once in the seeder's terminal table and must be copied into a secure temporary record.
+- Rerunning rotates every password and revokes existing tokens/sessions.
+- An existing user is updated only when its name exactly matches the protected `[Live UAT]` marker.
+- The exact role, scope, and team membership are reconciled transactionally.
 - Cleanup revokes access, removes role/team assignments, and soft-deletes only exact marked accounts.
 
-## Required variables
+These are real authenticated production accounts. Keep the credentials private and execute the cleanup before system handover.
 
-```dotenv
-LIVE_UAT_USERS_ENABLED=true
-LIVE_UAT_USERS_ALLOW_PRODUCTION=true
-LIVE_UAT_SITE_TEAM_ID=<active-site-team-id>
-VMECC_LIVE_UAT_TRT_EMAIL=<dedicated-email>
-VMECC_LIVE_UAT_TRT_PASSWORD=<temporary-secret>
-VMECC_LIVE_UAT_INCIDENT_COMMANDER_EMAIL=<dedicated-email>
-VMECC_LIVE_UAT_INCIDENT_COMMANDER_PASSWORD=<temporary-secret>
-VMECC_LIVE_UAT_CONTRACT_MANAGER_EMAIL=<dedicated-email>
-VMECC_LIVE_UAT_CONTRACT_MANAGER_PASSWORD=<temporary-secret>
-VMECC_LIVE_UAT_HUMAN_RESOURCE_EMAIL=<dedicated-email>
-VMECC_LIVE_UAT_HUMAN_RESOURCE_PASSWORD=<temporary-secret>
-VMECC_LIVE_UAT_FINANCE_EMAIL=<dedicated-email>
-VMECC_LIVE_UAT_FINANCE_PASSWORD=<temporary-secret>
-VMECC_LIVE_UAT_SYSADMIN_EMAIL=<dedicated-email>
-VMECC_LIVE_UAT_SYSADMIN_PASSWORD=<temporary-secret>
-```
+## Seed
 
-Prefer temporary shell environment variables or a protected deployment secret store. Do not commit values. If the values are placed in `.env`, remove them after cleanup.
-
-## Production commands
-
-From the deployed backend directory, refresh Composer's optimized class map after pulling the new files:
+From the deployed backend directory:
 
 ```bash
 composer dump-autoload --optimize --no-dev
-```
-
-List eligible on-duty teams and select the intended team's ID:
-
-```bash
-php artisan tinker --execute="dump(App\\Models\\Team::query()->where('status', config('team.default_status', 'On Duty'))->where(fn ($query) => $query->whereNull('group')->orWhere('group', 'site'))->get(['id', 'name', 'group', 'status'])->toArray());"
-```
-
-After exporting the required variables:
-
-```bash
-php artisan config:clear
+php artisan optimize:clear
 php artisan db:seed --class=LiveUatUsersSeeder --force
-```
-
-After seeding, copy the same six credential pairs into the local frontend UAT process environment. Do not place them in a committed frontend file.
-
-## Cleanup
-
-Keep or re-export the same emails and explicit opt-in variables, then run:
-
-```bash
-php artisan config:clear
-php artisan db:seed --class=LiveUatUsersCleanupSeeder --force
-```
-
-Unset the temporary shell variables. If the backend `.env` was not changed, rebuild the ordinary cached configuration after unsetting them:
-
-```bash
 php artisan config:cache
 ```
 
-Do not run the cleanup seeder with different email values: it can only locate the accounts listed in the current environment.
+Copy the resulting credential table immediately. The passwords cannot be recovered from the database. If they are lost, rerun the seeder to rotate all six.
+
+Use the same credential pairs as temporary environment variables in the local frontend Playwright process. Do not commit them or add them to either repository.
+
+## Cleanup before handover
+
+```bash
+php artisan db:seed --class=LiveUatUsersCleanupSeeder --force
+```
+
+The cleanup seeder uses the fixed marked email/name pairs in `config/live_uat.php`; no password or environment configuration is required.
