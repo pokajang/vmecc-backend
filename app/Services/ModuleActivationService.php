@@ -12,10 +12,6 @@ class ModuleActivationService
 
     public function load(): array
     {
-        if ($this->forceAllEnabled()) {
-            return $this->payload([], true);
-        }
-
         try {
             $setting = Setting::query()->where('key', self::SETTING_KEY)->first();
             $raw = $setting?->value;
@@ -56,10 +52,6 @@ class ModuleActivationService
 
     public function isEnabled(string $key): bool
     {
-        if ($this->forceAllEnabled()) {
-            return true;
-        }
-
         $payload = $this->load();
         $effective = $payload['effective'][$key] ?? null;
         if (! is_array($effective)) {
@@ -127,21 +119,12 @@ class ModuleActivationService
             'registry' => ModuleCatalog::registryPayload(),
             'configured' => $configured,
             'effective' => $effective,
-            'forceAllEnabled' => $this->forceAllEnabled(),
             'fallbackMode' => $fallbackMode,
         ];
     }
 
     private function resolveEffectiveState(string $key, array $configured, array $seen = []): array
     {
-        if ($this->forceAllEnabled()) {
-            return [
-                'enabled' => true,
-                'reason' => null,
-                'blockingModule' => null,
-            ];
-        }
-
         if (! ModuleCatalog::has($key)) {
             return [
                 'enabled' => true,
@@ -205,10 +188,5 @@ class ModuleActivationService
             'reason' => null,
             'blockingModule' => null,
         ];
-    }
-
-    private function forceAllEnabled(): bool
-    {
-        return (bool) config('features.module_activation_force_all_enabled', false);
     }
 }

@@ -55,7 +55,6 @@ class ModuleActivationController extends Controller
         AuditLogger::log($request, 'module_activation_updated', null, [
             'before' => $before['configured'] ?? [],
             'after' => $next['configured'] ?? [],
-            'forceAllEnabled' => $next['forceAllEnabled'] ?? false,
         ]);
 
         return response()->json([

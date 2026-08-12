@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\InspectionSession;
 use App\Models\Report;
+use App\Models\TeamMember;
 use App\Models\User;
 
 class InspectionPolicy
@@ -17,6 +18,15 @@ class InspectionPolicy
     public function canSubmit(User $actor): InspectionPolicyDecision
     {
         $reason = $this->workflow->submissionBlockReason($actor);
+        $today = now()->toDateString();
+        $hasActiveTeam = TeamMember::query()
+            ->where('user_id', $actor->id)
+            ->where(fn ($query) => $query->whereNull('started_at')->orWhereDate('started_at', '<=', $today))
+            ->where(fn ($query) => $query->whereNull('ended_at')->orWhereDate('ended_at', '>=', $today))
+            ->exists();
+        if (! $hasActiveTeam) {
+            $reason = null;
+        }
 
         return $reason === null
             ? InspectionPolicyDecision::allow()

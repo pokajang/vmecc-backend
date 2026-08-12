@@ -127,7 +127,7 @@ class InspectionDutyContextResolver
         $context['contextVersion'] = 'dcv1:'.hash('sha256', json_encode($context, JSON_UNESCAPED_SLASHES));
         $context['allowedActions'] = [
             'draftSave' => true,
-            'submit' => $status === 'assigned',
+            'submit' => in_array($status, ['assigned', 'unmatched'], true),
             'review' => $status === 'assigned',
             'approve' => $status === 'assigned',
             'reject' => $status === 'assigned',

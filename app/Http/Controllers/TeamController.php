@@ -11,10 +11,11 @@ use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\RoleCatalog;
 use App\Services\TeamMemberSyncService;
-use App\Services\WorkflowNotificationService;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
@@ -22,7 +23,6 @@ class TeamController extends Controller
 {
     public function __construct(
         private readonly TeamMemberSyncService $teamMemberSync,
-        private readonly WorkflowNotificationService $workflowNotifications,
         private readonly AssignmentAuthorizationService $authorizationService,
     ) {}
 
@@ -125,6 +125,7 @@ class TeamController extends Controller
                     'email' => $user->email,
                     'status' => $user->status,
                     'roles' => $this->authorizationService->getActiveRoleNames($user)->values()->all(),
+                    'role_assignments' => $this->authorizationService->getRoleAssignmentsPayload($user),
                     'team' => $team?->name ?? $user->team,
                     'team_status' => $team?->status,
                     'profile_image_url' => $this->resolveProfileImageUrl($user->profile_image_url),
@@ -180,15 +181,19 @@ class TeamController extends Controller
         ]);
 
         $disk = $this->publicUploadsDisk();
-
-        // Remove old uploaded image if present (presets are not stored on disk)
-        if ($team->image_url && ! str_starts_with($team->image_url, 'preset:')) {
-            Storage::disk($disk)->delete($team->image_url);
-        }
-
+        $oldImage = ($team->image_url && ! str_starts_with($team->image_url, 'preset:'))
+            ? $team->image_url
+            : null;
         $path = $request->file('image')->store('teams', ['disk' => $disk]);
-
-        $team->update(['image_url' => $path]);
+        try {
+            $team->update(['image_url' => $path]);
+        } catch (\Throwable $exception) {
+            Storage::disk($disk)->delete($path);
+            throw $exception;
+        }
+        if ($oldImage && $oldImage !== $path) {
+            Storage::disk($disk)->delete($oldImage);
+        }
 
         return response()->json([
             'data' => [
@@ -229,15 +234,14 @@ class TeamController extends Controller
 
         // When a file was uploaded as part of the atomic multipart request, store it now
         // and treat it exactly like a regular image_url update for the rest of the method.
+        $uploadedImagePath = null;
         if ($request->hasFile('image')) {
             $request->validate([
                 'image' => ['file', 'image', 'max:4096', 'mimes:jpeg,png,webp,gif'],
             ]);
             $disk = $this->publicUploadsDisk();
-            if ($team->image_url && ! str_starts_with($team->image_url, 'preset:')) {
-                Storage::disk($disk)->delete($team->image_url);
-            }
-            $data['image_url'] = $request->file('image')->store('teams', ['disk' => $disk]);
+            $uploadedImagePath = $request->file('image')->store('teams', ['disk' => $disk]);
+            $data['image_url'] = $uploadedImagePath;
         }
 
         // Prevent assigning a user who is already an active member of a different team.
@@ -268,60 +272,72 @@ class TeamController extends Controller
         $oldImageToDelete = null;
         if (array_key_exists('image_url', $data)) {
             $newImageUrl = $data['image_url'];
-            if ($newImageUrl === null && $team->image_url && ! str_starts_with($team->image_url, 'preset:')) {
-                $oldImageToDelete = $team->image_url; // delete after DB commit
+            if (
+                $team->image_url
+                && ! str_starts_with($team->image_url, 'preset:')
+                && $newImageUrl !== $team->image_url
+            ) {
+                $oldImageToDelete = $team->image_url;
             }
             $updateFields['image_url'] = $newImageUrl;
         }
         $newUserIds = collect();
         $membersForLookup = [];
 
-        DB::transaction(function () use ($team, $updateFields, $data, &$newUserIds, &$membersForLookup) {
-            $team->update($updateFields);
+        try {
+            DB::transaction(function () use ($team, $updateFields, $data, &$newUserIds, &$membersForLookup) {
+                $team->update($updateFields);
 
-            if (isset($data['members'])) {
-                $incoming = collect($data['members']);
-                $existing = $team->members()->get()->keyBy(fn ($m) => $m->user_id ?? 'name:'.$m->name);
-                $incomingKeys = $incoming->map(fn ($m) => $m['user_id'] ?? ('name:'.$m['name']))->toArray();
+                if (isset($data['members'])) {
+                    $this->linkUnassignedScopedRoles($data['members'], $team->id);
+                    $incoming = collect($data['members']);
+                    $existing = $team->members()->get()->keyBy(fn ($m) => $m->user_id ?? 'name:'.$m->name);
+                    $incomingKeys = $incoming->map(fn ($m) => $m['user_id'] ?? ('name:'.$m['name']))->toArray();
 
-                // Track which user_ids are genuinely new (not currently active members)
-                $activeUserIds = $team->members()->whereNull('ended_at')->pluck('user_id')->filter()->values();
-                $newUserIds = collect($data['members'])
-                    ->pluck('user_id')
-                    ->filter()
-                    ->diff($activeUserIds)
-                    ->values();
-                $membersForLookup = $data['members'];
+                    // Track which user_ids are genuinely new (not currently active members)
+                    $activeUserIds = $team->members()->whereNull('ended_at')->pluck('user_id')->filter()->values();
+                    $newUserIds = collect($data['members'])
+                        ->pluck('user_id')
+                        ->filter()
+                        ->diff($activeUserIds)
+                        ->values();
+                    $membersForLookup = $data['members'];
 
-                $team->members()
-                    ->whereNull('ended_at')
-                    ->get()
-                    ->each(function ($member) use ($incomingKeys) {
-                        $key = $member->user_id ?? 'name:'.$member->name;
-                        if (! in_array($key, $incomingKeys, true)) {
-                            $member->update(['ended_at' => now()]);
-                        }
+                    $team->members()
+                        ->whereNull('ended_at')
+                        ->get()
+                        ->each(function ($member) use ($incomingKeys) {
+                            $key = $member->user_id ?? 'name:'.$member->name;
+                            if (! in_array($key, $incomingKeys, true)) {
+                                $member->update(['ended_at' => now()]);
+                            }
+                        });
+
+                    $incoming->each(function ($member) use ($team, $existing) {
+                        $key = $member['user_id'] ?? ('name:'.$member['name']);
+                        $current = $existing->get($key);
+                        $team->members()->updateOrCreate(
+                            [
+                                'team_id' => $team->id,
+                                'user_id' => $member['user_id'] ?? null,
+                                'name' => $member['name'],
+                            ],
+                            [
+                                'role' => $member['role'] ?? null,
+                                'is_primary' => $member['is_primary'] ?? false,
+                                'started_at' => $member['started_at'] ?? ($current?->started_at?->toDateString() ?? now()->toDateString()),
+                                'ended_at' => null,
+                            ],
+                        );
                     });
-
-                $incoming->each(function ($member) use ($team, $existing) {
-                    $key = $member['user_id'] ?? ('name:'.$member['name']);
-                    $current = $existing->get($key);
-                    $team->members()->updateOrCreate(
-                        [
-                            'team_id' => $team->id,
-                            'user_id' => $member['user_id'] ?? null,
-                            'name' => $member['name'],
-                        ],
-                        [
-                            'role' => $member['role'] ?? null,
-                            'is_primary' => $member['is_primary'] ?? false,
-                            'started_at' => $member['started_at'] ?? ($current?->started_at?->toDateString() ?? now()->toDateString()),
-                            'ended_at' => null,
-                        ],
-                    );
-                });
+                }
+            });
+        } catch (\Throwable $exception) {
+            if ($uploadedImagePath) {
+                Storage::disk($this->publicUploadsDisk())->delete($uploadedImagePath);
             }
-        });
+            throw $exception;
+        }
 
         // Delete old image file after DB commit so an upload failure doesn't orphan the file reference
         if ($oldImageToDelete) {
@@ -365,9 +381,19 @@ class TeamController extends Controller
                 && RoleCatalog::isScopedRole($role)
                 && empty($member['user_id'])
             ) {
-                $errors["members.{$index}.user_id"] = [
-                    "{$role} is an operational role and must be linked to an active user account.",
-                ];
+                $isExistingLegacyRow = $teamId
+                    && TeamMember::query()
+                        ->where('team_id', $teamId)
+                        ->whereNull('user_id')
+                        ->whereNull('ended_at')
+                        ->where('name', $member['name'] ?? '')
+                        ->whereRaw('LOWER(TRIM(COALESCE(role, \'\'))) = ?', [strtolower($role)])
+                        ->exists();
+                if (! $isExistingLegacyRow) {
+                    $errors["members.{$index}.user_id"] = [
+                        "{$role} is an operational role and must be linked to an active user account.",
+                    ];
+                }
             } elseif (
                 $role !== null
                 && RoleCatalog::isScopedRole($role)
@@ -379,7 +405,8 @@ class TeamController extends Controller
                     ->exists()
                 && ! UserRoleAssignment::query()
                     ->where('user_id', $member['user_id'])
-                    ->where('team_id', $teamId)
+                    ->where('scope_type', RoleCatalog::scopeForRole($role))
+                    ->where(fn ($query) => $query->where('team_id', $teamId)->orWhereNull('team_id'))
                     ->where(fn ($query) => $query->whereNull('start_date')->orWhereDate('start_date', '<=', $today))
                     ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $today))
                     ->whereHas(
@@ -399,6 +426,38 @@ class TeamController extends Controller
 
         if ($errors !== []) {
             throw ValidationException::withMessages($errors);
+        }
+    }
+
+    private function linkUnassignedScopedRoles(array $members, int $teamId): void
+    {
+        $today = now()->toDateString();
+        foreach ($members as $member) {
+            $userId = (int) ($member['user_id'] ?? 0);
+            $role = RoleCatalog::canonicalRoleName($member['role'] ?? null);
+            if ($userId <= 0 || $role === null || ! RoleCatalog::isScopedRole($role)) {
+                continue;
+            }
+
+            $assignment = UserRoleAssignment::query()
+                ->where('user_id', $userId)
+                ->where('scope_type', RoleCatalog::scopeForRole($role))
+                ->whereNull('team_id')
+                ->where(fn ($query) => $query->whereNull('start_date')->orWhereDate('start_date', '<=', $today))
+                ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $today))
+                ->whereHas(
+                    'role',
+                    fn ($query) => $query->whereRaw(
+                        'LOWER(TRIM(name)) = ?',
+                        [strtolower($role)],
+                    ),
+                )
+                ->lockForUpdate()
+                ->first();
+
+            if ($assignment) {
+                $assignment->update(['team_id' => $teamId]);
+            }
         }
     }
 
@@ -499,93 +558,114 @@ class TeamController extends Controller
         ];
     }
 
-    /**
-     * Delete a team:
-     * 1. Snapshot active members to deleted_teams for sysadmin audit.
-     * 2. Null out team_id on related user_role_assignments (keep roles intact).
-     * 3. Notify each active member with a user account.
-     * 4. Delete uploaded cover image from storage.
-     * 5. Delete the team (cascades team_members).
-     * 6. Write an audit log entry.
-     */
+    /** Delete only an empty, unreferenced team and retain a recovery snapshot. */
     public function destroy(Request $request, Team $team): JsonResponse
     {
-        // Load active members before deletion
-        $team->load(['members' => fn ($q) => $q->whereNull('ended_at')]);
+        if (! $this->authorizationService->hasOrganizationWidePermission($request->user(), 'teams.manage')) {
+            abort(403, 'Only an organization-wide team manager may delete a team.');
+        }
 
-        $activeMembers = $team->members;
-        $imageToDelete = ($team->image_url && ! str_starts_with($team->image_url, 'preset:'))
-            ? $team->image_url
-            : null;
+        $confirmation = $request->validate([
+            'confirm_name' => ['required', 'string', 'max:255'],
+            'expected_updated_at' => ['required', 'date'],
+        ]);
+        $deleted = DB::transaction(function () use ($team, $confirmation, $request): array {
+            $lockedTeam = Team::query()->lockForUpdate()->findOrFail($team->id);
+            if (! hash_equals($lockedTeam->name, trim((string) $confirmation['confirm_name']))) {
+                throw ValidationException::withMessages([
+                    'confirm_name' => ['The confirmation name does not match the selected team.'],
+                ]);
+            }
+            if (! $lockedTeam->updated_at || ! $lockedTeam->updated_at->equalTo($confirmation['expected_updated_at'])) {
+                throw new HttpResponseException(response()->json([
+                    'message' => 'This team changed after it was loaded. Refresh before deleting it.',
+                    'code' => 'team_delete_version_conflict',
+                ], 409));
+            }
 
-        // Steps 1–2 + 5 are DB operations — wrap in a transaction so the snapshot,
-        // role-assignment nulling, and team deletion are all-or-nothing.
-        DB::transaction(function () use ($team, $activeMembers, $request) {
-            // 1. Snapshot active members for sysadmin audit trail
+            $dependencies = $this->teamDeletionDependencies($lockedTeam);
+            if (collect($dependencies)->sum() > 0) {
+                throw new HttpResponseException(response()->json([
+                    'message' => 'This team is still referenced by operational or historical records and cannot be deleted.',
+                    'code' => 'team_delete_dependencies_exist',
+                    'dependencies' => $dependencies,
+                ], 409));
+            }
+
             DeletedTeam::create([
-                'name' => $team->name,
-                'status' => $team->status,
-                'image_url' => $team->image_url,
-                'lead_id' => $team->lead_id,
-                'lead_name' => $team->lead_name,
-                'members_snapshot' => $activeMembers->map(fn ($m) => [
-                    'user_id' => $m->user_id,
-                    'name' => $m->name,
-                    'role' => $m->role,
-                    'is_primary' => $m->is_primary,
-                    'started_at' => $m->started_at?->toDateString(),
-                ])->values()->toArray(),
+                'original_team_id' => $lockedTeam->id,
+                'name' => $lockedTeam->name,
+                'group' => $lockedTeam->group,
+                'status' => $lockedTeam->status,
+                'image_url' => $lockedTeam->image_url,
+                'lead_id' => $lockedTeam->lead_id,
+                'lead_name' => $lockedTeam->lead_name,
+                'members_snapshot' => [],
+                'dependencies_snapshot' => $dependencies,
                 'deleted_by_user_id' => $request->user()?->id,
                 'deleted_at' => now(),
             ]);
 
-            // 2. Null out team_id on role assignments so users keep their role
-            UserRoleAssignment::where('team_id', $team->id)->update(['team_id' => null]);
+            $deleted = [
+                'name' => $lockedTeam->name,
+                'image' => ($lockedTeam->image_url && ! str_starts_with($lockedTeam->image_url, 'preset:'))
+                    ? $lockedTeam->image_url
+                    : null,
+            ];
+            $lockedTeam->delete();
 
-            // 3. Delete team (cascades team_members)
-            $team->delete();
+            return $deleted;
         });
 
-        // 4. Delete uploaded cover image after DB commit (skip preset tokens)
-        if ($imageToDelete) {
-            Storage::disk($this->publicUploadsDisk())->delete($imageToDelete);
+        if ($deleted['image']) {
+            Storage::disk($this->publicUploadsDisk())->delete($deleted['image']);
         }
 
-        // 5. Notify each member that has a linked user account — outside the transaction
-        //    so a mail failure cannot roll back the deletion.
-        $memberUserIds = $activeMembers->pluck('user_id')->filter()->unique()->values();
-        if ($memberUserIds->isNotEmpty()) {
-            $actor = $request->user()
-                ? ['userId' => $request->user()->id, 'name' => $request->user()->name, 'email' => $request->user()->email ?? '']
-                : ['userId' => null, 'name' => 'System', 'email' => ''];
-
-            $this->workflowNotifications->emit(
-                module: 'team',
-                eventType: 'team_disbanded',
-                recordType: 'team',
-                recordId: null,
-                recordDisplayId: $team->name,
-                ownerUserId: $memberUserIds->first(),
-                actor: $actor,
-                targetUserIds: $memberUserIds->all(),
-                metadata: [
-                    'teamName' => $team->name,
-                    'memberCount' => $activeMembers->count(),
-                ],
-            );
-        }
-
-        // 6. Audit log
         AuditLogger::log($request, 'team_deleted', null, [
-            'team_name' => $team->name,
-            'member_count' => $activeMembers->count(),
-            'members' => $activeMembers->map(fn ($m) => [
-                'name' => $m->name,
-                'role' => $m->role,
-            ])->values()->toArray(),
+            'team_name' => $deleted['name'],
+            'member_count' => 0,
+            'members' => [],
         ]);
 
         return response()->json(null, 204);
+    }
+
+    private function teamDeletionDependencies(Team $team): array
+    {
+        $teamId = (int) $team->id;
+        $count = static function (string $table, string|array $columns) use ($teamId): int {
+            if (! Schema::hasTable($table)) {
+                return 0;
+            }
+            $columns = (array) $columns;
+            $available = array_values(array_filter($columns, fn (string $column) => Schema::hasColumn($table, $column)));
+            if ($available === []) {
+                return 0;
+            }
+
+            return (int) DB::table($table)
+                ->where(function ($query) use ($available, $teamId): void {
+                    foreach ($available as $index => $column) {
+                        $index === 0
+                            ? $query->where($column, $teamId)
+                            : $query->orWhere($column, $teamId);
+                    }
+                })
+                ->count();
+        };
+
+        return [
+            'team_members' => $count('team_members', 'team_id'),
+            'role_assignments' => $count('user_role_assignments', 'team_id'),
+            'rosters' => $count('rosters', 'team_id'),
+            'duty_coverage' => $count('duty_coverage_assignments', ['home_team_id', 'acting_team_id']),
+            'reports' => $count('reports', 'scope_team_id'),
+            'report_routing_events' => $count('report_routing_events', 'team_id'),
+            'team_role_transfers' => $count('team_role_transfers', ['from_team_id', 'to_team_id']),
+            'fitness_shift_groups' => $count('fitness_test_shift_groups', 'team_id'),
+            'overtime_workflows' => $count('overtime_records', 'workflow_team_id'),
+            'leave_workflows' => $count('leaves', 'workflow_team_id'),
+        ];
     }
 
     private function publicUploadsDisk(): string

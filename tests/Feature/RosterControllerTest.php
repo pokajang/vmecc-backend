@@ -39,6 +39,24 @@ class RosterControllerTest extends TestCase
         return $user;
     }
 
+    private function actingAsScopedRosterManager(Team $team): User
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $role = Role::firstOrCreate(['name' => 'Scoped Roster Manager', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => 'rosters.manage', 'guard_name' => 'web']);
+        $role->givePermissionTo('rosters.manage');
+        UserRoleAssignment::create([
+            'user_id' => $user->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $team->id,
+            'is_primary' => true,
+        ]);
+        $this->actingAs($user);
+
+        return $user;
+    }
+
     private function makeTeam(?string $name = null): Team
     {
         return Team::factory()->create(['name' => $name ?? 'Team '.uniqid()]);
@@ -49,9 +67,13 @@ class RosterControllerTest extends TestCase
         return ['date' => $date, 'shifts' => $shifts];
     }
 
-    private function shift(string $shift, ?int $teamId): array
+    private function shift(string $shift, ?int $teamId, ?string $expectedUpdatedAt = null): array
     {
-        return ['shift' => $shift, 'team_id' => $teamId];
+        return [
+            'shift' => $shift,
+            'team_id' => $teamId,
+            'expected_updated_at' => $expectedUpdatedAt,
+        ];
     }
 
     // ─── Auth / Authorization ────────────────────────────────────────────────
@@ -89,6 +111,31 @@ class RosterControllerTest extends TestCase
             'entries' => [$this->rosterEntry('2026-05-01', [$this->shift('day', $team->id)])],
             'scope_label' => 'May 2026',
         ])->assertStatus(403);
+    }
+
+    public function test_team_scoped_manager_cannot_change_another_teams_roster_cell(): void
+    {
+        $managedTeam = $this->makeTeam('Managed Team');
+        $otherTeam = $this->makeTeam('Other Team');
+        $existing = Roster::create([
+            'date' => '2026-05-01',
+            'shift' => 'day',
+            'team_id' => $otherTeam->id,
+            'status' => 'published',
+        ]);
+        $this->actingAsScopedRosterManager($managedTeam);
+
+        $this->postJson('/api/rosters', [
+            'entries' => [$this->rosterEntry('2026-05-01', [
+                $this->shift('day', $managedTeam->id, $existing->updated_at->toIso8601String()),
+            ])],
+        ])->assertForbidden()->assertJsonPath('code', 'roster_team_scope_forbidden');
+
+        $this->assertDatabaseHas('rosters', [
+            'id' => $existing->id,
+            'team_id' => $otherTeam->id,
+            'status' => 'published',
+        ]);
     }
 
     // ─── Index ───────────────────────────────────────────────────────────────
@@ -200,10 +247,12 @@ class RosterControllerTest extends TestCase
         $this->actingAsRosterManager();
         $team = $this->makeTeam();
 
-        Roster::create(['date' => '2026-06-01', 'shift' => 'day', 'team_id' => $team->id, 'status' => 'draft']);
+        $existing = Roster::create(['date' => '2026-06-01', 'shift' => 'day', 'team_id' => $team->id, 'status' => 'draft']);
 
         $this->postJson('/api/rosters', [
-            'entries' => [$this->rosterEntry('2026-06-01', [$this->shift('day', null)])],
+            'entries' => [$this->rosterEntry('2026-06-01', [
+                $this->shift('day', null, $existing->updated_at->toIso8601String()),
+            ])],
         ])->assertOk();
 
         $this->assertDatabaseMissing('rosters', ['date' => '2026-06-01', 'shift' => 'day']);
@@ -269,10 +318,12 @@ class RosterControllerTest extends TestCase
         $this->actingAsRosterManager();
         $team = $this->makeTeam();
 
-        Roster::create(['date' => '2026-07-01', 'shift' => 'day', 'team_id' => $team->id, 'status' => 'draft']);
+        $existing = Roster::create(['date' => '2026-07-01', 'shift' => 'day', 'team_id' => $team->id, 'status' => 'draft']);
 
         $this->postJson('/api/rosters/publish', [
-            'entries' => [$this->rosterEntry('2026-07-01', [$this->shift('day', $team->id)])],
+            'entries' => [$this->rosterEntry('2026-07-01', [
+                $this->shift('day', $team->id, $existing->updated_at->toIso8601String()),
+            ])],
             'scope_label' => 'July 2026',
         ])->assertOk();
 
@@ -384,6 +435,72 @@ class RosterControllerTest extends TestCase
         $this->postJson('/api/rosters/publish', [
             'entries' => [$this->rosterEntry('2026-07-01', [$this->shift('day', $team->id)])],
         ])->assertStatus(422);
+    }
+
+    public function test_patch_does_not_modify_unrelated_roster_cells(): void
+    {
+        $this->actingAsRosterManager();
+        $alpha = $this->makeTeam('Alpha');
+        $bravo = $this->makeTeam('Bravo');
+        $charlie = $this->makeTeam('Charlie');
+        $alphaRow = Roster::create([
+            'date' => '2026-07-15', 'shift' => 'day', 'team_id' => $alpha->id, 'status' => 'published',
+        ]);
+        $bravoRow = Roster::create([
+            'date' => '2026-07-15', 'shift' => 'night', 'team_id' => $bravo->id, 'status' => 'published',
+        ]);
+
+        $this->postJson('/api/rosters', [
+            'entries' => [$this->rosterEntry('2026-07-15', [
+                $this->shift('day', $charlie->id, $alphaRow->updated_at->toIso8601String()),
+            ])],
+        ])->assertOk();
+
+        $this->assertDatabaseHas('rosters', [
+            'id' => $bravoRow->id,
+            'team_id' => $bravo->id,
+            'status' => 'published',
+        ]);
+    }
+
+    public function test_patch_rejects_duplicate_team_assignment_in_an_untouched_shift(): void
+    {
+        $this->actingAsRosterManager();
+        $alpha = $this->makeTeam('Alpha duplicate check');
+        $bravo = $this->makeTeam('Bravo duplicate check');
+        $day = Roster::create([
+            'date' => '2026-07-17', 'shift' => 'day', 'team_id' => $alpha->id, 'status' => 'published',
+        ]);
+        Roster::create([
+            'date' => '2026-07-17', 'shift' => 'night', 'team_id' => $bravo->id, 'status' => 'published',
+        ]);
+
+        $this->postJson('/api/rosters', [
+            'entries' => [$this->rosterEntry('2026-07-17', [
+                $this->shift('day', $bravo->id, $day->updated_at->toIso8601String()),
+            ])],
+        ])->assertUnprocessable();
+
+        $this->assertDatabaseHas('rosters', ['id' => $day->id, 'team_id' => $alpha->id]);
+    }
+
+    public function test_patch_rejects_a_stale_roster_version(): void
+    {
+        $this->actingAsRosterManager();
+        $team = $this->makeTeam();
+        Roster::create([
+            'date' => '2026-07-16', 'shift' => 'day', 'team_id' => $team->id, 'status' => 'published',
+        ]);
+
+        $this->postJson('/api/rosters', [
+            'entries' => [$this->rosterEntry('2026-07-16', [
+                $this->shift('day', null, '2026-01-01T00:00:00Z'),
+            ])],
+        ])->assertStatus(409)->assertJsonPath('code', 'roster_version_conflict');
+
+        $this->assertDatabaseHas('rosters', [
+            'date' => '2026-07-16', 'shift' => 'day', 'team_id' => $team->id,
+        ]);
     }
 
     // ─── resolve row status ──────────────────────────────────────────────────

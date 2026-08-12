@@ -42,18 +42,29 @@ class InspectionDutyContextApiTest extends TestCase
             ->assertJsonPath('data.allowedActions.submit', true);
     }
 
-    public function test_unmatched_user_cannot_receive_confirmation(): void
+    public function test_unmatched_user_can_confirm_personal_submission_but_not_review(): void
     {
         Carbon::setTestNow('2026-07-12 02:00:00 UTC');
         $user = $this->inspectionUser();
         $contextVersion = $this->actingAs($user)->getJson('/api/inspection/duty-context')
             ->assertOk()
             ->assertJsonPath('data.status', 'unmatched')
+            ->assertJsonPath('data.allowedActions.submit', true)
+            ->assertJsonPath('data.allowedActions.review', false)
             ->json('data.contextVersion');
 
         $this->actingAs($user)->postJson('/api/inspection/duty-context/confirm', [
             'operation' => 'submit',
             'contextVersion' => $contextVersion,
+            'formId' => 'general-inspection',
+            'recordId' => 'personal-report-1',
+            'idempotencyKey' => 'personal-submit-1',
+        ])->assertCreated();
+
+        $this->actingAs($user)->postJson('/api/inspection/duty-context/confirm', [
+            'operation' => 'review',
+            'contextVersion' => $contextVersion,
+            'recordId' => 'someone-elses-report',
         ])->assertUnprocessable()->assertJsonPath('code', 'duty_context_unmatched');
     }
 

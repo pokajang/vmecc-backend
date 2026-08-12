@@ -10,18 +10,22 @@ class DeletedTeam extends Model
     public $timestamps = false;
 
     protected $fillable = [
+        'original_team_id',
         'name',
+        'group',
         'status',
         'image_url',
         'lead_id',
         'lead_name',
         'members_snapshot',
+        'dependencies_snapshot',
         'deleted_by_user_id',
         'deleted_at',
     ];
 
     protected $casts = [
         'members_snapshot' => 'array',
+        'dependencies_snapshot' => 'array',
         'deleted_at' => 'datetime',
     ];
 

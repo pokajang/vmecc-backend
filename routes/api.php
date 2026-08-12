@@ -186,7 +186,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::get('teams/{team}', [TeamController::class, 'show'])->middleware('permission.assignment.scope:teams.view,team');
     Route::put('teams/{team}', [TeamController::class, 'update'])->middleware('permission.assignment.scope:teams.manage,team');
     Route::post('teams/{team}', [TeamController::class, 'update'])->middleware('permission.assignment.scope:teams.manage,team'); // multipart method-spoofing path
-    Route::delete('teams/{team}', [TeamController::class, 'destroy'])->middleware('permission.assignment:teams.manage');
+    Route::delete('teams/{team}', [TeamController::class, 'destroy'])->middleware('permission.assignment.scope:teams.manage,team');
     Route::post('teams/{team}/image', [TeamController::class, 'uploadImage'])->middleware('permission.assignment.scope:teams.manage,team');
 
     Route::get('duty-coverage', [DutyCoverageAssignmentController::class, 'index'])

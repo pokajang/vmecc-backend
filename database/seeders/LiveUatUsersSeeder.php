@@ -123,7 +123,6 @@ class LiveUatUsersSeeder extends Seeder
 
         $user->forceFill([
             'name' => $persona['name'],
-            'password' => $persona['password_hash'],
             'email_verified_at' => now(),
             'status' => 'Active',
             'failed_login_count' => 0,
@@ -131,7 +130,16 @@ class LiveUatUsersSeeder extends Seeder
             'locked_by' => null,
             'lock_reason' => null,
             'remember_token' => null,
-        ])->save();
+        ]);
+
+        // The configured value is an already-validated bcrypt hash. Assign it as
+        // a raw attribute so Laravel's hashed cast does not reject a production
+        // cost-12 hash when the test environment deliberately uses fewer rounds.
+        $user->setRawAttributes([
+            ...$user->getAttributes(),
+            'password' => $persona['password_hash'],
+        ]);
+        $user->save();
 
         $role = Role::query()
             ->where('name', $persona['role'])

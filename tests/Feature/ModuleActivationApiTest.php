@@ -52,6 +52,22 @@ class ModuleActivationApiTest extends TestCase
         $this->assertTrue($data['effective']['settings.module_activation']['enabled']);
     }
 
+    public function test_disabling_messages_blocks_message_thread_requests(): void
+    {
+        $this->actingAsUserWithPermissions(['settings.manage']);
+        $this->putJson('/api/settings/modules', [
+            'configured' => ['messages' => false],
+        ])->assertOk()
+            ->assertJsonPath('data.effective.messages.enabled', false);
+
+        $this->actingAsUserWithPermissions(['self.messages']);
+
+        $this->getJson('/api/messages/threads')
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'MODULE_DISABLED')
+            ->assertJsonPath('module', 'messages');
+    }
+
     public function test_disabling_payroll_blocks_payroll_children(): void
     {
         $this->actingAsUserWithPermissions(['settings.manage']);

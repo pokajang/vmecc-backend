@@ -9,6 +9,8 @@ use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
 use App\Services\LeaveRosterImpactService;
 use App\Services\WorkflowNotificationService;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -132,6 +134,7 @@ class RosterController extends Controller
                     'team_id' => $row->team_id,
                     'team' => $row->team?->name,
                     'status' => $row->status,
+                    'updated_at' => $row->updated_at?->toIso8601String(),
                     'leave_marker' => $markersByRosterId[$row->id] ?? [
                         'requested_count' => 0,
                         'approved_count' => 0,
@@ -166,6 +169,7 @@ class RosterController extends Controller
             'entries.*.shifts' => ['required', 'array', 'min:1'],
             'entries.*.shifts.*.shift' => ['required', 'string', Rule::in($validSlugs)],
             'entries.*.shifts.*.team_id' => ['nullable', Rule::exists('teams', 'id')],
+            'entries.*.shifts.*.expected_updated_at' => ['present', 'nullable', 'date'],
         ]);
 
         foreach ($data['entries'] as $entry) {
@@ -178,23 +182,20 @@ class RosterController extends Controller
         }
 
         $userId = Auth::id();
+        $permittedTeamIds = $this->authorizationService
+            ->permittedTeamIds($request->user(), 'rosters.manage')
+            ?->all();
 
-        DB::transaction(function () use ($data, $userId) {
-            foreach ($data['entries'] as $entry) {
-                foreach ($entry['shifts'] as $shiftRow) {
-                    $shift = $shiftRow['shift'];
-                    $teamId = $shiftRow['team_id'];
-                    if ($teamId !== null) {
-                        Roster::updateOrCreate(
-                            ['date' => $entry['date'], 'shift' => $shift],
-                            ['team_id' => $teamId, 'status' => 'draft', 'created_by' => $userId]
-                        );
-                    } else {
-                        Roster::where('date', $entry['date'])->where('shift', $shift)->delete();
-                    }
-                }
-            }
-        });
+        try {
+            DB::transaction(fn () => $this->applyRosterPatch(
+                $data['entries'],
+                'draft',
+                $userId,
+                permittedTeamIds: $permittedTeamIds,
+            ));
+        } catch (QueryException $exception) {
+            $this->throwRosterWriteConflict($exception);
+        }
 
         AuditLogger::log($request, 'roster_draft_saved', null, [
             'entry_count' => count($data['entries']),
@@ -216,6 +217,7 @@ class RosterController extends Controller
             'entries.*.shifts' => ['required', 'array', 'min:1'],
             'entries.*.shifts.*.shift' => ['required', 'string', Rule::in($validSlugs)],
             'entries.*.shifts.*.team_id' => ['nullable', Rule::exists('teams', 'id')],
+            'entries.*.shifts.*.expected_updated_at' => ['present', 'nullable', 'date'],
             'scope_label' => ['required', 'string', 'max:100'],
         ]);
 
@@ -229,33 +231,24 @@ class RosterController extends Controller
         }
 
         $userId = Auth::id();
+        $permittedTeamIds = $this->authorizationService
+            ->permittedTeamIds($request->user(), 'rosters.manage')
+            ?->all();
         $scopeLabel = $data['scope_label'];
         $now = Carbon::now();
-        $teamShifts = [];
-
-        DB::transaction(function () use ($data, $userId, $now, &$teamShifts) {
-            foreach ($data['entries'] as $entry) {
-                foreach ($entry['shifts'] as $shiftRow) {
-                    $shift = $shiftRow['shift'];
-                    $teamId = $shiftRow['team_id'];
-                    if ($teamId !== null) {
-                        Roster::updateOrCreate(
-                            ['date' => $entry['date'], 'shift' => $shift],
-                            [
-                                'team_id' => $teamId,
-                                'status' => 'published',
-                                'created_by' => $userId,
-                                'published_by' => $userId,
-                                'published_at' => $now,
-                            ]
-                        );
-                        $teamShifts[$teamId][] = ['date' => $entry['date'], 'shift' => $shift];
-                    } else {
-                        Roster::where('date', $entry['date'])->where('shift', $shift)->delete();
-                    }
-                }
-            }
-        });
+        try {
+            $teamShifts = DB::transaction(
+                fn () => $this->applyRosterPatch(
+                    $data['entries'],
+                    'published',
+                    $userId,
+                    $now,
+                    $permittedTeamIds,
+                ),
+            );
+        } catch (QueryException $exception) {
+            $this->throwRosterWriteConflict($exception);
+        }
 
         $teamIds = array_keys($teamShifts);
 
@@ -308,6 +301,137 @@ class RosterController extends Controller
         ]);
 
         return response()->json(['message' => 'Roster published and teams notified.']);
+    }
+
+    private function applyRosterPatch(
+        array $entries,
+        string $status,
+        int $userId,
+        ?Carbon $publishedAt = null,
+        ?array $permittedTeamIds = null,
+    ): array {
+        $this->validatePatchedTeamConflicts($entries);
+        $teamShifts = [];
+        foreach ($entries as $entry) {
+            foreach ($entry['shifts'] as $shiftRow) {
+                $shift = $shiftRow['shift'];
+                $teamId = $shiftRow['team_id'];
+                $expectedUpdatedAt = $shiftRow['expected_updated_at'];
+                $existing = Roster::query()
+                    ->whereDate('date', $entry['date'])
+                    ->where('shift', $shift)
+                    ->lockForUpdate()
+                    ->first();
+
+                $existingTeamId = $existing?->team_id ? (int) $existing->team_id : null;
+                $targetTeamId = $teamId !== null ? (int) $teamId : null;
+                if ($permittedTeamIds !== null && (
+                    ($existingTeamId !== null && ! in_array($existingTeamId, $permittedTeamIds, true))
+                    || ($targetTeamId !== null && ! in_array($targetTeamId, $permittedTeamIds, true))
+                )) {
+                    throw new HttpResponseException(response()->json([
+                        'message' => 'You cannot change a roster assignment outside your team scope.',
+                        'code' => 'roster_team_scope_forbidden',
+                    ], 403));
+                }
+
+                $versionMatches = $existing
+                    ? $expectedUpdatedAt !== null
+                        && $existing->updated_at?->equalTo($expectedUpdatedAt)
+                    : $expectedUpdatedAt === null;
+                if (! $versionMatches) {
+                    throw new HttpResponseException(response()->json([
+                        'message' => "The {$shift} roster assignment for {$entry['date']} changed after it was loaded.",
+                        'code' => 'roster_version_conflict',
+                        'date' => $entry['date'],
+                        'shift' => $shift,
+                    ], 409));
+                }
+
+                if ($teamId === null) {
+                    $existing?->delete();
+
+                    continue;
+                }
+
+                $values = [
+                    'team_id' => $teamId,
+                    'status' => $status,
+                    'created_by' => $userId,
+                ];
+                if ($status === 'published') {
+                    $values['published_by'] = $userId;
+                    $values['published_at'] = $publishedAt;
+                } else {
+                    $values['published_by'] = null;
+                    $values['published_at'] = null;
+                }
+
+                if ($existing) {
+                    $existing->update($values);
+                } else {
+                    Roster::query()->create([
+                        'date' => $entry['date'],
+                        'shift' => $shift,
+                        ...$values,
+                    ]);
+                }
+                $teamShifts[$teamId][] = ['date' => $entry['date'], 'shift' => $shift];
+            }
+        }
+
+        return $teamShifts;
+    }
+
+    private function validatePatchedTeamConflicts(array $entries): void
+    {
+        foreach (collect($entries)->groupBy('date') as $date => $dateEntries) {
+            $resultingShifts = Roster::query()
+                ->whereDate('date', $date)
+                ->lockForUpdate()
+                ->pluck('team_id', 'shift')
+                ->map(fn ($teamId) => $teamId !== null ? (int) $teamId : null)
+                ->all();
+
+            foreach ($dateEntries as $entry) {
+                foreach ($entry['shifts'] as $shiftRow) {
+                    if ($shiftRow['team_id'] === null) {
+                        unset($resultingShifts[$shiftRow['shift']]);
+                    } else {
+                        $resultingShifts[$shiftRow['shift']] = (int) $shiftRow['team_id'];
+                    }
+                }
+            }
+
+            $seen = [];
+            foreach ($resultingShifts as $shift => $teamId) {
+                if ($teamId === null) {
+                    continue;
+                }
+                if (isset($seen[$teamId])) {
+                    throw new HttpResponseException(response()->json([
+                        'message' => 'A team cannot be assigned to more than one shift on the same date.',
+                        'errors' => ['entries' => [
+                            "Conflict on {$date}: team {$teamId} assigned to both '{$seen[$teamId]}' and '{$shift}'",
+                        ]],
+                    ], 422));
+                }
+                $seen[$teamId] = $shift;
+            }
+        }
+    }
+
+    private function throwRosterWriteConflict(QueryException $exception): never
+    {
+        $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
+        if (! in_array($sqlState, ['23000', '23505'], true)) {
+            throw $exception;
+        }
+
+        throw new HttpResponseException(response()->json([
+            'message' => 'A roster assignment changed while this update was being saved. Refresh and retry.',
+            'code' => 'roster_version_conflict',
+        ], 409));
     }
 
     // ─────────────────────────────────────────────────────────────────────────

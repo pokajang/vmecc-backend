@@ -54,12 +54,16 @@ class InspectionSessionResolverService
             'siteKey' => $this->slug(config('inspection.site_key', 'vmecc')),
             'inspectionDate' => $inspectionDate,
             'shiftKey' => $shiftKey,
-            'batchKey' => $this->slug($scope['batchKey'] ?? '') ?: 'team-'.$teamId,
+            'batchKey' => $this->slug($scope['batchKey'] ?? '')
+                ?: ($teamId > 0 ? 'team-'.$teamId : 'user-'.$user->id),
             'teamId' => $teamId,
         ];
-        if ($dimensions['siteKey'] === '' || $dimensions['inspectionDate'] === '' || $dimensions['teamId'] <= 0) {
+        if ($teamId <= 0) {
+            $dimensions['actorUserId'] = (int) $user->id;
+        }
+        if ($dimensions['siteKey'] === '' || $dimensions['inspectionDate'] === '') {
             throw ValidationException::withMessages([
-                'scopeVersion' => ['V2 scope requires a site, inspection date, and active team assignment.'],
+                'scopeVersion' => ['V2 scope requires a site and inspection date.'],
             ]);
         }
 
@@ -141,7 +145,11 @@ class InspectionSessionResolverService
         $teamId = (int) data_get($session->scope, 'teamId', 0);
         $inspectionDate = $this->text(data_get($session->scope, 'inspectionDate', '')) ?: now()->toDateString();
 
-        return $teamId > 0 && $this->hasActiveTeamMembership($user, $teamId, $inspectionDate);
+        if ($teamId <= 0) {
+            return (int) $session->started_by_user_id === (int) $user->id;
+        }
+
+        return $this->hasActiveTeamMembership($user, $teamId, $inspectionDate);
     }
 
     private function activeTeamId(User $user, string $inspectionDate, int $requestedTeamId): int
@@ -158,17 +166,16 @@ class InspectionSessionResolverService
             $query->where('team_id', $requestedTeamId);
         }
         $teamId = (int) ($query->orderByDesc('is_primary')->orderByDesc('id')->value('team_id') ?? 0);
-        if ($teamId <= 0) {
-            throw ValidationException::withMessages([
-                'teamId' => ['An active team assignment is required for this inspection date.'],
-            ]);
-        }
 
         return $teamId;
     }
 
     private function activeShiftKey(string $inspectionDate, int $teamId, string $requestedShift): string
     {
+        if ($teamId <= 0) {
+            return $requestedShift ?: 'unassigned';
+        }
+
         $query = Roster::query()->whereDate('date', $inspectionDate)->where('team_id', $teamId);
         if ($requestedShift !== '') {
             $query->whereRaw('LOWER(TRIM(shift)) = ?', [$requestedShift]);

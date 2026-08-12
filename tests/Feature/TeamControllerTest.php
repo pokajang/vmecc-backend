@@ -164,6 +164,40 @@ class TeamControllerTest extends TestCase
         ])->assertOk();
     }
 
+    public function test_update_links_an_unassigned_scoped_role_to_the_selected_team(): void
+    {
+        $this->actingAsAdmin();
+        $team = Team::factory()->create();
+        $user = User::factory()->create(['status' => 'active']);
+        $role = Role::firstOrCreate(['name' => 'Tactical Response Team', 'guard_name' => 'web']);
+        $assignment = UserRoleAssignment::create([
+            'user_id' => $user->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => null,
+            'start_date' => now()->toDateString(),
+            'is_primary' => true,
+        ]);
+
+        $this->putJson("/api/teams/{$team->id}", [
+            'name' => $team->name,
+            'members' => [[
+                'user_id' => $user->id,
+                'name' => $user->name,
+                'role' => 'tactical response team',
+                'is_primary' => true,
+                'started_at' => now()->toDateString(),
+            ]],
+        ])->assertOk();
+
+        $this->assertSame($team->id, $assignment->fresh()->team_id);
+        $this->assertDatabaseHas('team_members', [
+            'team_id' => $team->id,
+            'user_id' => $user->id,
+            'role' => 'tactical response team',
+        ]);
+    }
+
     // ─── UPDATE — member sync ────────────────────────────────────────────────
 
     public function test_update_sets_ended_at_on_removed_members(): void
@@ -254,12 +288,15 @@ class TeamControllerTest extends TestCase
         $this->actingAsAdmin();
         $team = Team::factory()->create();
 
-        $this->deleteJson("/api/teams/{$team->id}")->assertNoContent();
+        $this->deleteJson("/api/teams/{$team->id}", [
+            'confirm_name' => $team->name,
+            'expected_updated_at' => $team->updated_at->toIso8601String(),
+        ])->assertNoContent();
 
         $this->assertDatabaseMissing('teams', ['id' => $team->id]);
     }
 
-    public function test_destroy_emits_team_disbanded_notification_to_active_members(): void
+    public function test_destroy_blocks_a_team_with_active_members(): void
     {
         $this->actingAsAdmin();
 
@@ -273,14 +310,15 @@ class TeamControllerTest extends TestCase
             'ended_at' => null,
         ]);
 
-        $this->deleteJson("/api/teams/{$team->id}")->assertNoContent();
+        $this->deleteJson("/api/teams/{$team->id}", [
+            'confirm_name' => $team->name,
+            'expected_updated_at' => $team->updated_at->toIso8601String(),
+        ])->assertStatus(409)
+            ->assertJsonPath('code', 'team_delete_dependencies_exist')
+            ->assertJsonPath('dependencies.team_members', 1);
 
-        $notification = WorkflowNotification::where('module', 'team')
-            ->where('event_type', 'team_disbanded')
-            ->first();
-
-        $this->assertNotNull($notification);
-        $this->assertContains((int) $user->id, $notification->recipient_user_ids ?? []);
+        $this->assertDatabaseHas('teams', ['id' => $team->id]);
+        $this->assertNull(WorkflowNotification::where('event_type', 'team_disbanded')->first());
     }
 
     public function test_destroy_snapshots_active_members_to_deleted_teams(): void
@@ -288,19 +326,16 @@ class TeamControllerTest extends TestCase
         $this->actingAsAdmin();
 
         $team = Team::factory()->create();
-        $user = User::factory()->create(['status' => 'active']);
+        $originalId = $team->id;
+        $this->deleteJson("/api/teams/{$team->id}", [
+            'confirm_name' => $team->name,
+            'expected_updated_at' => $team->updated_at->toIso8601String(),
+        ])->assertNoContent();
 
-        TeamMember::factory()->create([
-            'team_id' => $team->id,
-            'user_id' => $user->id,
-            'name' => $user->name,
-            'role' => 'tactical response team',
-            'ended_at' => null,
+        $this->assertDatabaseHas('deleted_teams', [
+            'original_team_id' => $originalId,
+            'name' => $team->name,
         ]);
-
-        $this->deleteJson("/api/teams/{$team->id}")->assertNoContent();
-
-        $this->assertDatabaseHas('deleted_teams', ['name' => $team->name]);
     }
 
     // ─── Audit log ───────────────────────────────────────────────────────────
@@ -332,7 +367,10 @@ class TeamControllerTest extends TestCase
         $this->actingAsAdmin();
         $team = Team::factory()->create();
 
-        $this->deleteJson("/api/teams/{$team->id}")->assertNoContent();
+        $this->deleteJson("/api/teams/{$team->id}", [
+            'confirm_name' => $team->name,
+            'expected_updated_at' => $team->updated_at->toIso8601String(),
+        ])->assertNoContent();
 
         $this->assertDatabaseHas('audit_logs', ['action' => 'team_deleted']);
     }
@@ -427,6 +465,31 @@ class TeamControllerTest extends TestCase
         Storage::disk('public')->assertExists($storedPath);
     }
 
+    public function test_update_with_image_deletes_the_previous_file_only_after_success(): void
+    {
+        Storage::fake('public');
+        $this->actingAsAdmin();
+        Storage::disk('public')->put('teams/old-team.png', 'old image');
+        $team = Team::factory()->create(['image_url' => 'teams/old-team.png']);
+        $file = UploadedFile::fake()->image('replacement.png', 80, 80);
+
+        $response = $this->call('POST', "/api/teams/{$team->id}", [
+            '_method' => 'PUT',
+            'name' => $team->name,
+            'members' => '[]',
+        ], $this->prepareCookiesForRequest(), ['image' => $file], [
+            'CONTENT_TYPE' => 'multipart/form-data',
+            'HTTP_ACCEPT' => 'application/json',
+            'HTTP_X_CSRF_TOKEN' => $this->sessionCsrfToken(),
+        ]);
+
+        $this->assertEquals(200, $response->getStatusCode(), $response->getContent());
+        $replacementPath = $team->fresh()->image_url;
+        $this->assertNotSame('teams/old-team.png', $replacementPath);
+        Storage::disk('public')->assertExists($replacementPath);
+        Storage::disk('public')->assertMissing('teams/old-team.png');
+    }
+
     public function test_update_with_invalid_image_mime_is_rejected(): void
     {
         Storage::fake('public');
@@ -497,6 +560,52 @@ class TeamControllerTest extends TestCase
         $this->assertDatabaseHas('teams', ['id' => $team->id]);
     }
 
+    public function test_destroy_preserves_unrelated_team_and_members(): void
+    {
+        $this->actingAsAdmin();
+        $target = Team::factory()->create();
+        $unrelated = Team::factory()->create();
+        $member = TeamMember::factory()->create([
+            'team_id' => $unrelated->id,
+            'ended_at' => null,
+        ]);
+
+        $this->deleteJson("/api/teams/{$target->id}", [
+            'confirm_name' => $target->name,
+            'expected_updated_at' => $target->updated_at->toIso8601String(),
+        ])->assertNoContent();
+
+        $this->assertDatabaseHas('teams', ['id' => $unrelated->id]);
+        $this->assertDatabaseHas('team_members', [
+            'id' => $member->id,
+            'team_id' => $unrelated->id,
+        ]);
+    }
+
+    public function test_team_scoped_manager_cannot_delete_another_team(): void
+    {
+        $managedTeam = Team::factory()->create();
+        $otherTeam = Team::factory()->create();
+        $manager = User::factory()->create(['status' => 'active']);
+        $role = Role::firstOrCreate(['name' => 'Scoped Team Manager', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => 'teams.manage', 'guard_name' => 'web']);
+        $role->givePermissionTo('teams.manage');
+        UserRoleAssignment::create([
+            'user_id' => $manager->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $managedTeam->id,
+            'is_primary' => true,
+        ]);
+
+        $this->actingAs($manager)->deleteJson("/api/teams/{$otherTeam->id}", [
+            'confirm_name' => $otherTeam->name,
+            'expected_updated_at' => $otherTeam->updated_at->toIso8601String(),
+        ])->assertForbidden();
+
+        $this->assertDatabaseHas('teams', ['id' => $otherTeam->id]);
+    }
+
     // ─── index / show ────────────────────────────────────────────────────────
 
     public function test_member_options_requires_team_management_and_excludes_sensitive_fields(): void
@@ -538,7 +647,8 @@ class TeamControllerTest extends TestCase
         $this->assertArrayNotHasKey('medical_info', $row);
         $this->assertArrayNotHasKey('login_records', $row);
         $this->assertArrayNotHasKey('permissions', $row);
-        $this->assertArrayNotHasKey('role_assignments', $row);
+        $this->assertArrayHasKey('role_assignments', $row);
+        $this->assertIsArray($row['role_assignments']);
     }
 
     public function test_index_returns_all_teams_with_members(): void

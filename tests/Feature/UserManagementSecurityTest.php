@@ -280,7 +280,8 @@ class UserManagementSecurityTest extends TestCase
         $this->assertArrayHasKey('profile_image_url', $row);
         $this->assertArrayNotHasKey('login_records', $row);
         $this->assertArrayNotHasKey('permissions', $row);
-        $this->assertArrayNotHasKey('role_assignments', $row);
+        $this->assertArrayHasKey('role_assignments', $row);
+        $this->assertIsArray($row['role_assignments']);
         $this->assertArrayNotHasKey('banking_info', $row);
         $this->assertArrayNotHasKey('statutory_info', $row);
         $this->assertArrayNotHasKey('medical_info', $row);

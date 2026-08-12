@@ -74,6 +74,40 @@ class InspectionSessionApiTest extends TestCase
         $this->assertSame(0, InspectionSession::query()->count());
     }
 
+    public function test_unassigned_user_can_complete_and_submit_a_private_v2_inspection(): void
+    {
+        config()->set('inspection.session_scope_v2_enabled', true);
+        $user = $this->inspectionUser('Independent Inspector');
+        $extinguisher = $this->extinguisher();
+
+        $created = $this->actingAs($user)->postJson('/api/inspection/sessions', [
+            'inspectionType' => 'Fire Extinguisher Inspection',
+            'scopeVersion' => 'v2',
+            'inspectionDate' => '2026-07-11',
+        ])->assertCreated()
+            ->assertJsonPath('data.scope.teamId', 0)
+            ->assertJsonPath('data.scope.shiftKey', 'unassigned')
+            ->assertJsonPath('data.scope.batchKey', 'user-'.$user->id)
+            ->assertJsonPath('data.permissions.canWrite', true)
+            ->assertJsonPath('data.permissions.canSubmit', true);
+
+        $sessionUid = $created->json('data.sessionUid');
+        $this->actingAs($user)->postJson(
+            "/api/inspection/sessions/{$sessionUid}/extinguishers/{$extinguisher->id}/complete",
+            ['checkPayload' => $this->checkPayload($extinguisher), 'clientResultId' => 'private-v2-check'],
+        )->assertOk();
+
+        $this->actingAs($user)->postJson("/api/inspection/sessions/{$sessionUid}/submit", [
+            'submission_key' => 'private-v2-submit',
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('reports', [
+            'owner_user_id' => $user->id,
+            'submission_key' => 'private-v2-submit',
+            'scope_team_id' => null,
+        ]);
+    }
+
     public function test_v2_scope_reuses_only_the_same_explicit_batch_identity(): void
     {
         config()->set('inspection.session_scope_v2_enabled', true);

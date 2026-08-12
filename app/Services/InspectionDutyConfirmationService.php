@@ -153,7 +153,17 @@ class InspectionDutyConfirmationService
     private function selectContext(array $context, array $input): array
     {
         if ($context['status'] === 'unmatched') {
-            $this->fail('duty_context_unmatched', 'No active duty assignment is available.', 422);
+            $operation = strtolower(trim((string) ($input['operation'] ?? '')));
+            if (in_array($operation, ['submit', 'delete', 'session-write', 'session-submit'], true)) {
+                return array_merge($context, [
+                    'teamId' => null,
+                    'teamName' => null,
+                    'shiftKey' => 'unassigned',
+                    'confidence' => 'self',
+                ]);
+            }
+
+            $this->fail('duty_context_unmatched', 'An active duty assignment is required for this workflow action.', 422);
         }
         if ($context['status'] === 'assigned') {
             return $context;
