@@ -129,28 +129,6 @@ class DrillPayloadValidationTest extends TestCase
         ]);
     }
 
-    public function test_v2_rejects_more_than_ten_photos_before_media_linking(): void
-    {
-        $user = $this->userWithDrillPermission();
-        $payload = $this->completePayload();
-        $payload['postIncidentAnalysis']['photos'] = array_map(
-            fn (int $index): array => [
-                'mediaId' => 'rpm_limit_'.$index,
-                'url' => '/api/report-media/rpm_limit_'.$index,
-            ],
-            range(1, 11),
-        );
-
-        $this->actingAs($user)->postJson('/api/reports', [
-            'display_id' => 'DRL-V2-PHOTO-LIMIT',
-            'report_type' => 'drill',
-            'status' => 'Submitted',
-            'payload' => $payload,
-        ])->assertUnprocessable()->assertJsonValidationErrors(['postIncidentAnalysis.photos']);
-
-        $this->assertDatabaseMissing('reports', ['display_id' => 'DRL-V2-PHOTO-LIMIT']);
-    }
-
     public function test_legacy_drill_payload_is_read_compatible_but_not_accepted_for_new_submissions(): void
     {
         $user = $this->userWithDrillPermission();

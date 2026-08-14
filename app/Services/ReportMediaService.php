@@ -12,8 +12,6 @@ use Illuminate\Validation\ValidationException;
 
 class ReportMediaService
 {
-    private const MAX_COUNT = 10;
-
     private const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
 
     private const MAX_DRAFT_REPORTS = 10;
@@ -37,10 +35,6 @@ class ReportMediaService
             $limitMultiplier = $parentType === 'report_draft' && $module === 'inspection'
                 ? min(self::MAX_DRAFT_REPORTS, max(1, $draftTypeCount))
                 : 1;
-            if (count($rows) > self::MAX_COUNT * $limitMultiplier) {
-                throw ValidationException::withMessages(['photos' => ['Maximum 10 photos are allowed.']]);
-            }
-
             $ids = array_values(array_unique(array_filter(array_column($rows, 'mediaId'))));
             sort($ids, SORT_STRING);
             $media = ReportMedia::query()

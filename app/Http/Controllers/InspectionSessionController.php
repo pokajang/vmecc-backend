@@ -693,7 +693,7 @@ class InspectionSessionController extends Controller
             'sessionVersion' => ['nullable', 'integer', 'min:1'],
             'report_remarks' => ['nullable', 'string', 'max:5000'],
             'reportRemarks' => ['nullable', 'string', 'max:5000'],
-            'photos' => ['nullable', 'array', 'max:10'],
+            'photos' => ['nullable', 'array'],
             'source_draft_id' => ['nullable', 'string', 'max:80'],
         ]);
         $expectedSessionVersion = (int) ($data['session_version'] ?? $data['sessionVersion'] ?? 0);

@@ -123,7 +123,7 @@ final class DrillPayloadService
             'postIncidentAnalysis.resourcesMobilised.*' => ['nullable', 'string', 'max:2000'],
             'postIncidentAnalysis.improvementOpportunities' => ['nullable', 'array', 'max:50'],
             'postIncidentAnalysis.improvementOpportunities.*' => ['nullable', 'string', 'max:2000'],
-            'postIncidentAnalysis.photos' => ['nullable', 'array', 'max:10'],
+            'postIncidentAnalysis.photos' => ['nullable', 'array'],
             'postIncidentAnalysis.photos.*' => ['array'],
             'postIncidentAnalysis.photos.*.id' => ['nullable', 'string', 'max:190'],
             'postIncidentAnalysis.photos.*.mediaId' => ['required', 'string', 'max:80'],

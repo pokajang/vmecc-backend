@@ -61,21 +61,12 @@ class AiHelperEmbeddedTaskServiceTest extends TestCase
         $this->assertNull($result['verification']['grounding_verification']['valid']);
     }
 
-    public function test_it_normalizes_summary_and_review_task_payloads(): void
+    public function test_it_normalizes_summary_task_payloads(): void
     {
-        $responses = [
-            ['data' => ['summary' => "  Pump isolated.\nCrew returned safely. "]],
-            ['data' => ['items' => [
-                ['status' => 'missing_information', 'message' => '  Add the RTB time if available. '],
-                ['status' => 'looks_ok', 'message' => ' Chronology is ordered. '],
-            ]]],
-        ];
-        $this->mock(AiHelperOpenAiService::class, function ($mock) use (&$responses) {
-            $mock->shouldReceive('structuredResponse')->twice()->andReturnUsing(
-                function () use (&$responses) {
-                    return array_shift($responses);
-                },
-            );
+        $this->mock(AiHelperOpenAiService::class, function ($mock) {
+            $mock->shouldReceive('structuredResponse')->once()->andReturn([
+                'data' => ['summary' => "  Pump isolated.\nCrew returned safely. "],
+            ]);
         });
         $service = app(AiHelperEmbeddedTaskService::class);
         $deadline = AiHelperRequestDeadline::fromSeconds(20);
@@ -87,38 +78,7 @@ class AiHelperEmbeddedTaskServiceTest extends TestCase
             $deadline,
             'vmecc-user-8',
         );
-        $review = $service->execute(
-            AiHelperEmbeddedTaskService::ERCO_REVIEW_REPORT,
-            '{}',
-            'en',
-            $deadline,
-            'vmecc-user-8',
-        );
-
         $this->assertSame('Pump isolated. Crew returned safely.', $summary['content']);
-        $this->assertSame('missing_information', $review['embedded_result']['items'][0]['status']);
-        $this->assertSame('Add the RTB time if available.', $review['embedded_result']['items'][0]['message']);
-        $this->assertJson($review['content']);
-    }
-
-    public function test_it_rejects_an_invalid_normalized_review_instead_of_guessing(): void
-    {
-        $this->mock(AiHelperOpenAiService::class, function ($mock) {
-            $mock->shouldReceive('structuredResponse')->once()->andReturn([
-                'data' => ['items' => [['status' => 'maybe', 'message' => 'Check it.']]],
-            ]);
-        });
-
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('review response was invalid');
-
-        app(AiHelperEmbeddedTaskService::class)->execute(
-            AiHelperEmbeddedTaskService::ERCO_REVIEW_REPORT,
-            '{}',
-            'en',
-            AiHelperRequestDeadline::fromSeconds(20),
-            'vmecc-user-9',
-        );
     }
 
     public function test_it_rejects_an_empty_translation(): void

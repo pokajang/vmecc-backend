@@ -12,13 +12,10 @@ final class AiHelperEmbeddedTaskService
 
     public const ERCO_IMPROVE_SUMMARY = 'erco_improve_summary';
 
-    public const ERCO_REVIEW_REPORT = 'erco_review_report';
-
     public const TASKS = [
         self::INSPECTION_TRANSLATE_FINDING,
         self::ERCO_GENERATE_SUMMARY,
         self::ERCO_IMPROVE_SUMMARY,
-        self::ERCO_REVIEW_REPORT,
     ];
 
     public function __construct(private readonly AiHelperOpenAiService $openAi) {}
@@ -105,7 +102,6 @@ final class AiHelperEmbeddedTaskService
             self::INSPECTION_TRANSLATE_FINDING => 'Translate only the supplied inspection finding field into concise professional English. Preserve its meaning. Do not add findings, causes, severity, people, dates, deadlines, completion states, or corrective actions.',
             self::ERCO_GENERATE_SUMMARY => 'Draft a concise one-to-two paragraph English ERCO incident summary using only facts present in the supplied record. Omit missing facts. Do not add causes, injuries, damage, completion states, or approvals.',
             self::ERCO_IMPROVE_SUMMARY => 'Improve the clarity of the existing English ERCO incident summary using only facts present in the supplied record. Preserve its meaning and do not add facts.',
-            self::ERCO_REVIEW_REPORT => 'Review only the supplied ERCO record for missing or unclear information. Return at most six short advisory items. Do not rewrite the record, invent facts, or imply that submission is blocked.',
         };
 
         return <<<TEXT
@@ -127,34 +123,7 @@ TEXT;
         if ($task === self::INSPECTION_TRANSLATE_FINDING) {
             return $this->singleTextSchema('text', 10000);
         }
-        if (in_array($task, [self::ERCO_GENERATE_SUMMARY, self::ERCO_IMPROVE_SUMMARY], true)) {
-            return $this->singleTextSchema('summary', 20000);
-        }
-
-        return [
-            'type' => 'object',
-            'additionalProperties' => false,
-            'required' => ['items'],
-            'properties' => [
-                'items' => [
-                    'type' => 'array',
-                    'minItems' => 1,
-                    'maxItems' => 6,
-                    'items' => [
-                        'type' => 'object',
-                        'additionalProperties' => false,
-                        'required' => ['status', 'message'],
-                        'properties' => [
-                            'status' => [
-                                'type' => 'string',
-                                'enum' => ['looks_ok', 'needs_attention', 'missing_information'],
-                            ],
-                            'message' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 500],
-                        ],
-                    ],
-                ],
-            ],
-        ];
+        return $this->singleTextSchema('summary', 20000);
     }
 
     /** @return array<string, mixed> */
@@ -185,34 +154,12 @@ TEXT;
 
             return ['text' => $text];
         }
-        if (in_array($task, [self::ERCO_GENERATE_SUMMARY, self::ERCO_IMPROVE_SUMMARY], true)) {
-            $summary = $this->boundedText($data['summary'] ?? '', 20000, 'summary');
-            if ($summary === '') {
-                throw new RuntimeException('Embedded AI summary response was empty.');
-            }
-
-            return ['summary' => $summary];
+        $summary = $this->boundedText($data['summary'] ?? '', 20000, 'summary');
+        if ($summary === '') {
+            throw new RuntimeException('Embedded AI summary response was empty.');
         }
 
-        $allowedStatuses = ['looks_ok', 'needs_attention', 'missing_information'];
-        $rawItems = $data['items'] ?? [];
-        if (! is_array($rawItems) || count($rawItems) > 6) {
-            throw new RuntimeException('Embedded AI review response was invalid.');
-        }
-        $items = collect($rawItems)->map(function ($item) use ($allowedStatuses): array {
-            $status = trim((string) data_get($item, 'status'));
-            $message = $this->boundedText(data_get($item, 'message'), 500, 'review item');
-            if (! in_array($status, $allowedStatuses, true) || $message === '') {
-                throw new RuntimeException('Embedded AI review response was invalid.');
-            }
-
-            return ['status' => $status, 'message' => $message];
-        })->values()->all();
-        if ($items === []) {
-            throw new RuntimeException('Embedded AI review response was empty.');
-        }
-
-        return ['items' => $items];
+        return ['summary' => $summary];
     }
 
     private function renderContent(string $task, array $payload): string

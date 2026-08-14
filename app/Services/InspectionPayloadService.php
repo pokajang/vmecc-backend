@@ -14,8 +14,6 @@ class InspectionPayloadService
         private readonly HsePayloadService $hsePayloadService,
     ) {}
 
-    private const INSPECTION_MAX_PHOTO_COUNT = 10;
-
     private const INSPECTION_MAX_PHOTO_BYTES = 1572864; // 1.5 MB
 
     private const INSPECTION_MAX_TOTAL_PHOTO_BYTES = 12582912; // 12 MB
@@ -1922,12 +1920,6 @@ class InspectionPayloadService
         }
 
         $photoRows = $this->inspectionPayloadPhotoRows($payload);
-        if (count($photoRows) > self::INSPECTION_MAX_PHOTO_COUNT) {
-            throw ValidationException::withMessages([
-                'payload.photos' => ['Maximum 10 photos are allowed for inspection reports.'],
-            ]);
-        }
-
         $totalPhotoBytes = 0;
         foreach ($photoRows as $row) {
             $photo = $row['photo'];
@@ -2080,12 +2072,6 @@ class InspectionPayloadService
         }
 
         $photoRows = $this->inspectionPayloadPhotoRows($payload);
-        if (count($photoRows) > self::INSPECTION_MAX_PHOTO_COUNT) {
-            throw ValidationException::withMessages([
-                'payload.photos' => ['Maximum 10 photos are allowed for inspection drafts.'],
-            ]);
-        }
-
         $totalPhotoBytes = 0;
         foreach ($photoRows as $row) {
             $photo = $row['photo'];

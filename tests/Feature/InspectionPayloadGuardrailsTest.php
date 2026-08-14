@@ -198,7 +198,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
         $summary->assertStatus(403);
     }
 
-    public function test_inspection_report_rejects_more_than_max_photo_count(): void
+    public function test_inspection_report_accepts_more_than_ten_photos_when_size_guardrails_pass(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantInspectionPermission($user);
@@ -225,11 +225,10 @@ class InspectionPayloadGuardrailsTest extends TestCase
             ],
         ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.photos']);
+        $response->assertCreated();
     }
 
-    public function test_inspection_report_counts_nested_hydraulic_defect_photos_against_photo_limit(): void
+    public function test_inspection_report_accepts_more_than_ten_nested_hydraulic_defect_photos(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantInspectionPermission($user);
@@ -270,11 +269,10 @@ class InspectionPayloadGuardrailsTest extends TestCase
             ],
         ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.photos']);
+        $response->assertCreated();
     }
 
-    public function test_inspection_report_counts_nested_frt_issue_photos_against_photo_limit(): void
+    public function test_inspection_report_accepts_more_than_ten_nested_frt_issue_photos(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantInspectionPermission($user);
@@ -297,11 +295,10 @@ class InspectionPayloadGuardrailsTest extends TestCase
             'payload' => $payload,
         ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.photos']);
+        $response->assertCreated();
     }
 
-    public function test_inspection_report_counts_nested_high_angle_additional_photos_against_photo_limit(): void
+    public function test_inspection_report_accepts_more_than_ten_nested_high_angle_photos(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantInspectionPermission($user);
@@ -343,11 +340,10 @@ class InspectionPayloadGuardrailsTest extends TestCase
             ],
         ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.photos']);
+        $response->assertCreated();
     }
 
-    public function test_inspection_report_counts_nested_frt_additional_photos_against_photo_limit(): void
+    public function test_inspection_report_accepts_more_than_ten_nested_frt_additional_photos(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->grantInspectionPermission($user);
@@ -376,8 +372,7 @@ class InspectionPayloadGuardrailsTest extends TestCase
             'payload' => $payload,
         ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['payload.photos']);
+        $response->assertCreated();
     }
 
     public function test_inspection_report_and_draft_normalize_repeatable_finding_cards(): void

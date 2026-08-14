@@ -184,7 +184,7 @@ class InspectionFireExtinguisherIssueController extends Controller
         $data = $request->validate([
             'correctiveAction' => ['required', 'string', 'max:10000'],
             'resolutionNotes' => ['required', 'string', 'max:10000'],
-            'resolutionPhotos' => ['sometimes', 'array', 'max:10'],
+            'resolutionPhotos' => ['sometimes', 'array'],
             'resolutionPhotos.*.mediaId' => ['required_with:resolutionPhotos', 'string', 'max:64'],
             'lockVersion' => ['required', 'integer'],
         ]);

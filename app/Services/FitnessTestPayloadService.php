@@ -48,7 +48,7 @@ final class FitnessTestPayloadService
             'reportingMonth' => ['nullable', 'string', 'max:7'],
             'documentReference' => ['nullable', 'string', 'max:190'],
             'protocolRevision' => ['nullable', 'string', 'max:64'],
-            'photos' => ['nullable', 'array', 'max:10'],
+            'photos' => ['nullable', 'array'],
             'photos.*' => ['array'],
             'photos.*.id' => ['nullable', 'string', 'max:190'],
             'photos.*.mediaId' => ['required', 'string', 'max:80'],

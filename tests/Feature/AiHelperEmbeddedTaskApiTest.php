@@ -105,13 +105,6 @@ class AiHelperEmbeddedTaskApiTest extends TestCase
                 ['summary' => 'The pump was isolated safely.'],
                 'The pump was isolated safely.',
             ],
-            'ERCO report review' => [
-                AiHelperEmbeddedTaskService::ERCO_REVIEW_REPORT,
-                '{"reportType":"erco","chronology":[]}',
-                $ercoContext,
-                ['items' => [['status' => 'looks_ok', 'message' => 'Chronology is clear.']]],
-                'Chronology is clear.',
-            ],
         ];
     }
 

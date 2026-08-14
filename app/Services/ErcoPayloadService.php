@@ -73,7 +73,7 @@ final class ErcoPayloadService
             'postIncidentAnalysis.resourcesMobilised.*' => ['nullable', 'string', 'max:2000'],
             'postIncidentAnalysis.improvementOpportunities' => ['nullable', 'array', 'max:50'],
             'postIncidentAnalysis.improvementOpportunities.*' => ['nullable', 'string', 'max:2000'],
-            'postIncidentAnalysis.photos' => ['nullable', 'array', 'max:10'],
+            'postIncidentAnalysis.photos' => ['nullable', 'array'],
             'postIncidentAnalysis.photos.*' => ['array'],
             'postIncidentAnalysis.photos.*.id' => ['nullable', 'string', 'max:190'],
             'postIncidentAnalysis.photos.*.mediaId' => ['nullable', 'string', 'max:80'],
@@ -99,7 +99,7 @@ final class ErcoPayloadService
                 'postIncidentAnalysis' => ['required', 'array'],
                 'postIncidentAnalysis.strengths' => ['required', 'array', 'min:1', 'max:50'],
                 'postIncidentAnalysis.strengths.*' => ['required', 'string', 'max:2000'],
-                'postIncidentAnalysis.photos' => ['required', 'array', 'min:1', 'max:10'],
+                'postIncidentAnalysis.photos' => ['required', 'array', 'min:1'],
             ]);
         }
 
