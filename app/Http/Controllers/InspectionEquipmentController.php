@@ -56,7 +56,7 @@ class InspectionEquipmentController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
 
         $data = $request->validate([
             'inspectionType' => ['nullable', 'string', 'max:190'],
@@ -67,6 +67,7 @@ class InspectionEquipmentController extends Controller
             'main_location' => ['nullable', 'string', 'max:190'],
             'name' => ['required', 'string', 'max:190'],
             'description' => ['nullable', 'string', 'max:500'],
+            'metadata' => ['nullable', 'array'],
         ]);
 
         $type = $this->resolveInspectionType($request, $data);
@@ -106,8 +107,10 @@ class InspectionEquipmentController extends Controller
             'name' => $name,
             'normalized_name' => $normalized,
             'description' => trim((string) ($data['description'] ?? '')) ?: null,
+            'metadata' => $this->metadataForType($type['key'], $data['metadata'] ?? []),
             'source' => 'custom',
             'created_by' => $request->user()?->id,
+            'updated_by' => $request->user()?->id,
             'is_active' => true,
             'sort_order' => $this->nextSortOrder($type['key'], $mainLocationName),
         ]);
@@ -117,7 +120,7 @@ class InspectionEquipmentController extends Controller
 
     public function update(Request $request, int $equipmentId): JsonResponse
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
         $equipment = $this->findActiveEquipment($equipmentId);
         if ($equipment->source === 'seed' && ! $this->canManageSeedEquipment($request)) {
             return response()->json([
@@ -129,6 +132,7 @@ class InspectionEquipmentController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:190'],
             'description' => ['nullable', 'string', 'max:500'],
+            'metadata' => ['nullable', 'array'],
         ]);
 
         $name = Str::of((string) $data['name'])->squish()->toString();
@@ -150,6 +154,8 @@ class InspectionEquipmentController extends Controller
             'name' => $name,
             'normalized_name' => $normalized,
             'description' => trim((string) ($data['description'] ?? '')) ?: null,
+            'metadata' => $this->metadataForType($equipment->inspection_type_key, $data['metadata'] ?? $equipment->metadata ?? []),
+            'updated_by' => $request->user()?->id,
         ])->save();
 
         return response()->json(['data' => $this->formatEquipment($equipment, $request)]);
@@ -157,7 +163,7 @@ class InspectionEquipmentController extends Controller
 
     public function destroy(Request $request, int $equipmentId): JsonResponse|Response
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
         $equipment = $this->findActiveEquipment($equipmentId);
         if ($equipment->source === 'seed' && ! $this->canManageSeedEquipment($request)) {
             return response()->json([
@@ -219,7 +225,7 @@ class InspectionEquipmentController extends Controller
     private function formatEquipment(InspectionEquipment $equipment, Request $request): array
     {
         $canManageSeed = $this->canManageSeedEquipment($request);
-        $canManageRow = $equipment->source !== 'seed' || $canManageSeed;
+        $canManageRow = $canManageSeed;
 
         return [
             'id' => $equipment->id,
@@ -229,6 +235,7 @@ class InspectionEquipmentController extends Controller
             'title' => $equipment->name,
             'equipment' => $equipment->name,
             'description' => (string) ($equipment->description ?? ''),
+            'metadata' => $equipment->metadata ?? [],
             'inspectionTypeKey' => $equipment->inspection_type_key,
             'inspectionType' => $equipment->inspection_type_label,
             'mainLocationId' => $equipment->main_location_id,
@@ -258,6 +265,14 @@ class InspectionEquipmentController extends Controller
         return (bool) ($user && $this->authorizationService->hasPermission($user, 'reports.manage'));
     }
 
+    private function ensureCatalogManagePermission(Request $request): void
+    {
+        $user = $request->user();
+        if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage')) {
+            abort(403, 'Only report managers can change inspection equipment.');
+        }
+    }
+
     private function normalizeTypeKey(string $value): string
     {
         return Str::slug(Str::of($value)->squish()->lower()->toString());
@@ -266,5 +281,24 @@ class InspectionEquipmentController extends Controller
     private function normalizeName(string $value): string
     {
         return Str::of($value)->squish()->lower()->toString();
+    }
+
+    private function metadataForType(string $typeKey, mixed $metadata): array
+    {
+        $allowed = match ($typeKey) {
+            'high-angle-rescue-equipment-inspection' => ['storageLocation', 'compartment', 'quantity', 'workbookRowNumber'],
+            'er-aux-equipment-inspection' => ['quantity', 'workbookRowNumber'],
+            'frt-daily-inspection' => ['checklistKind', 'compartment', 'quantity', 'workbookRowNumber'],
+            default => [],
+        };
+
+        if (! is_array($metadata) || $allowed === []) return [];
+
+        $result = [];
+        foreach ($allowed as $key) {
+            $value = trim((string) ($metadata[$key] ?? ''));
+            if ($value !== '') $result[$key] = $value;
+        }
+        return $result;
     }
 }

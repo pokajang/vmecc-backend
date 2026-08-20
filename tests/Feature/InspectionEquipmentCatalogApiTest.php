@@ -5,6 +5,8 @@ namespace Tests\Feature;
 use App\Models\InspectionEquipment;
 use App\Models\User;
 use Database\Seeders\InspectionEquipmentCatalogSeeder;
+use Database\Seeders\InspectionErAuxEquipmentCatalogSeeder;
+use Database\Seeders\InspectionHighAngleCatalogSeeder;
 use Database\Seeders\InspectionLocationCatalogSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
@@ -43,11 +45,11 @@ class InspectionEquipmentCatalogApiTest extends TestCase
         $this->assertSame(false, $pump['canDelete'] ?? null);
     }
 
-    public function test_user_can_create_update_and_delete_custom_equipment(): void
+    public function test_report_manager_can_create_update_and_delete_custom_equipment(): void
     {
         $this->seedHydraulicCatalog();
         $user = User::factory()->create(['status' => 'active']);
-        $this->grantPermission($user, 'reports.inspection.view');
+        $this->grantPermission($user, 'reports.manage');
         $this->actingAs($user);
 
         $created = $this->postJson('/api/inspection/equipment', [
@@ -81,7 +83,7 @@ class InspectionEquipmentCatalogApiTest extends TestCase
     {
         $this->seedHydraulicCatalog();
         $user = User::factory()->create(['status' => 'active']);
-        $this->grantPermission($user, 'reports.inspection.view');
+        $this->grantPermission($user, 'reports.manage');
         $this->actingAs($user);
 
         $this->postJson('/api/inspection/equipment', [
@@ -100,7 +102,7 @@ class InspectionEquipmentCatalogApiTest extends TestCase
     public function test_equipment_catalog_derives_label_when_only_type_key_is_sent(): void
     {
         $user = User::factory()->create(['status' => 'active']);
-        $this->grantPermission($user, 'reports.inspection.view');
+        $this->grantPermission($user, 'reports.manage');
         $this->actingAs($user);
 
         $created = $this->postJson('/api/inspection/equipment', [
@@ -115,7 +117,57 @@ class InspectionEquipmentCatalogApiTest extends TestCase
         $created->assertJsonPath('data.mainLocation', 'Office');
     }
 
-    public function test_seeded_equipment_cannot_be_archived_by_regular_inspection_user(): void
+    public function test_report_manager_can_persist_supported_equipment_metadata(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $this->grantPermission($user, 'reports.manage');
+        $this->actingAs($user);
+
+        $created = $this->postJson('/api/inspection/equipment', [
+            'inspectionTypeKey' => 'high-angle-rescue-equipment-inspection',
+            'mainLocation' => 'Rescue Store',
+            'name' => 'Rescue Tripod',
+            'metadata' => [
+                'storageLocation' => 'Bay 4',
+                'quantity' => '2',
+                'ignored' => 'not persisted',
+            ],
+        ])->assertCreated();
+
+        $equipmentId = (int) $created->json('data.id');
+        $created->assertJsonPath('data.metadata.storageLocation', 'Bay 4');
+        $created->assertJsonPath('data.metadata.quantity', '2');
+        $this->assertArrayNotHasKey('ignored', $created->json('data.metadata'));
+
+        $this->patchJson("/api/inspection/equipment/{$equipmentId}", [
+            'name' => 'Rescue Tripod Kit',
+            'metadata' => ['compartment' => 'Locker A'],
+        ])->assertOk()
+            ->assertJsonPath('data.metadata.compartment', 'Locker A');
+
+        $equipment = InspectionEquipment::query()->findOrFail($equipmentId);
+        $this->assertSame(['compartment' => 'Locker A'], $equipment->metadata);
+        $this->assertSame($user->id, $equipment->updated_by);
+    }
+
+    public function test_high_angle_and_er_aux_workbook_catalogs_seed_with_metadata(): void
+    {
+        $this->seed(InspectionLocationCatalogSeeder::class);
+        $this->seed([InspectionHighAngleCatalogSeeder::class, InspectionErAuxEquipmentCatalogSeeder::class]);
+
+        $this->assertSame(111, InspectionEquipment::query()->where('inspection_type_key', 'high-angle-rescue-equipment-inspection')->where('source', 'seed')->count());
+        $this->assertSame(31, InspectionEquipment::query()->where('inspection_type_key', 'er-aux-equipment-inspection')->where('source', 'seed')->count());
+
+        $rope = InspectionEquipment::query()->where('inspection_type_key', 'high-angle-rescue-equipment-inspection')->where('name', 'Gotcha Rope')->firstOrFail();
+        $this->assertSame('111', $rope->metadata['workbookRowNumber']);
+        $this->assertSame('0', $rope->metadata['quantity']);
+
+        $radio = InspectionEquipment::query()->where('inspection_type_key', 'er-aux-equipment-inspection')->where('name', 'Radio Tetra')->firstOrFail();
+        $this->assertSame('27', $radio->metadata['workbookRowNumber']);
+        $this->assertSame('Motorola MTP3500', $radio->description);
+    }
+
+    public function test_regular_inspection_user_cannot_mutate_catalog_equipment(): void
     {
         $this->seedHydraulicCatalog();
         $user = User::factory()->create(['status' => 'active']);
@@ -128,8 +180,7 @@ class InspectionEquipmentCatalogApiTest extends TestCase
             ->firstOrFail();
 
         $this->deleteJson("/api/inspection/equipment/{$seed->id}")
-            ->assertStatus(403)
-            ->assertJsonPath('code', 'INSPECTION_EQUIPMENT_SEED_PROTECTED');
+            ->assertForbidden();
     }
 
     public function test_report_manager_can_edit_seeded_equipment(): void

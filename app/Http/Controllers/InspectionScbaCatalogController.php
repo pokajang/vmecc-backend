@@ -51,7 +51,7 @@ class InspectionScbaCatalogController extends Controller
         );
 
         return response()->json([
-            'data' => $sections->map(fn (InspectionScbaCatalogSection $section) => $this->formatSection($section))->values(),
+            'data' => $sections->map(fn (InspectionScbaCatalogSection $section) => $this->formatSection($section, $request))->values(),
             'meta' => [
                 'version' => $version !== '' ? Carbon::parse($version)->toISOString() : null,
                 'source' => 'database',
@@ -61,7 +61,7 @@ class InspectionScbaCatalogController extends Controller
 
     public function storeSection(Request $request): JsonResponse
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
         $data = $request->validate($this->sectionRules());
         $fields = $this->normalizeFields($data['fields'] ?? $data['checks'] ?? []);
         $title = $this->text($data['title'] ?? '');
@@ -88,7 +88,7 @@ class InspectionScbaCatalogController extends Controller
 
     public function updateSection(Request $request, int $sectionId): JsonResponse
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
         $section = $this->findActiveSection($sectionId);
         $data = $request->validate($this->sectionRules());
         $fields = $this->normalizeFields($data['fields'] ?? $data['checks'] ?? []);
@@ -110,7 +110,7 @@ class InspectionScbaCatalogController extends Controller
 
     public function destroySection(Request $request, int $sectionId): JsonResponse|Response
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
         $section = $this->findActiveSection($sectionId);
 
         DB::transaction(function () use ($section, $request) {
@@ -129,7 +129,7 @@ class InspectionScbaCatalogController extends Controller
 
     public function storeItem(Request $request, int $sectionId): JsonResponse
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
         $section = $this->findActiveSection($sectionId);
         $data = $request->validate($this->itemRules());
         $attributes = $this->itemAttributes($data);
@@ -150,7 +150,7 @@ class InspectionScbaCatalogController extends Controller
 
     public function updateItem(Request $request, int $itemId): JsonResponse
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
         $item = $this->findActiveItem($itemId);
         $data = $request->validate($this->itemRules());
         $item->fill(array_merge($this->itemAttributes($data), [
@@ -163,7 +163,7 @@ class InspectionScbaCatalogController extends Controller
 
     public function destroyItem(Request $request, int $itemId): JsonResponse|Response
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
         $item = $this->findActiveItem($itemId);
         $item->update([
             'is_active' => false,
@@ -253,7 +253,7 @@ class InspectionScbaCatalogController extends Controller
         ];
     }
 
-    private function formatSection(InspectionScbaCatalogSection $section): array
+    private function formatSection(InspectionScbaCatalogSection $section, ?Request $request = null): array
     {
         return [
             'id' => (string) $section->id,
@@ -262,17 +262,17 @@ class InspectionScbaCatalogController extends Controller
             'title' => $section->title,
             'shortLabel' => $section->short_label ?: $section->title,
             'fields' => array_values($section->fields ?? []),
-            'isCustomSection' => true,
-            'source' => 'custom',
+            'isCustomSection' => $section->source !== 'seed',
+            'source' => $section->source,
             'isActive' => $section->is_active,
             'sortOrder' => $section->sort_order,
-            'canEdit' => true,
-            'canDelete' => true,
-            'rows' => $section->items->map(fn (InspectionScbaCatalogItem $item) => $this->formatItem($item, $section))->values(),
+            'canEdit' => $request ? $this->canManageCatalog($request) : true,
+            'canDelete' => $request ? $this->canManageCatalog($request) : true,
+            'rows' => $section->items->map(fn (InspectionScbaCatalogItem $item) => $this->formatItem($item, $section, $request))->values(),
         ];
     }
 
-    private function formatItem(InspectionScbaCatalogItem $item, InspectionScbaCatalogSection $section): array
+    private function formatItem(InspectionScbaCatalogItem $item, InspectionScbaCatalogSection $section, ?Request $request = null): array
     {
         $brand = (string) ($item->brand ?? '');
         $serialNo = (string) ($item->serial_no ?? '');
@@ -289,11 +289,11 @@ class InspectionScbaCatalogController extends Controller
             'serialNo' => $serialNo,
             'displayName' => $displayName,
             'equipmentDescription' => (string) ($item->details ?? ''),
-            'equipmentSource' => 'custom',
-            'isCustomEquipment' => true,
-            'source' => 'custom',
-            'canEdit' => true,
-            'canDelete' => true,
+            'equipmentSource' => $item->source,
+            'isCustomEquipment' => $item->source !== 'seed',
+            'source' => $item->source,
+            'canEdit' => $request ? $this->canManageCatalog($request) : true,
+            'canDelete' => $request ? $this->canManageCatalog($request) : true,
         ];
     }
 
@@ -335,6 +335,18 @@ class InspectionScbaCatalogController extends Controller
         $user = $request->user();
         if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.view')) {
             abort(403, 'Missing inspection report permission.');
+        }
+    }
+
+    private function canManageCatalog(Request $request): bool
+    {
+        return (bool) ($request->user() && $this->authorizationService->hasPermission($request->user(), 'reports.manage'));
+    }
+
+    private function ensureCatalogManagePermission(Request $request): void
+    {
+        if (! $this->canManageCatalog($request)) {
+            abort(403, 'Only report managers can change SCBA catalog details.');
         }
     }
 

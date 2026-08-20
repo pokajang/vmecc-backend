@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class InspectionFireTruck extends Model
 {
@@ -31,5 +32,10 @@ class InspectionFireTruck extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function catalogItems(): HasMany
+    {
+        return $this->hasMany(InspectionFrtCatalogItem::class, 'fire_truck_id');
     }
 }

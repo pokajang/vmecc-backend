@@ -802,8 +802,8 @@ class InspectionFireExtinguisherController extends Controller
             'restoredAt' => $row->restored_at?->toIso8601String(),
             'lockVersion' => (int) ($row->lock_version ?: 1),
             'openIssueCount' => (int) ($row->open_issues_count ?? 0),
-            'canEdit' => (bool) ($request->user() && $this->authorizationService->hasPermission($request->user(), 'reports.manage|reports.inspection.extinguishers.manage')),
-            'canDelete' => (bool) ($request->user() && $this->authorizationService->hasPermission($request->user(), 'reports.manage|reports.inspection.extinguishers.manage')),
+            'canEdit' => (bool) ($request->user() && $this->authorizationService->hasPermission($request->user(), 'reports.manage')),
+            'canDelete' => (bool) ($request->user() && $this->authorizationService->hasPermission($request->user(), 'reports.manage')),
             'lastInspection' => $this->formatLastInspection($lastInspection),
         ];
     }
@@ -1158,7 +1158,7 @@ class InspectionFireExtinguisherController extends Controller
     private function ensureCatalogManagePermission(Request $request): void
     {
         $user = $request->user();
-        if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage|reports.inspection.extinguishers.manage')) {
+        if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage')) {
             abort(403, 'Missing fire extinguisher catalogue management permission.');
         }
     }

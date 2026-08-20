@@ -44,7 +44,7 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
 
     public function test_catalogue_manager_can_change_and_restore_lifecycle_with_audit_history(): void
     {
-        $user = $this->userWithPermissions(['reports.inspection.view', 'reports.inspection.extinguishers.manage']);
+        $user = $this->userWithPermissions(['reports.inspection.view', 'reports.manage']);
         $asset = $this->asset();
         $this->actingAs($user);
 
@@ -70,7 +70,7 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
 
     public function test_out_of_service_asset_is_not_available_for_inspection_and_rejects_stale_transitions(): void
     {
-        $user = $this->userWithPermissions(['reports.inspection.view', 'reports.inspection.extinguishers.manage']);
+        $user = $this->userWithPermissions(['reports.inspection.view', 'reports.manage']);
         $asset = $this->asset();
         $this->actingAs($user);
 
@@ -127,7 +127,7 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
 
     public function test_restoring_an_out_of_service_retirement_clears_all_service_state(): void
     {
-        $user = $this->userWithPermissions(['reports.inspection.view', 'reports.inspection.extinguishers.manage']);
+        $user = $this->userWithPermissions(['reports.inspection.view', 'reports.manage']);
         $asset = $this->asset();
         $this->actingAs($user);
 
@@ -178,7 +178,7 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
 
     public function test_defect_sync_does_not_recreate_issues_for_a_retired_asset(): void
     {
-        $user = $this->userWithPermissions(['reports.inspection.view', 'reports.inspection.extinguishers.manage']);
+        $user = $this->userWithPermissions(['reports.inspection.view', 'reports.manage']);
         $asset = $this->asset();
         $report = $this->report($user, $asset, 'Not Good', 'Historic defect');
 
@@ -383,7 +383,7 @@ class InspectionFireExtinguisherLifecycleIssueTest extends TestCase
     public function test_retirement_cancels_active_issues_and_blocks_reopening_until_restore(): void
     {
         $user = $this->userWithPermissions([
-            'reports.inspection.view', 'reports.inspection.extinguishers.manage', 'reports.inspection.issues.manage',
+            'reports.inspection.view', 'reports.manage', 'reports.inspection.issues.manage',
         ]);
         $asset = $this->asset();
         $report = $this->report($user, $asset, 'Not Good', 'Gauge failed');

@@ -17,14 +17,17 @@ class InspectionEquipment extends Model
         'name',
         'normalized_name',
         'description',
+        'metadata',
         'source',
         'created_by',
+        'updated_by',
         'is_active',
         'sort_order',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'metadata' => 'array',
     ];
 
     public function mainLocation(): BelongsTo
@@ -35,5 +38,10 @@ class InspectionEquipment extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function updatedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'updated_by');
     }
 }

@@ -41,7 +41,7 @@ class InspectionFireTruckController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
 
         $data = $request->validate($this->rules());
         $plateNo = $this->plate($data['plateNo'] ?? $data['plate_no'] ?? '');
@@ -75,7 +75,7 @@ class InspectionFireTruckController extends Controller
 
     public function update(Request $request, int $truckId): JsonResponse
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
         $row = $this->findActiveRow($truckId);
         if ($row->source === 'seed' && ! $this->canManageSeedRows($request)) {
             return response()->json([
@@ -110,7 +110,7 @@ class InspectionFireTruckController extends Controller
 
     public function destroy(Request $request, int $truckId): JsonResponse|Response
     {
-        $this->ensureInspectionPermission($request);
+        $this->ensureCatalogManagePermission($request);
         $row = $this->findActiveRow($truckId);
         if ($row->source === 'seed' && ! $this->canManageSeedRows($request)) {
             return response()->json([
@@ -157,7 +157,7 @@ class InspectionFireTruckController extends Controller
     private function formatRow(InspectionFireTruck $row, Request $request): array
     {
         $canManageSeed = $this->canManageSeedRows($request);
-        $canManageRow = $row->source !== 'seed' || $canManageSeed;
+        $canManageRow = $canManageSeed;
 
         return [
             'id' => $row->id,
@@ -196,6 +196,14 @@ class InspectionFireTruckController extends Controller
         $user = $request->user();
 
         return (bool) ($user && $this->authorizationService->hasPermission($user, 'reports.manage'));
+    }
+
+    private function ensureCatalogManagePermission(Request $request): void
+    {
+        $user = $request->user();
+        if (! $user || ! $this->authorizationService->hasPermission($user, 'reports.manage')) {
+            abort(403, 'Only report managers can change fire-truck catalog details.');
+        }
     }
 
     private function text(mixed $value): string

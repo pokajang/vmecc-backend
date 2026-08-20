@@ -29,7 +29,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         $response->assertOk();
         $this->assertSame('database', $response->json('meta.source'));
         $this->assertCount(18, $response->json('data'));
-        $this->assertSame(true, $response->json('data.0.canEdit'));
+        $this->assertSame(false, $response->json('data.0.canEdit'));
         $this->assertSame('Manjung Hub', $response->json('data.0.mainLocation'));
         $this->assertSame('catalog:'.(string) $response->json('data.0.catalogId'), $response->json('data.0.canonicalAssetKey'));
         $this->assertArrayHasKey('activeIdentityKey', $response->json('data.0'));
@@ -172,7 +172,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_custom_fire_extinguisher_can_be_created_updated_and_archived(): void
     {
-        $user = $this->actingAsInspectionUser();
+        $user = $this->actingAsCatalogManager();
 
         $created = $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload());
 
@@ -200,7 +200,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         Carbon::setTestNow(Carbon::parse('2026-07-05 08:00:00'));
 
         try {
-            $this->actingAsInspectionUser();
+            $this->actingAsCatalogManager();
 
             $expired = $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
                 'idLocNo' => 'QA-EXPIRED',
@@ -284,7 +284,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_fire_extinguisher_lookup_returns_exact_active_locator_case_insensitive(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $created = $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
             'barcodeNo' => 'SR102014Z060198',
@@ -300,7 +300,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_fire_extinguisher_lookup_normalizes_labelled_locator_text(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $created = $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
             'barcodeNo' => 'SR102014Z060199',
@@ -316,7 +316,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_fire_extinguisher_lookup_matches_id_location_number(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $created = $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
             'idLocNo' => 'FE-LOC-LOOKUP-001',
@@ -363,7 +363,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_scan_registration_can_create_fire_extinguisher_without_id_loc_no(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
             'idLocNo' => '',
@@ -375,7 +375,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_fire_extinguisher_creation_requires_a_location_and_locator(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
             'mainLocation' => '   ',
@@ -389,7 +389,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_fire_extinguisher_creation_rejects_unregistered_or_incomplete_site_paths_without_writes(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $this->postJson('/api/inspection/fire-extinguishers', [
             'zone' => 'Unregistered Zone',
@@ -438,9 +438,9 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_inspection_user_can_create_an_atomic_fire_extinguisher_batch(): void
+    public function test_report_manager_can_create_an_atomic_fire_extinguisher_batch(): void
     {
-        $user = $this->actingAsInspectionUser();
+        $user = $this->actingAsCatalogManager();
 
         $response = $this->postJson('/api/inspection/fire-extinguishers/batch', [
             'zone' => '1',
@@ -476,7 +476,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_fire_extinguisher_batch_validation_rejects_invalid_rows_without_writes(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $this->postJson('/api/inspection/fire-extinguishers/batch', [
             'mainLocation' => '   ',
@@ -504,7 +504,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_unconfirmed_batch_duplicate_reports_database_and_batch_matches_atomically(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
         $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
             'idLocNo' => 'EXISTING-BATCH-001',
             'barcodeNo' => 'BAR-EXISTING-BATCH-001',
@@ -536,7 +536,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_confirmed_batch_duplicates_create_distinct_catalog_rows(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
         $payload = $this->customFireExtinguisherPayload([
             'mainLocation' => 'Batch Confirm Yard',
             'idLocNo' => 'BATCH-CONFIRM-001',
@@ -581,7 +581,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_scan_registration_warns_about_duplicate_active_locator(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
             'barcodeNo' => 'SR-SCAN-DUP-001',
@@ -604,7 +604,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_scan_registration_warns_about_duplicate_active_locator_across_barcode_and_id_location(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
             'idLocNo' => 'SR-CROSS-DUP-001',
@@ -622,7 +622,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_custom_fire_extinguisher_warns_about_duplicate_active_identity_on_create(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
             'mainLocation' => 'QA Duplicate Yard',
@@ -644,7 +644,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_confirmed_duplicate_identity_creates_a_distinct_active_catalog_row(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $payload = $this->customFireExtinguisherPayload([
             'mainLocation' => 'QA Confirmed Duplicate Yard',
@@ -675,7 +675,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_custom_fire_extinguisher_rejects_duplicate_active_identity_on_update(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $first = $this->postJson('/api/inspection/fire-extinguishers', $this->customFireExtinguisherPayload([
             'mainLocation' => 'QA Update Yard',
@@ -714,7 +714,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
 
     public function test_archived_fire_extinguisher_identity_can_be_recreated(): void
     {
-        $this->actingAsInspectionUser();
+        $this->actingAsCatalogManager();
 
         $payload = $this->customFireExtinguisherPayload([
             'mainLocation' => 'QA Archive Yard',
@@ -739,7 +739,7 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             ->active_identity_key);
     }
 
-    public function test_regular_inspection_user_can_update_seeded_fire_extinguisher_row(): void
+    public function test_regular_inspection_user_cannot_update_seeded_fire_extinguisher_row(): void
     {
         $this->seed(InspectionFireExtinguisherCatalogSeeder::class);
         $this->actingAsInspectionUser();
@@ -752,25 +752,19 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
             'idLocNo' => 'ADO-001-UPDATED',
             'barcodeNo' => $seed->barcode_no,
             'feType' => $seed->fe_type,
-        ])->assertOk()->assertJsonPath('data.idLocNo', 'ADO-001-UPDATED');
+        ])->assertForbidden();
     }
 
-    public function test_regular_inspection_user_can_archive_seeded_fire_extinguisher_row(): void
+    public function test_regular_inspection_user_cannot_archive_seeded_fire_extinguisher_row(): void
     {
         $this->seed(InspectionFireExtinguisherCatalogSeeder::class);
         $this->actingAsInspectionUser();
         $seed = InspectionFireExtinguisher::query()->where('source', 'seed')->firstOrFail();
 
         $this->deleteJson("/api/inspection/fire-extinguishers/{$seed->id}")
-            ->assertNoContent();
+            ->assertForbidden();
 
-        $this->assertFalse($seed->fresh()->is_active);
-
-        $index = $this->getJson('/api/inspection/fire-extinguishers?mainLocation='.urlencode((string) $seed->main_location_name));
-        $index->assertOk();
-        $this->assertNull(
-            collect($index->json('data'))->firstWhere('catalogId', $seed->id)
-        );
+        $this->assertTrue($seed->fresh()->is_active);
     }
 
     public function test_fire_extinguisher_submission_requires_defect_remarks_and_creates_analytics_rows(): void
@@ -1447,6 +1441,14 @@ class InspectionFireExtinguisherInspectionTest extends TestCase
         $this->grantPermission($user, 'reports.inspection.issues.manage');
         $this->grantPermission($user, 'reports.inspection.issues.verify');
         $this->actingAs($user);
+
+        return $user;
+    }
+
+    private function actingAsCatalogManager(): User
+    {
+        $user = $this->actingAsInspectionUser();
+        $this->grantPermission($user, 'reports.manage');
 
         return $user;
     }

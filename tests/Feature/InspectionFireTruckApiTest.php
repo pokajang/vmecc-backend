@@ -15,7 +15,7 @@ class InspectionFireTruckApiTest extends TestCase
     public function test_archived_plate_is_reported_as_a_validation_error_instead_of_a_server_error(): void
     {
         $user = User::factory()->create(['status' => 'active']);
-        $this->grantPermission($user, 'reports.inspection.view');
+        $this->grantPermission($user, 'reports.manage');
         $this->actingAs($user);
 
         $created = $this->postJson('/api/inspection/fire-trucks', [

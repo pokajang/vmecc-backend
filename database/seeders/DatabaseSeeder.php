@@ -20,8 +20,12 @@ class DatabaseSeeder extends Seeder
             // their dedicated corpus seeder and remain separate from system guides.
             InspectionLocationCatalogSeeder::class,
             InspectionEquipmentCatalogSeeder::class,
+            InspectionHighAngleCatalogSeeder::class,
+            InspectionErAuxEquipmentCatalogSeeder::class,
+            InspectionScbaCatalogSeeder::class,
             InspectionFireExtinguisherCatalogSeeder::class,
             InspectionFireTruckCatalogSeeder::class,
+            InspectionFrtCatalogSeeder::class,
             AdminUserSeeder::class,
         ]);
     }
