@@ -7,6 +7,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DrillReportPdfController;
 use App\Http\Controllers\DutyCoverageAssignmentController;
+use App\Http\Controllers\DrillEnvironmentOptionController;
 use App\Http\Controllers\ErcoReportPdfController;
 use App\Http\Controllers\FeedbackReportController;
 use App\Http\Controllers\FireExtinguisherExceptionExportController;
@@ -331,6 +332,10 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::get('reports/drafts/{draftId}', [ReportDraftController::class, 'showById']);
     Route::put('reports/drafts/{draftId}', [ReportDraftController::class, 'updateById']);
     Route::delete('reports/drafts/{draftId}', [ReportDraftController::class, 'destroyById']);
+    Route::get('reports/drill/environment-options', [DrillEnvironmentOptionController::class, 'index'])
+        ->middleware(['permission.assignment:reports.drill.view|reports.manage', 'sensitive.no-store']);
+    Route::put('reports/drill/environment-options', [DrillEnvironmentOptionController::class, 'replace'])
+        ->middleware(['permission.assignment:reports.drill.view|reports.manage', 'sensitive.no-store']);
     Route::get('reports', [ReportController::class, 'index']);
     Route::post('reports', [ReportController::class, 'store']);
     Route::get('reports/inspection/checklist-summary', [ReportController::class, 'inspectionChecklistSummary']);

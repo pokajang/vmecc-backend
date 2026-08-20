@@ -23,6 +23,12 @@ class MalaysiaStateCatalog
         'W.P. Putrajaya',
     ];
 
+    private const LEGACY_STATE_ALIASES = [
+        'kuala lumpur' => 'W.P. Kuala Lumpur',
+        'labuan' => 'W.P. Labuan',
+        'putrajaya' => 'W.P. Putrajaya',
+    ];
+
     public static function values(): array
     {
         return self::STATES;
@@ -33,6 +39,11 @@ class MalaysiaStateCatalog
         $raw = trim((string) ($value ?? ''));
         if ($raw === '') {
             return null;
+        }
+
+        $normalizedRaw = mb_strtolower($raw);
+        if (isset(self::LEGACY_STATE_ALIASES[$normalizedRaw])) {
+            return self::LEGACY_STATE_ALIASES[$normalizedRaw];
         }
 
         foreach (self::STATES as $state) {

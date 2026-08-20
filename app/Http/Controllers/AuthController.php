@@ -282,7 +282,17 @@ class AuthController extends Controller
             'ic_number' => ['sometimes', 'nullable', 'string', 'max:100'],
             'phone' => ['sometimes', 'nullable', 'string', 'max:50'],
             'address' => ['sometimes', 'nullable', 'string', 'max:500'],
-            'state' => ['sometimes', 'nullable', 'string', 'max:100', 'in:'.implode(',', MalaysiaStateCatalog::values())],
+            'state' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'max:100',
+                function ($attribute, $value, $fail) {
+                    if (!is_null($value) && trim((string) $value) !== '' && ! MalaysiaStateCatalog::isValid((string) $value)) {
+                        $fail('The selected state is invalid.');
+                    }
+                },
+            ],
             'emergency_contact' => ['sometimes', 'array'],
             'emergency_contact.name' => ['nullable', 'string', 'max:255'],
             'emergency_contact.relationship' => ['nullable', 'string', 'max:100'],
