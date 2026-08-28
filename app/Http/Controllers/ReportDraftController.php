@@ -31,6 +31,7 @@ class ReportDraftController extends Controller
         'erco' => 'reports.erco.view',
         'drill' => 'reports.drill.view',
         'fitness-test' => 'reports.fitness.view',
+        'er-assessment' => 'reports.er_assessment.view',
     ];
 
     public function __construct(
@@ -49,6 +50,7 @@ class ReportDraftController extends Controller
         if ($reportType === '') {
             return response()->json(['message' => 'report_type is required.'], 422);
         }
+        $this->ensureReportPermission($request, $reportType);
 
         $limit = min(100, max(1, (int) $request->query('limit', 50)));
         $page = max(1, (int) $request->query('page', 1));
@@ -79,6 +81,7 @@ class ReportDraftController extends Controller
         if ($reportType === '') {
             return response()->json(['message' => 'report_type is required.'], 422);
         }
+        $this->ensureReportPermission($request, $reportType);
 
         $row = ReportDraft::query()
             ->where('user_id', $user->id)

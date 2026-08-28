@@ -20,6 +20,7 @@ class ReportingWorkflowService
         'erco',
         'drill',
         'fitness-test',
+        'er-assessment',
     ];
 
     private const MODULE_DEFAULTS = [
@@ -60,6 +61,18 @@ class ReportingWorkflowService
             ],
         ],
         'fitness-test' => [
+            'fallbackReviewRole' => 'Incident Commander',
+            'reviewRole' => 'Incident Commander',
+            'approveRole' => 'Incident Commander',
+            'options' => [
+                'useTeamScopedAic' => true,
+                'allowSubmitWithoutTeam' => true,
+                'allowIcFallbackReview' => true,
+                'preventSelfReview' => true,
+                'preventSelfApprove' => true,
+            ],
+        ],
+        'er-assessment' => [
             'fallbackReviewRole' => 'Incident Commander',
             'reviewRole' => 'Incident Commander',
             'approveRole' => 'Incident Commander',
@@ -740,6 +753,7 @@ class ReportingWorkflowService
             'erco' => 'ERCO',
             'drill' => 'Drill',
             'fitness-test' => 'Fitness Test',
+            'er-assessment' => 'ER Assessment',
             default => 'Report',
         };
     }

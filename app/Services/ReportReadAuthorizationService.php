@@ -16,12 +16,14 @@ class ReportReadAuthorizationService
         'erco' => 'reports.erco.view',
         'drill' => 'reports.drill.view',
         'fitness-test' => 'reports.fitness.view',
+        'er-assessment' => 'reports.er_assessment.view',
     ];
 
     private const PDF_REPORT_TYPES = [
         'inspection',
         'erco',
         'drill',
+        'er-assessment',
     ];
 
     private const PDF_REPORT_STATUSES = [

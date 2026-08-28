@@ -41,6 +41,12 @@ class ActionQueueService
             'module' => 'reports.fitness_test',
             'path' => '/report/fitness-test',
         ],
+        'er-assessment' => [
+            'label' => 'ER Assessments',
+            'permission' => 'reports.er_assessment.view|reports.manage',
+            'module' => 'reports.er_assessment',
+            'path' => '/report/er-assessment',
+        ],
     ];
 
     private const WORKFLOW_ACTIONS = ['review', 'recommend', 'approve'];

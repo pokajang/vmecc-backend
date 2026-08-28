@@ -18,6 +18,10 @@ return [
             'permission' => 'reports.fitness.view',
             'upload_enabled' => true,
         ],
+        'er-assessment' => [
+            'permission' => 'reports.er_assessment.view',
+            'upload_enabled' => true,
+        ],
     ],
     'thumbnail_max_dimension' => (int) env('REPORT_MEDIA_THUMBNAIL_MAX_DIMENSION', 480),
     'thumbnail_quality' => (int) env('REPORT_MEDIA_THUMBNAIL_QUALITY', 76),

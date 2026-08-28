@@ -97,6 +97,7 @@ class AiHelperSystemGuideCatalog
         'erco' => ['module_key' => 'reports', 'patterns' => ['#^/report/erco(?:/|$)#']],
         'drill' => ['module_key' => 'reports', 'patterns' => ['#^/report/drill(?:/|$)#']],
         'fitness' => ['module_key' => 'reports', 'patterns' => ['#^/report/fitness(?:-test)?(?:/|$)#']],
+        'er-assessment' => ['module_key' => 'reports', 'patterns' => ['#^/report/er-assessment(?:/|$)#']],
         'reports' => ['module_key' => 'reports', 'patterns' => ['#^/report(?:/|$)#']],
         'settings' => ['module_key' => 'settings.module_activation', 'patterns' => ['#^/(?:settings|reporting-settings|notifications)(?:/|$)#']],
         'audit' => ['module_key' => 'audit', 'patterns' => ['#^/admin/audit(?:/|$)#']],

@@ -57,12 +57,49 @@ class ReportReadAuthorizationServiceTest extends TestCase
         $this->assertFalse($service->canViewModule($user, 'unknown-report-type'));
     }
 
+    #[DataProvider('erAssessmentPdfStatusProvider')]
+    public function test_er_assessment_uses_status_labelled_snapshot_pdf_policy(
+        string $status,
+        bool $expected,
+    ): void {
+        $user = new User;
+        $authorization = Mockery::mock(AssignmentAuthorizationService::class);
+        if ($expected) {
+            $authorization
+                ->shouldReceive('hasPermission')
+                ->once()
+                ->with($user, 'reports.manage|reports.er_assessment.view')
+                ->andReturnTrue();
+        } else {
+            $authorization->shouldNotReceive('hasPermission');
+        }
+        $service = new ReportReadAuthorizationService($authorization);
+
+        $this->assertSame($expected, $service->canDownloadPdf($user, new Report([
+            'report_type' => 'er-assessment',
+            'status' => $status,
+        ])));
+    }
+
     public static function pdfReportTypeProvider(): array
     {
         return [
             'ERCO' => ['erco', 'reports.erco.view'],
             'drill' => ['drill', 'reports.drill.view'],
             'inspection' => ['inspection', 'reports.inspection.view'],
+            'ER Assessment' => ['er-assessment', 'reports.er_assessment.view'],
+        ];
+    }
+
+    public static function erAssessmentPdfStatusProvider(): array
+    {
+        return [
+            'Draft denied' => ['Draft', false],
+            'Submitted snapshot' => ['Submitted', true],
+            'Reviewed snapshot' => ['Reviewed', true],
+            'Approved snapshot' => ['Approved', true],
+            'Rejected snapshot' => ['Rejected', true],
+            'Cancelled snapshot' => ['Cancelled', true],
         ];
     }
 

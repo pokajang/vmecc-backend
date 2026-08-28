@@ -7,10 +7,13 @@ final class ReportModuleRegistry
     /** @var array<string, ReportModuleAdapter> */
     private readonly array $adapters;
 
-    public function __construct(FitnessTestReportModuleAdapter $fitnessTestAdapter)
-    {
+    public function __construct(
+        FitnessTestReportModuleAdapter $fitnessTestAdapter,
+        ErAssessmentReportModuleAdapter $erAssessmentAdapter,
+    ) {
         $this->adapters = [
             'fitness-test' => $fitnessTestAdapter,
+            'er-assessment' => $erAssessmentAdapter,
         ];
     }
 

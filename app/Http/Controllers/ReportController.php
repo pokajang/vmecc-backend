@@ -23,6 +23,7 @@ use App\Services\ReportMediaService;
 use App\Services\ReportModuleAdapter;
 use App\Services\ReportModuleRegistry;
 use App\Services\ReportReadAuthorizationService;
+use App\Services\ReportTypeCatalog;
 use App\Services\RoleCatalog;
 use App\Services\WorkflowNotificationService;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -72,6 +73,11 @@ class ReportController extends Controller
     {
         $user = $request->user();
         $reportTypeFilter = $this->normalizeReportType($request->input('reportType', ''));
+        if ($reportTypeFilter !== '' && $reportTypeFilter !== 'all' && ! ReportTypeCatalog::supports($reportTypeFilter)) {
+            throw ValidationException::withMessages([
+                'reportType' => ['Unsupported report type.'],
+            ]);
+        }
         $scope = strtolower(trim((string) $request->input('scope', 'mine')));
         $action = strtolower(trim((string) $request->input('action', '')));
         $isActionableScope = $scope === 'actionable';
@@ -330,6 +336,11 @@ class ReportController extends Controller
 
         $status = (string) ($data['status'] ?? self::STATUS_SUBMITTED);
         $reportType = $this->normalizeReportType($data['report_type'] ?? '');
+        if (! ReportTypeCatalog::supports($reportType)) {
+            throw ValidationException::withMessages([
+                'report_type' => ['Unsupported report type.'],
+            ]);
+        }
         $isInspection = $reportType === 'inspection';
         $isManagedWorkflow = $this->isManagedReportingWorkflowType($reportType);
         if ($isManagedWorkflow) {
@@ -379,18 +390,13 @@ class ReportController extends Controller
                 ->with('timelineEntries')
                 ->first();
             if ($existing instanceof Report) {
-                $shouldConsumeSourceDraft = $status === self::STATUS_SUBMITTED;
-                DB::transaction(fn () => $this->reportDraftConsumptionService->consumeOwnedDraft(
-                    (int) $user->id,
-                    $shouldConsumeSourceDraft ? $sourceDraftId : '',
-                    $reportType,
-                ));
-
-                return response()->json([
-                    'data' => array_merge($this->formatReport($existing), [
-                        'idempotent_replay' => true,
-                    ]),
-                ]);
+                return $this->storeIdempotentReplayResponse(
+                    existing: $existing,
+                    requestedStatus: $status,
+                    requestedReportType: $reportType,
+                    sourceDraftId: $sourceDraftId,
+                    ownerUserId: (int) $user->id,
+                );
             }
         }
 
@@ -504,18 +510,13 @@ class ReportController extends Controller
                     ->with('timelineEntries')
                     ->first();
                 if ($existing instanceof Report) {
-                    $shouldConsumeSourceDraft = $status === self::STATUS_SUBMITTED;
-                    DB::transaction(fn () => $this->reportDraftConsumptionService->consumeOwnedDraft(
-                        (int) $user->id,
-                        $shouldConsumeSourceDraft ? $sourceDraftId : '',
-                        $reportType,
-                    ));
-
-                    return response()->json([
-                        'data' => array_merge($this->formatReport($existing), [
-                            'idempotent_replay' => true,
-                        ]),
-                    ]);
+                    return $this->storeIdempotentReplayResponse(
+                        existing: $existing,
+                        requestedStatus: $status,
+                        requestedReportType: $reportType,
+                        sourceDraftId: $sourceDraftId,
+                        ownerUserId: (int) $user->id,
+                    );
                 }
             }
             throw $exception;
@@ -571,6 +572,11 @@ class ReportController extends Controller
 
         $targetStatus = (string) ($data['status'] ?? self::STATUS_SUBMITTED);
         $reportType = $this->normalizeReportType($report->report_type ?? '');
+        if (! ReportTypeCatalog::supports($reportType)) {
+            throw ValidationException::withMessages([
+                'report_type' => ['Unsupported report type.'],
+            ]);
+        }
         $isInspection = $reportType === 'inspection';
         $isManagedWorkflow = $this->isManagedReportingWorkflowType($reportType);
         $isSystemAdministrator = $this->isSystemAdministrator($user);
@@ -1674,7 +1680,7 @@ class ReportController extends Controller
         $canExportFitnessData = $isFitnessExport
             && request()?->user()
             && $this->reportReadAuthorizationService->canViewModule(request()->user(), $reportType);
-        $hasPdfExport = in_array($reportType, ['inspection', 'erco', 'drill'], true)
+        $hasPdfExport = in_array($reportType, ['inspection', 'erco', 'drill', 'er-assessment'], true)
             && $status !== self::STATUS_DRAFT;
 
         return [
@@ -1825,6 +1831,42 @@ class ReportController extends Controller
 
         return str_contains($message, 'reports_owner_submission_unique')
             || (str_contains($message, 'submission_key') && str_contains($message, 'duplicate'));
+    }
+
+    private function storeIdempotentReplayResponse(
+        Report $existing,
+        string $requestedStatus,
+        string $requestedReportType,
+        string $sourceDraftId,
+        int $ownerUserId,
+    ): JsonResponse {
+        $existingType = $this->normalizeReportType((string) $existing->report_type);
+        $existingStatus = trim((string) $existing->status);
+        if ($existingType !== $requestedReportType || $existingStatus !== $requestedStatus) {
+            return response()->json([
+                'message' => 'The submission key already belongs to a report with a different type or status.',
+                'code' => 'REPORT_SUBMISSION_STATUS_CONFLICT',
+                'data' => [
+                    'currentReport' => $this->formatReport($existing),
+                    'requestedReportType' => $requestedReportType,
+                    'requestedStatus' => $requestedStatus,
+                ],
+            ], 409);
+        }
+
+        if ($requestedStatus === self::STATUS_SUBMITTED) {
+            DB::transaction(fn () => $this->reportDraftConsumptionService->consumeOwnedDraft(
+                $ownerUserId,
+                $sourceDraftId,
+                $requestedReportType,
+            ));
+        }
+
+        return response()->json([
+            'data' => array_merge($this->formatReport($existing), [
+                'idempotent_replay' => true,
+            ]),
+        ]);
     }
 
     private function ensureInspectionPermission(Request $request): void

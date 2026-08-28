@@ -28,6 +28,7 @@ return [
             'reports.erco',
             'reports.drill',
             'reports.fitness_test',
+            'reports.er_assessment',
         ],
         'grounded_guidance' => [
             'settings.system_maintenance',

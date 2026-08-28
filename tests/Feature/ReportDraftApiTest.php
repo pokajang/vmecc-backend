@@ -53,6 +53,7 @@ class ReportDraftApiTest extends TestCase
         $owner = User::factory()->create(['status' => 'active']);
         $other = User::factory()->create(['status' => 'active']);
         $this->grantPermission($owner, 'reports.drill.view');
+        $this->grantPermission($other, 'reports.drill.view');
 
         $this->actingAs($owner)->postJson('/api/reports/draft', [
             'report_type' => 'drill',

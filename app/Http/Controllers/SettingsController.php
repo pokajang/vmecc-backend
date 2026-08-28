@@ -404,6 +404,17 @@ class SettingsController extends Controller
             'modules.fitness-test.options.allowIcFallbackReview' => ['nullable', 'boolean'],
             'modules.fitness-test.options.preventSelfReview' => ['nullable', 'boolean'],
             'modules.fitness-test.options.preventSelfApprove' => ['nullable', 'boolean'],
+            'modules.er-assessment' => ['nullable', 'array'],
+            'modules.er-assessment.fallback' => ['nullable', 'array'],
+            'modules.er-assessment.fallback.reviewRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.er-assessment.fallback.fallbackReviewRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.er-assessment.fallback.approveRole' => ['nullable', 'string', 'max:255', Rule::exists('roles', 'name')],
+            'modules.er-assessment.options' => ['nullable', 'array'],
+            'modules.er-assessment.options.useTeamScopedAic' => ['nullable', 'boolean'],
+            'modules.er-assessment.options.allowSubmitWithoutTeam' => ['nullable', 'boolean'],
+            'modules.er-assessment.options.allowIcFallbackReview' => ['nullable', 'boolean'],
+            'modules.er-assessment.options.preventSelfReview' => ['nullable', 'boolean'],
+            'modules.er-assessment.options.preventSelfApprove' => ['nullable', 'boolean'],
         ]);
 
         try {

@@ -72,13 +72,13 @@ class RoleCatalog
 
     public const ROLE_PERMISSIONS = [
         'System Administrator' => ['*'],
-        'Contract Manager' => ['staff.view', 'staff.overtime.manage', 'staff.salary.manage', 'teams.view', 'rosters.manage', 'reports.manage', 'reports.inspection.view', 'reports.erco.view', 'reports.drill.view', 'reports.fitness.view', 'dashboard.roster.view', 'dashboard.reports.view', ...self::SELF_SERVICE],
+        'Contract Manager' => ['staff.view', 'staff.overtime.manage', 'staff.salary.manage', 'teams.view', 'rosters.manage', 'reports.manage', 'reports.inspection.view', 'reports.erco.view', 'reports.drill.view', 'reports.fitness.view', 'reports.er_assessment.view', 'dashboard.roster.view', 'dashboard.reports.view', ...self::SELF_SERVICE],
         'Human Resource' => ['staff.view', 'staff.manage', 'staff.leave.manage', 'staff.salary.manage', 'staff.overtime.manage', 'teams.view', 'dashboard.payroll.view', 'dashboard.overtime.view', 'dashboard.leave.view', ...self::SELF_SERVICE],
         'Finance' => ['staff.view', 'staff.salary.manage', 'staff.salary.pay', 'teams.view', 'dashboard.payroll.view', ...self::SELF_SERVICE],
         'Admin' => ['staff.view', 'staff.salary.manage', 'teams.view', 'teams.manage', 'rosters.manage', 'dashboard.roster.view', ...self::SELF_SERVICE],
-        'Incident Commander' => ['teams.view', 'rosters.manage', 'reports.manage', 'reports.inspection.view', 'reports.erco.view', 'reports.drill.view', 'reports.fitness.view', 'dashboard.roster.view', 'dashboard.reports.view', ...self::SELF_SERVICE],
-        'Assistant Incident Commander' => ['teams.view', 'reports.manage', 'reports.inspection.view', 'reports.erco.view', 'reports.drill.view', 'reports.fitness.view', 'dashboard.reports.view', ...self::SELF_SERVICE],
-        'Tactical Response Team' => ['teams.view', 'reports.manage', 'reports.inspection.view', 'reports.erco.view', 'reports.drill.view', 'reports.fitness.view', 'dashboard.roster.view', ...self::SELF_SERVICE],
+        'Incident Commander' => ['teams.view', 'rosters.manage', 'reports.manage', 'reports.inspection.view', 'reports.erco.view', 'reports.drill.view', 'reports.fitness.view', 'reports.er_assessment.view', 'dashboard.roster.view', 'dashboard.reports.view', ...self::SELF_SERVICE],
+        'Assistant Incident Commander' => ['teams.view', 'reports.manage', 'reports.inspection.view', 'reports.erco.view', 'reports.drill.view', 'reports.fitness.view', 'reports.er_assessment.view', 'dashboard.reports.view', ...self::SELF_SERVICE],
+        'Tactical Response Team' => ['teams.view', 'reports.manage', 'reports.inspection.view', 'reports.erco.view', 'reports.drill.view', 'reports.fitness.view', 'reports.er_assessment.view', 'dashboard.roster.view', ...self::SELF_SERVICE],
         // Client-facing roles — operational view only, no internal self-service
         'Client Contract Manager' => ['staff.overtime.manage', 'teams.view', 'self.dashboard', 'self.messages'],
         'Representative' => ['teams.view', 'self.dashboard', 'self.messages'],
@@ -112,6 +112,7 @@ class RoleCatalog
             'reports.fitness.analytics.view',
             'reports.fitness.individual-results.view',
             'reports.fitness.export',
+            'reports.er_assessment.view',
             'dashboard.payroll.view',
             'dashboard.overtime.view',
             'dashboard.leave.view',

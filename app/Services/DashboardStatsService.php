@@ -28,6 +28,7 @@ class DashboardStatsService
         'erco' => 'reports.erco.view|reports.manage',
         'drill' => 'reports.drill.view|reports.manage',
         'fitness-test' => 'reports.fitness.view|reports.manage',
+        'er-assessment' => 'reports.er_assessment.view|reports.manage',
     ];
 
     public function __construct(
@@ -436,6 +437,7 @@ class DashboardStatsService
                 'erco' => $periodReports->where('report_type', 'erco')->count(),
                 'drill' => $periodReports->where('report_type', 'drill')->count(),
                 'fitnessTest' => $periodReports->where('report_type', 'fitness-test')->count(),
+                'erAssessment' => $periodReports->where('report_type', 'er-assessment')->count(),
             ],
             'families' => $families,
             'ercoByIncidentType' => $this->topCounts(
@@ -454,9 +456,11 @@ class DashboardStatsService
     {
         return match ($type) {
             'inspection' => ['label' => 'Inspection', 'route' => '/inspection'],
+            'erco' => ['label' => 'ERCO', 'route' => '/report/erco'],
             'drill' => ['label' => 'Drill', 'route' => '/report/drill'],
             'fitness-test' => ['label' => 'Fitness test', 'route' => '/report/fitness-test'],
-            default => ['label' => 'ERCO', 'route' => '/report/erco'],
+            'er-assessment' => ['label' => 'ER Assessment', 'route' => '/report/er-assessment'],
+            default => ['label' => 'Report', 'route' => '/reports'],
         };
     }
 

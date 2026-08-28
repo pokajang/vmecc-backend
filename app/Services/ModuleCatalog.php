@@ -290,6 +290,12 @@ class ModuleCatalog
             'group' => 'Reports and Inspection',
             'parent' => 'reports',
         ],
+        'reports.er_assessment' => [
+            'label' => 'ER Assessment',
+            'description' => 'Emergency response assessment forms, records, workflow, media, and PDF exports.',
+            'group' => 'Reports and Inspection',
+            'parent' => 'reports',
+        ],
         'reports.pdf_exports' => [
             'label' => 'Report PDF Exports',
             'description' => 'PDF generation for report modules.',

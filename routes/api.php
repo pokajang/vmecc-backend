@@ -5,9 +5,12 @@ use App\Http\Controllers\AiHelperController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DrillEnvironmentOptionController;
 use App\Http\Controllers\DrillReportPdfController;
 use App\Http\Controllers\DutyCoverageAssignmentController;
-use App\Http\Controllers\DrillEnvironmentOptionController;
+use App\Http\Controllers\ErAssessmentReportPdfController;
+use App\Http\Controllers\ErAssessmentTemplateController;
+use App\Http\Controllers\ErAssessmentTypeController;
 use App\Http\Controllers\ErcoReportPdfController;
 use App\Http\Controllers\FeedbackReportController;
 use App\Http\Controllers\FireExtinguisherExceptionExportController;
@@ -253,6 +256,7 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
         Route::post('reports/erco/pdf', [ErcoReportPdfController::class, 'download']);
         Route::post('reports/drill/pdf', [DrillReportPdfController::class, 'download']);
         Route::post('reports/inspection/pdf', [InspectionReportPdfController::class, 'download']);
+        Route::post('reports/er-assessment/pdf', [ErAssessmentReportPdfController::class, 'download']);
         Route::post('reports/fitness-test/export', [ReportController::class, 'exportFitness'])
             ->middleware('permission.assignment:reports.fitness.export|reports.fitness.manage|reports.manage');
     });
@@ -334,6 +338,10 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::delete('reports/drafts/{draftId}', [ReportDraftController::class, 'destroyById']);
     Route::get('reports/drill/environment-options', [DrillEnvironmentOptionController::class, 'index'])
         ->middleware(['permission.assignment:reports.drill.view|reports.manage', 'sensitive.no-store']);
+    Route::get('reports/er-assessment/template', ErAssessmentTemplateController::class)
+        ->middleware(['permission.assignment:reports.er_assessment.view|reports.manage', 'sensitive.no-store']);
+    Route::post('reports/er-assessment/template/types', [ErAssessmentTypeController::class, 'store'])
+        ->middleware(['permission.assignment:reports.er_assessment.view|reports.manage', 'sensitive.no-store']);
     Route::put('reports/drill/environment-options', [DrillEnvironmentOptionController::class, 'replace'])
         ->middleware(['permission.assignment:reports.drill.view|reports.manage', 'sensitive.no-store']);
     Route::get('reports', [ReportController::class, 'index']);
