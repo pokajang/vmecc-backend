@@ -6,6 +6,7 @@ use App\Models\LeaveAssignment;
 use App\Models\OvertimeRecord;
 use App\Models\User;
 use App\Services\OvertimeManagementScopeService;
+use App\Services\WorkflowSubmissionContextResolver;
 use Database\Seeders\E2eScenarioSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -75,11 +76,17 @@ class E2eScenarioSeederTest extends TestCase
         ]);
 
         $scope = app(OvertimeManagementScopeService::class);
+        $submissionContext = app(WorkflowSubmissionContextResolver::class)->resolve(
+            $owner,
+            now()->subDays(10),
+        );
 
         $this->assertTrue($scope->canManageRecord($approver, $record));
         $this->assertTrue(
             $scope->canPerformWorkflowRole($approver, $record, 'Client Contract Manager'),
         );
+        $this->assertSame('Smoke Site Alpha', $submissionContext['teamName']);
+        $this->assertSame('role_assignment', $submissionContext['routingSource']);
         $this->assertTrue(
             LeaveAssignment::query()
                 ->where('user_id', $owner->id)

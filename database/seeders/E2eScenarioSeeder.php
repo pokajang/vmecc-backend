@@ -154,7 +154,7 @@ class E2eScenarioSeeder extends Seeder
                 'team_id' => $team?->id,
             ],
             [
-                'start_date' => now()->subDay()->toDateString(),
+                'start_date' => now()->subYear()->toDateString(),
                 'end_date' => null,
                 'is_primary' => true,
             ],
@@ -173,7 +173,7 @@ class E2eScenarioSeeder extends Seeder
                 'name' => $user->name,
                 'role' => $persona['role'],
                 'is_primary' => true,
-                'started_at' => now()->subDay()->toDateString(),
+                'started_at' => now()->subYear()->toDateString(),
                 'ended_at' => null,
             ],
         );
@@ -264,7 +264,7 @@ class E2eScenarioSeeder extends Seeder
                 'team_id' => $team?->id,
             ],
             [
-                'start_date' => now()->subDay()->toDateString(),
+                'start_date' => now()->subYear()->toDateString(),
                 'end_date' => null,
                 'is_primary' => true,
             ],

@@ -119,7 +119,7 @@ class SmokeRbacUsersSeeder extends Seeder
                     'team_id' => $team?->id,
                 ],
                 [
-                    'start_date' => now()->subDay()->toDateString(),
+                    'start_date' => now()->subYear()->toDateString(),
                     'end_date' => null,
                     'is_primary' => true,
                 ],
@@ -135,7 +135,7 @@ class SmokeRbacUsersSeeder extends Seeder
                         'name' => $user->name,
                         'role' => $roleName,
                         'is_primary' => true,
-                        'started_at' => now()->subDay()->toDateString(),
+                        'started_at' => now()->subYear()->toDateString(),
                         'ended_at' => null,
                     ],
                 );

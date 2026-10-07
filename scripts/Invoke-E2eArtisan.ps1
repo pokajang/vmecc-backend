@@ -10,6 +10,8 @@ param(
     [ValidateRange(1024, 65535)]
     [int] $FrontendPort = 3000,
 
+    [switch] $EnableAiHelper,
+
     [Parameter(Mandatory = $true)]
     [string[]] $ArtisanArguments
 )
@@ -63,13 +65,15 @@ $sanitizedVariables = @(
     'AWS_ACCESS_KEY_ID',
     'AWS_SECRET_ACCESS_KEY',
     'AWS_SESSION_TOKEN',
-    'OPENAI_API_KEY',
     'LOG_SLACK_WEBHOOK_URL',
     'PUSHER_APP_ID',
     'PUSHER_APP_KEY',
     'PUSHER_APP_SECRET',
     'ABLY_KEY'
 )
+if (-not $EnableAiHelper) {
+    $sanitizedVariables += 'OPENAI_API_KEY'
+}
 foreach ($name in $sanitizedVariables) {
     [Environment]::SetEnvironmentVariable($name, '', 'Process')
 }
@@ -120,7 +124,8 @@ $env:FILESYSTEM_PUBLIC_ROOT = (Join-Path $runRoot 'storage\public').Replace('\',
 $env:MAIL_MAILER = 'array'
 $env:MAIL_FROM_ADDRESS = 'qa@vmecc.example.test'
 $env:WORKFLOW_EMAIL_ENABLED = 'false'
-$env:AI_HELPER_ENABLED = 'false'
+$env:AI_HELPER_ENABLED = if ($EnableAiHelper) { 'true' } else { 'false' }
+$env:REPORT_MEDIA_DRILL_UPLOAD_ENABLED = 'true'
 
 Push-Location $backendRoot
 try {
