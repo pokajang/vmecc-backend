@@ -7,7 +7,7 @@
         @page { size: A4; margin: 14mm 14mm 16mm 14mm; }
         * { box-sizing: border-box; }
         body {
-            font-family: Helvetica, Arial, sans-serif;
+            font-family: "DejaVu Sans", sans-serif;
             color: #111827;
             font-size: 10px;
             line-height: 1.35;
@@ -41,18 +41,7 @@
             font-weight: 700;
             color: #111827;
         }
-        .status-badge {
-            display: inline-block;
-            font-size: 8.5px;
-            font-weight: 700;
-            padding: 2px 7px;
-            border-radius: 10px;
-            margin-top: 3px;
-            background: #d1fae5;
-            color: #065f46;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-        }
+        @include('pdf.shared.status-badge-styles')
 
         /* ── Cards ── */
         .card {
@@ -313,6 +302,7 @@
         }
         .footer-left { display: table-cell; vertical-align: middle; font-size: 7.5px; color: #9ca3af; }
         .footer-right { display: table-cell; vertical-align: middle; text-align: right; font-size: 7.5px; color: #9ca3af; }
+        .page-number::after { content: counter(page); }
 
         .divider { height: 1px; background: #e5e7eb; margin: 6px 0; }
 
@@ -454,7 +444,7 @@
 {{-- Footer (fixed, renders on all pages) --}}
 <div class="report-footer">
     <div class="footer-left">Emergency Response Call Out Report &mdash; {{ $displayId }}</div>
-    <div class="footer-right">Generated {{ $generatedAt }}</div>
+    <div class="footer-right">Generated {{ $generatedAt }} &middot; Page <span class="page-number"></span></div>
 </div>
 
 {{-- ═══════════ HEADER ═══════════ --}}
@@ -465,7 +455,7 @@
     </div>
     <div class="report-header-right">
         <div class="report-id">{{ $displayId }}</div>
-        <div><span class="status-badge">{{ $status }}</span></div>
+        <div>@include('pdf.shared.status-badge', ['status' => $status])</div>
     </div>
 </div>
 

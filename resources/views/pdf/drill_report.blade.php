@@ -9,7 +9,7 @@
         body {
             margin: 0;
             color: #111827;
-            font-family: Helvetica, Arial, sans-serif;
+            font-family: "DejaVu Sans", sans-serif;
             font-size: 9.5px;
             line-height: 1.38;
         }
@@ -32,20 +32,12 @@
         }
         .report-sub-label { margin-top: 1px; color: #6b7280; font-size: 8px; }
         .report-id { color: #111827; font-size: 12px; font-weight: 700; }
-        .status-badge, .value-badge {
+        .value-badge {
             display: inline-block;
             border-radius: 10px;
             font-weight: 700;
         }
-        .status-badge {
-            margin-top: 3px;
-            padding: 2px 7px;
-            background: #d1fae5;
-            color: #065f46;
-            font-size: 8px;
-            letter-spacing: .05em;
-            text-transform: uppercase;
-        }
+        @include('pdf.shared.status-badge-styles')
         .value-badge {
             margin: 0 3px 3px 0;
             padding: 2px 6px;
@@ -268,7 +260,7 @@
     </div>
     <div class="report-header-right">
         <div class="report-id">{{ $displayId }}</div>
-        <span class="status-badge">{{ $status }}</span>
+        @include('pdf.shared.status-badge', ['status' => $status])
     </div>
 </div>
 

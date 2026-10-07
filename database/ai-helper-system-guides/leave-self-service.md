@@ -35,13 +35,15 @@ Prepare the leave type, dates, reason, covering person, and any supporting docum
 
 1. Go to **Leave**.
 2. Choose the leave type, start/end dates and time slots; enter the reason and cover-by detail; review calculated days, balance, and roster impact.
-3. Upload evidence when needed, select **Save Draft** to continue later or **Submit** when the request is complete, then reopen it and confirm the status and **Current Action Owner**.
+3. Upload evidence when needed, select **Save Draft** to continue later or **Submit** when the request is complete, then confirm that it is pending approval and reopen it to check the status and **Current Action Owner**.
 4. Use **Edit** only for a draft or a pending request that has not been reviewed. Use **Delete** only for a draft, and **Cancel** only when that action is shown.
 5. When **Needs Correction** is returned, amend the named fields and resubmit.
 
 ## What happens next
 
 The request moves from **Draft** to **Pending Review**, may require a recommendation, and then moves to approval. It may finish as **Approved**, **Rejected**, **Cancelled**, or **Needs Correction**.
+
+A missing assignment, zero entitlement, or insufficient balance does not prevent submission. The application shows an HR review warning, and Human Resources resolves the entitlement treatment during review. Submission does not guarantee approval.
 
 The role shown under **Current Action Owner** owns the current stage. Wait for that role to act, cancel the pending request when allowed, or correct a request marked **Needs Correction**.
 
@@ -51,7 +53,7 @@ Choose a leave type, enter an end date on or after the start date, and provide a
 
 Staged JPG, PNG, WebP, or PDF up to 15 MB; an Approved leave attachment cannot be deleted.
 
-If the request changed while you were viewing it, reload before trying again. A message will identify a missing entitlement or insufficient balance. Editing is locked after the first manager action.
+If the request changed while you were viewing it, reload before trying again. Missing or insufficient entitlement is shown as an advisory HR review condition rather than a submission error. Editing is locked after the first manager action.
 
 ## Related tasks
 

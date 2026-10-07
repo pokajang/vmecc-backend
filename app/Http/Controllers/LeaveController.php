@@ -249,7 +249,11 @@ class LeaveController extends Controller
 
         $meta = $this->buildComputationMeta($user, (float) $leave->days, $submittedDays, 'store');
 
-        return response()->json(['data' => $this->formatLeave($leave), 'meta' => $meta], 201);
+        return response()->json([
+            'data' => $this->formatLeave($leave),
+            'meta' => $meta,
+            'message' => 'Leave request submitted and is pending approval.',
+        ], 201);
     }
 
     // ── Update (edit) a pending leave ────────────────────────────────────────

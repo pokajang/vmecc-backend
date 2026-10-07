@@ -2,6 +2,7 @@
 
 namespace App\Services\InspectionReports;
 
+use App\Support\PdfDocumentOptions;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Dompdf\Canvas;
 use Dompdf\FontMetrics;
@@ -27,14 +28,7 @@ class InspectionReportPdfRenderer
         $document = Pdf::loadView('pdf.inspection_report', [
             'record' => $record,
             'viewData' => $viewData,
-        ])->setPaper('a4')->setOption([
-            'defaultFont' => 'DejaVu Sans',
-            'isFontSubsettingEnabled' => true,
-            'isHtml5ParserEnabled' => true,
-            'isRemoteEnabled' => false,
-            'isPhpEnabled' => false,
-            'isJavascriptEnabled' => false,
-        ]);
+        ])->setPaper('a4')->setOption(PdfDocumentOptions::secure());
 
         $document->render();
         $document->getDomPDF()->getCanvas()->page_script(

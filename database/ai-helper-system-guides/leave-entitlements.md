@@ -25,7 +25,7 @@ active: true
 
 ## Purpose
 
-Maintain annual employee leave-type assignments used by balance validation.
+Maintain annual employee leave-type assignments used for balance calculation and final approval review.
 
 ## Before you begin
 
@@ -42,6 +42,8 @@ Confirm the employee, year, leave type, current entitlement, used days, and pend
 ## What happens next
 
 The saved entitlement is used to calculate the employee's available leave balance.
+
+Employees may submit requests before an assignment exists or when the available balance is insufficient. Review open requests when creating or changing an assignment and resolve their entitlement treatment before final approval.
 
 The employee rechecks Leave balance; Human Resources resolves inconsistent consumption.
 

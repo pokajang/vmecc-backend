@@ -8,6 +8,7 @@ use App\Models\SalaryAssignment;
 use App\Models\Setting;
 use App\Services\AssignmentAuthorizationService;
 use App\Services\AuditLogger;
+use App\Support\PdfDocumentOptions;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
@@ -140,12 +141,7 @@ class PayrollPayslipController extends Controller
         $payload['generatedBy'] = $this->buildGeneratedByMeta($request);
         $document = Pdf::loadView('pdf.payroll-payslip', [
             'payslip' => $payload,
-        ])->setPaper('a4')->setOption([
-            'defaultFont' => 'Helvetica',
-            'isFontSubsettingEnabled' => true,
-            'isHtml5ParserEnabled' => true,
-            'isRemoteEnabled' => false,
-        ]);
+        ])->setPaper('a4')->setOption(PdfDocumentOptions::secure());
         $output = $document->output(['compress' => 1]);
 
         AuditLogger::log($request, 'payroll_payslip_downloaded', $user, [

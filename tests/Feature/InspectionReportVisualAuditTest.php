@@ -58,10 +58,10 @@ class InspectionReportVisualAuditTest extends TestCase
                     $this->assertStringContainsString('UNSAFE CONDITION', $normalizedText);
                     $this->assertStringContainsString('STOPPED ACCESS', $normalizedText);
                 } else {
-                    $this->assertStringContainsString('ADDITIONAL REPORT EVIDENCE', $normalizedText);
+                    $this->assertStringContainsString('GENERAL PHOTOS AND REMARKS', $normalizedText);
                     $this->assertLessThan(
                         strpos($normalizedText, 'WORKFLOW SIGN-OFFS'),
-                        strpos($normalizedText, 'ADDITIONAL REPORT EVIDENCE'),
+                        strpos($normalizedText, 'GENERAL PHOTOS AND REMARKS'),
                     );
                 }
 

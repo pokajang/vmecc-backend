@@ -246,7 +246,7 @@ class LeaveWorkflowService
     {
         $this->adjustBalance($leave->user_id, $leave->leave_type, $leave->start_date->year, [
             'pending' => $leave->days,
-        ]);
+        ], allowMissingAssignment: true);
     }
 
     /**
@@ -268,7 +268,7 @@ class LeaveWorkflowService
     {
         $this->adjustBalance($leave->user_id, $leave->leave_type, $leave->start_date->year, [
             'pending' => -$leave->days,
-        ]);
+        ], allowMissingAssignment: true);
     }
 
     /**
@@ -279,7 +279,7 @@ class LeaveWorkflowService
     {
         $this->adjustBalance($leave->user_id, $leave->leave_type, $leave->start_date->year, [
             'used' => -$leave->days,
-        ]);
+        ], allowMissingAssignment: true);
     }
 
     // ── Display ID Generation ─────────────────────────────────────────────────
@@ -310,8 +310,13 @@ class LeaveWorkflowService
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private function adjustBalance(int $userId, string $leaveType, int $year, array $deltas): void
-    {
+    private function adjustBalance(
+        int $userId,
+        string $leaveType,
+        int $year,
+        array $deltas,
+        bool $allowMissingAssignment = false,
+    ): void {
         $assignment = LeaveAssignment::query()
             ->where('user_id', $userId)
             ->where('year', $year)
@@ -320,15 +325,12 @@ class LeaveWorkflowService
             ->first();
 
         if (! $assignment) {
+            if ($allowMissingAssignment) {
+                return;
+            }
+
             throw ValidationException::withMessages([
                 'leave_type' => ['No leave entitlement assignment exists for this leave type and year.'],
-            ]);
-        }
-
-        $available = (float) $assignment->entitlement - (float) $assignment->used - (float) $assignment->pending;
-        if (($deltas['pending'] ?? 0) > 0 && $available + 0.0001 < (float) $deltas['pending']) {
-            throw ValidationException::withMessages([
-                'days' => ['Requested leave days exceed the available leave balance.'],
             ]);
         }
 

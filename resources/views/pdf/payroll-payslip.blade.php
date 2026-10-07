@@ -10,7 +10,7 @@
             border-radius: 0 !important;
         }
         body {
-            font-family: Helvetica, Arial, sans-serif;
+            font-family: "DejaVu Sans", sans-serif;
             color: #111827;
             font-size: 10.8px;
             line-height: 1.25;

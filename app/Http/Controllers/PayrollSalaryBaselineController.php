@@ -3,12 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\Services\PayrollSalaryBaselineService;
+use App\Services\PayrollClaimWorkflowService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class PayrollSalaryBaselineController extends Controller
 {
-    public function __construct(private readonly PayrollSalaryBaselineService $baselineService) {}
+    public function __construct(
+        private readonly PayrollSalaryBaselineService $baselineService,
+        private readonly PayrollClaimWorkflowService $workflowService,
+    ) {}
 
     public function show(Request $request): JsonResponse
     {
@@ -16,8 +20,19 @@ class PayrollSalaryBaselineController extends Controller
             'period' => ['required', 'regex:/^\d{4}-\d{2}$/'],
         ]);
 
+        $employee = $request->user();
+        $baseline = $this->baselineService->resolve($employee, $validated['period']);
+        $overtimePreview = $this->workflowService->calculateSalaryOvertimeSnapshot(
+            userId: (int) $employee->id,
+            periodValue: $validated['period'],
+            assignedBasicSalary: (float) ($baseline['basic'] ?? 0),
+            applicantRoles: $employee->roles?->pluck('name')->values()->all() ?? [],
+        );
+
         return response()->json([
-            'data' => $this->baselineService->resolve($request->user(), $validated['period']),
+            'data' => array_merge($baseline, [
+                'overtimePreview' => $overtimePreview,
+            ]),
         ]);
     }
 }

@@ -7,10 +7,12 @@ use App\Models\LeaveAssignment;
 use App\Models\LeaveAttachment;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
+use App\Services\LeaveWorkflowService;
 use App\Services\RoleCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\WithoutMiddleware;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -78,7 +80,8 @@ class LeaveHardeningTest extends TestCase
         $this->postJson('/api/leave', $this->payload(['days' => 0.5]))
             ->assertCreated()
             ->assertJsonPath('data.days', 1)
-            ->assertJsonPath('data.version', 1);
+            ->assertJsonPath('data.version', 1)
+            ->assertJsonPath('message', 'Leave request submitted and is pending approval.');
 
         $this->assertDatabaseHas('leave_assignments', [
             'user_id' => $user->id,
@@ -88,20 +91,58 @@ class LeaveHardeningTest extends TestCase
         ]);
     }
 
-    public function test_store_rejects_missing_entitlement_and_overlapping_active_leave(): void
+    public function test_store_allows_missing_entitlement_and_still_rejects_overlapping_active_leave(): void
     {
         $user = User::factory()->create(['status' => 'active']);
         $this->actingAs($user);
 
         $this->postJson('/api/leave', $this->payload())
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('leave_type');
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'Pending');
 
-        $this->assignmentFor($user);
-        $this->postJson('/api/leave', $this->payload())->assertCreated();
         $this->postJson('/api/leave', $this->payload(['start_time_slot' => 'midpoint']))
             ->assertConflict()
             ->assertJsonPath('code', 'LEAVE_OVERLAP');
+    }
+
+    public function test_store_allows_zero_or_insufficient_entitlement_and_tracks_pending_days(): void
+    {
+        $zeroUser = User::factory()->create(['status' => 'active']);
+        $this->assignmentFor($zeroUser, entitlement: 0);
+        $this->actingAs($zeroUser);
+
+        $this->postJson('/api/leave', $this->payload())->assertCreated();
+        $this->assertDatabaseHas('leave_assignments', [
+            'user_id' => $zeroUser->id,
+            'pending' => 1,
+        ]);
+
+        $lowBalanceUser = User::factory()->create(['status' => 'active']);
+        $this->assignmentFor($lowBalanceUser, entitlement: 0.5);
+        $this->actingAs($lowBalanceUser);
+
+        $this->postJson('/api/leave', $this->payload())->assertCreated();
+        $this->assertDatabaseHas('leave_assignments', [
+            'user_id' => $lowBalanceUser->id,
+            'pending' => 1,
+        ]);
+    }
+
+    public function test_final_approval_still_requires_an_entitlement_assignment(): void
+    {
+        $user = User::factory()->create(['status' => 'active']);
+        $leave = Leave::query()->create([
+            'user_id' => $user->id,
+            'display_id' => 'LV-AL-2026-001',
+            'leave_type' => 'Annual Leave',
+            'status' => 'Approved',
+            'start_date' => '2026-07-13',
+            'end_date' => '2026-07-13',
+            'days' => 1,
+        ]);
+
+        $this->expectException(ValidationException::class);
+        app(LeaveWorkflowService::class)->onLeaveApproved($leave);
     }
 
     public function test_stale_update_returns_conflict_and_correction_can_be_resubmitted(): void

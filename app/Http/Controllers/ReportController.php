@@ -26,6 +26,7 @@ use App\Services\ReportReadAuthorizationService;
 use App\Services\ReportTypeCatalog;
 use App\Services\RoleCatalog;
 use App\Services\WorkflowNotificationService;
+use App\Support\PdfDocumentOptions;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -1038,12 +1039,12 @@ class ReportController extends Controller
             ]);
         }
 
-        $document = Pdf::loadView('pdf.fitness_test_report', ['record' => $renderPayload])->setPaper('a4')->setOption([
-            'defaultFont' => 'Helvetica',
-            'isFontSubsettingEnabled' => true,
-            'isHtml5ParserEnabled' => true,
-            'isRemoteEnabled' => false,
-        ]);
+        $document = Pdf::loadView('pdf.fitness_test_report', [
+            'record' => $renderPayload,
+            'isPdf' => true,
+        ])
+            ->setPaper('a4')
+            ->setOption(PdfDocumentOptions::secure());
         $output = $document->output(['compress' => 1]);
         $filename = $filenameBase.'.pdf';
 

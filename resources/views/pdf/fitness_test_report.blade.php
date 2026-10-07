@@ -4,28 +4,61 @@
     <meta charset="utf-8">
     <title>Fitness Test Report {{ $record['displayId'] ?? ($record['id'] ?? 'fitness-test-report') }}</title>
     <style>
+        @page { size: A4; margin: 14mm 14mm 20mm; }
+        * { box-sizing: border-box; }
         body {
-            font-family: Arial, Helvetica, sans-serif;
+            font-family: "DejaVu Sans", sans-serif;
             color: #111827;
-            margin: 24px;
-            font-size: 12px;
+            margin: 0;
+            font-size: 9.5px;
+            line-height: 1.38;
         }
 
-        h1,
         h2,
         h3 {
             margin: 0 0 8px 0;
             font-weight: 600;
         }
 
-        h1 {
-            font-size: 22px;
-            margin-bottom: 12px;
+        .report-header {
+            border-bottom: 2px solid #007e7a;
+            display: table;
+            margin-bottom: 10px;
+            padding-bottom: 7px;
+            table-layout: fixed;
+            width: 100%;
         }
 
+        .report-header-left,
+        .report-header-right {
+            display: table-cell;
+            vertical-align: bottom;
+        }
+
+        .report-header-right { text-align: right; }
+
+        .report-title {
+            color: #007e7a;
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: .035em;
+            margin: 0;
+            word-break: break-word;
+        }
+
+        .report-subtitle { color: #6b7280; font-size: 8px; margin-top: 1px; }
+        .report-id { font-size: 11.5px; font-weight: 700; word-break: break-word; }
+        @include('pdf.shared.status-badge-styles')
+
         h2 {
-            font-size: 16px;
-            margin-top: 22px;
+            background: #f3f4f6;
+            border-bottom: 1px solid #d1d5db;
+            color: #374151;
+            font-size: 8.5px;
+            letter-spacing: .05em;
+            margin: 0;
+            padding: 4px 7px;
+            page-break-after: avoid;
         }
 
         p {
@@ -33,7 +66,9 @@
         }
 
         .meta {
-            margin-bottom: 12px;
+            border: 1px solid #d1d5db;
+            margin-bottom: 10px;
+            padding: 6px 7px 2px;
         }
 
         .meta p {
@@ -41,48 +76,58 @@
         }
 
         .row {
-            display: flex;
-            gap: 24px;
-            flex-wrap: wrap;
+            display: table;
+            table-layout: fixed;
+            width: 100%;
         }
 
         .cell {
-            min-width: 220px;
+            display: table-cell;
+            padding: 0 7px 4px 0;
+            vertical-align: top;
+            width: 33.333%;
+            word-break: break-word;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 10px;
+            margin-top: 6px;
         }
+
+        thead { display: table-header-group; }
+        tr { page-break-inside: avoid; }
 
         th,
         td {
             border: 1px solid #cbd5e1;
-            padding: 6px;
+            font-size: 8px;
+            padding: 4px 5px;
             vertical-align: top;
             text-align: left;
         }
 
         th {
             background: #f8fafc;
+            color: #374151;
+            font-size: 7.5px;
             font-weight: 600;
+            text-transform: uppercase;
         }
 
         .muted {
             color: #475569;
-            font-size: 11px;
+            font-size: 8px;
         }
 
         .section {
-            margin-top: 16px;
-            padding-top: 8px;
-            border-top: 1px solid #e2e8f0;
+            border: 1px solid #d1d5db;
+            margin-top: 8px;
         }
 
-        .photo-section {
-            page-break-before: always;
-        }
+        .section > .row { padding: 6px 7px 2px; }
+        .section > table { margin-top: 0; }
+        .photo-section { page-break-before: auto; }
 
         .photo-grid {
             table-layout: fixed;
@@ -90,7 +135,7 @@
 
         .photo-grid td {
             width: 50%;
-            padding: 6px;
+            padding: 5px;
             page-break-inside: avoid;
         }
 
@@ -107,10 +152,24 @@
         .photo-description {
             margin-top: 4px;
             color: #374151;
-            font-size: 10px;
+            font-size: 8px;
             white-space: pre-wrap;
             word-break: break-word;
         }
+
+        .report-footer {
+            border-top: 1px solid #e5e7eb;
+            bottom: -12mm;
+            color: #9ca3af;
+            font-size: 7px;
+            left: 0;
+            padding-top: 4px;
+            position: fixed;
+            right: 0;
+            text-align: right;
+        }
+
+        .page-number::after { content: counter(page); }
     </style>
 </head>
 <body>
@@ -139,7 +198,20 @@
     };
 @endphp
 
-<h1>Fitness Test Report - {{ $displayId }}</h1>
+@if ($isPdf ?? false)
+    <div class="report-footer">{{ $displayId }} &middot; Page <span class="page-number"></span></div>
+@endif
+
+<div class="report-header">
+    <div class="report-header-left">
+        <h1 class="report-title">Fitness Test Report</h1>
+        <div class="report-subtitle">By Vale Mineral Malaysia Emergency Control Center (VMECC)</div>
+    </div>
+    <div class="report-header-right">
+        <div class="report-id">{{ $displayId }}</div>
+        @include('pdf.shared.status-badge', ['status' => $status])
+    </div>
+</div>
 <div class="meta">
     <div class="row">
         <div class="cell"><strong>Report Type:</strong> {{ $reportType }}</div>

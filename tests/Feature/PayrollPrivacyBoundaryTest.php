@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\PayrollClaim;
+use App\Models\OvertimeRecord;
 use App\Models\SalaryAssignment;
 use App\Models\Team;
 use App\Models\User;
@@ -37,6 +38,75 @@ class PayrollPrivacyBoundaryTest extends TestCase
             ->assertHeader('Referrer-Policy', 'no-referrer');
         $this->assertNoStoreCacheHeader($response);
         $this->assertNotSame(9900.0, (float) $response->json('data.basic'));
+    }
+
+    public function test_salary_baseline_includes_server_authoritative_approved_overtime_preview(): void
+    {
+        $employee = $this->payrollUser();
+        $this->assignment($employee, 3100, 100);
+        OvertimeRecord::query()->create([
+            'user_id' => $employee->id,
+            'display_id' => 'OT-PREVIEW-APPROVED',
+            'overtime_type' => 'weekday',
+            'claim_date' => '2026-07-14',
+            'start_time' => '17:00:00',
+            'end_time' => '19:00:00',
+            'is_overnight' => false,
+            'duration_minutes' => 120,
+            'reason' => 'Approved payroll preview',
+            'status' => 'Approved',
+            'applied_at' => now()->subDay(),
+            'workflow_stage' => 'done',
+            'workflow_snapshot' => [],
+            'next_action_role' => null,
+            'applicant_roles' => [],
+            'approval_history' => [],
+            'submitted_by' => $employee->name,
+            'attachment_id' => null,
+        ]);
+        OvertimeRecord::query()->create([
+            'user_id' => $employee->id,
+            'display_id' => 'OT-PREVIEW-PENDING',
+            'overtime_type' => 'weekend',
+            'claim_date' => '2026-07-18',
+            'start_time' => '09:00:00',
+            'end_time' => '11:00:00',
+            'is_overnight' => false,
+            'duration_minutes' => 120,
+            'reason' => 'Pending payroll preview',
+            'status' => 'Pending',
+            'applied_at' => now(),
+            'workflow_stage' => 'contract_manager_review',
+            'workflow_snapshot' => [],
+            'next_action_role' => 'Contract Manager',
+            'applicant_roles' => [],
+            'approval_history' => [],
+            'submitted_by' => $employee->name,
+            'attachment_id' => null,
+        ]);
+
+        $response = $this->actingAs($employee)
+            ->getJson('/api/payroll/salary-baseline?period=2026-07');
+
+        $response->assertOk()
+            ->assertJsonCount(1, 'data.overtimePreview.rows')
+            ->assertJsonPath('data.overtimePreview.rows.0.overtimeId', 'OT-PREVIEW-APPROVED')
+            ->assertJsonPath('data.overtimePreview.rows.0.isApproved', true)
+            ->assertJsonPath('data.overtimePreview.totals.approvedHours', 2)
+            ->assertJsonPath('data.overtimePreview.totals.approvedCount', 1)
+            ->assertJsonPath('data.overtimePreview.rateSnapshot.hourlyBaseMode', 'auto_statutory');
+    }
+
+    public function test_employee_salary_preview_does_not_require_overtime_settings_permission(): void
+    {
+        $employee = $this->payrollUser();
+        $this->assignment($employee, 3100, 100);
+
+        $this->actingAs($employee)
+            ->getJson('/api/payroll/salary-baseline?period=2026-07')
+            ->assertOk();
+        $this->getJson('/api/settings/overtime-rate-settings')
+            ->assertForbidden();
     }
 
     public function test_forged_client_payroll_snapshot_is_ignored(): void

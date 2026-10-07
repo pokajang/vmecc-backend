@@ -1,0 +1,43 @@
+{
+    "drill": {
+        "pages": 3,
+        "pngPages": [
+            {"width": 1191, "height": 1684, "averageHash": "bdf7018f030107ff"},
+            {"width": 1191, "height": 1684, "averageHash": "0707073fbfffffff"},
+            {"width": 1191, "height": 1684, "averageHash": "01010f002bffffff"}
+        ]
+    },
+    "erco": {
+        "pages": 2,
+        "pngPages": [
+            {"width": 1191, "height": 1684, "averageHash": "0c2b0181b7ffffff"},
+            {"width": 1191, "height": 1684, "averageHash": "070f0f09ffff2bff"}
+        ]
+    },
+    "er-assessment": {
+        "pages": 2,
+        "pngPages": [
+            {"width": 1191, "height": 1684, "averageHash": "810101b3f301ffff"},
+            {"width": 1191, "height": 1684, "averageHash": "e7ff0001fffffff7"}
+        ]
+    },
+    "fitness-test": {
+        "pages": 1,
+        "pngPages": [
+            {"width": 1191, "height": 1684, "averageHash": "080101019fffffff"}
+        ]
+    },
+    "payroll-payslip": {
+        "pages": 1,
+        "pngPages": [
+            {"width": 1191, "height": 1684, "averageHash": "831711360002ffff"}
+        ]
+    },
+    "fire-extinguisher-exceptions": {
+        "pages": 2,
+        "pngPages": [
+            {"width": 1191, "height": 1684, "averageHash": "8f819fdf1f1fdfbf"},
+            {"width": 1191, "height": 1684, "averageHash": "0001801fffffffff"}
+        ]
+    }
+}

@@ -6,6 +6,7 @@ use App\Models\Report;
 use App\Services\AuditLogger;
 use App\Services\ReportMediaService;
 use App\Services\ReportReadAuthorizationService;
+use App\Support\PdfDocumentOptions;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 
@@ -66,12 +67,7 @@ final class ErAssessmentReportPdfController extends Controller
         $filename = strtolower('vmecc-er-assessment-'.($safeId ?: 'report').'.pdf');
         $document = Pdf::loadView('pdf.er_assessment_report', ['record' => $record])
             ->setPaper('a4')
-            ->setOption([
-                'defaultFont' => 'Helvetica',
-                'isFontSubsettingEnabled' => true,
-                'isHtml5ParserEnabled' => true,
-                'isRemoteEnabled' => false,
-            ]);
+            ->setOption(PdfDocumentOptions::secure());
         $output = $document->output(['compress' => 1]);
 
         AuditLogger::log($request, 'report_pdf_downloaded', null, [

@@ -34,7 +34,7 @@ Confirm the applicant, leave dates, balance, current status, and action assigned
 ## Steps
 
 1. Go to **Leave Management** and open **Leave Requests**.
-2. Open the exact record and verify applicant, dates, balance, evidence, history, stage, next role, and latest details.
+2. Open the exact record and verify applicant, dates, entitlement assignment and balance, evidence, history, stage, next role, and latest details. A request may be submitted with no assignment, zero entitlement, or insufficient balance.
 3. Use **Review**, **Recommend**, or **Approve** only at the matching stage; enter required remarks and tick the required declaration.
 4. Use **Request correction**, **Reject**, or **Cancel** only when displayed, with required remarks and latest details shown on the page.
 5. Reload and verify the new status, next action, responsible role, and history entry.
@@ -44,6 +44,8 @@ Confirm the applicant, leave dates, balance, current status, and action assigned
 The request moves from **Pending Review** to an optional recommendation and then approval. It may finish as **Approved**, **Rejected**, **Needs Correction**, or **Cancelled**.
 
 The role shown under **Current Action Owner** acts next. When separate reviewers are required, a person who completed an earlier stage cannot complete the later stage.
+
+Submission does not establish entitlement. Human Resources resolves missing or insufficient entitlement from the employee's assignment before final approval; it may adjust the assignment, treat the request under the appropriate leave type, request correction, or reject it.
 
 ## If something goes wrong
 

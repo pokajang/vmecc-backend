@@ -6,6 +6,7 @@ use App\Models\Report;
 use App\Services\AuditLogger;
 use App\Services\ReportMediaService;
 use App\Services\ReportReadAuthorizationService;
+use App\Support\PdfDocumentOptions;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 
@@ -74,12 +75,7 @@ class ErcoReportPdfController extends Controller
 
         $document = Pdf::loadView('pdf.erco_report', [
             'record' => $record,
-        ])->setPaper('a4')->setOption([
-            'defaultFont' => 'Helvetica',
-            'isFontSubsettingEnabled' => true,
-            'isHtml5ParserEnabled' => true,
-            'isRemoteEnabled' => false,
-        ]);
+        ])->setPaper('a4')->setOption(PdfDocumentOptions::secure());
 
         $output = $document->output(['compress' => 1]);
 

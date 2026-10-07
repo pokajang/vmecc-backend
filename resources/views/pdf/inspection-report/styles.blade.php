@@ -35,18 +35,7 @@
             overflow-wrap: break-word;
             word-break: break-word;
         }
-        .status-badge {
-            display: inline-block;
-            font-size: 8.5px;
-            font-weight: 700;
-            padding: 2px 7px;
-            border-radius: 10px;
-            margin-top: 3px;
-            background: #dbeafe;
-            color: #1e40af;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-        }
+        @include('pdf.shared.status-badge-styles')
         .card {
             border: 1px solid #d1d5db;
             margin-bottom: 8px;

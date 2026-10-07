@@ -4,30 +4,35 @@
     <meta charset="utf-8">
     <title>{{ $record['displayId'] ?? 'ER Assessment' }}</title>
     <style>
-        @page { margin: 22px 28px 34px; }
-        body { color: #182b2b; font-family: Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.35; }
+        @page { size: A4; margin: 14mm 14mm 20mm; }
+        * { box-sizing: border-box; }
+        body { color: #182b2b; font-family: "DejaVu Sans", sans-serif; font-size: 10px; line-height: 1.35; margin: 0; }
         .header { border: 1px solid #295f5b; border-collapse: collapse; margin-bottom: 12px; width: 100%; }
         .header td { border: 1px solid #295f5b; padding: 7px 9px; vertical-align: middle; }
         .brand { color: #176b63; font-size: 19px; font-weight: 700; letter-spacing: .4px; }
         .title { font-size: 15px; font-weight: 700; text-align: center; }
         .meta { font-size: 8px; line-height: 1.5; width: 145px; }
-        h2 { background: #e8f3f1; border-left: 4px solid #27877d; font-size: 11px; margin: 13px 0 7px; padding: 5px 8px; text-transform: uppercase; }
+        h2 { background: #e8f3f1; border-left: 4px solid #27877d; font-size: 11px; margin: 13px 0 7px; padding: 5px 8px; page-break-after: avoid; text-transform: uppercase; }
         .grid, .checklist, .signoff { border-collapse: collapse; width: 100%; }
         .grid td, .checklist th, .checklist td, .signoff td { border: 1px solid #a9bfbd; padding: 6px 7px; vertical-align: top; }
         .grid .label { background: #f2f7f6; color: #45615f; font-size: 8px; font-weight: 700; text-transform: uppercase; width: 19%; }
         .checklist th { background: #dcecea; color: #214f4b; font-size: 8px; text-align: left; text-transform: uppercase; }
+        .checklist thead { display: table-header-group; }
+        .checklist tr { page-break-inside: avoid; }
         .checklist .number { text-align: center; width: 24px; }
         .checklist .response { font-weight: 700; text-align: center; width: 55px; }
         .muted { color: #657b79; }
         .scenario { background: #fff7df; border: 1px solid #ead28e; margin-top: 7px; padding: 7px 9px; }
-        .layout { border: 1px solid #a9bfbd; margin-top: 7px; padding: 8px; text-align: center; }
+        .layout { border: 1px solid #a9bfbd; margin-top: 7px; padding: 8px; page-break-inside: avoid; text-align: center; }
         .layout img { max-height: 310px; max-width: 100%; }
         .evidence { margin-top: 7px; }
         .evidence img { border: 1px solid #a9bfbd; margin: 4px 5px 0 0; max-height: 115px; max-width: 150px; page-break-inside: avoid; vertical-align: top; }
         .evidence-caption { color: #657b79; font-size: 8px; margin-top: 2px; }
         ul { margin: 4px 0 0 18px; padding: 0; }
         .signature { font-size: 13px; font-style: italic; font-weight: 700; min-height: 28px; padding-top: 8px; }
-        .footer { bottom: -22px; color: #708482; font-size: 8px; left: 0; position: fixed; right: 0; text-align: center; }
+        .signoff-block { page-break-inside: avoid; }
+        .footer { border-top: 1px solid #dce4e3; bottom: -12mm; color: #708482; font-size: 8px; left: 0; padding-top: 4px; position: fixed; right: 0; text-align: center; }
+        .page-number::after { content: counter(page); }
     </style>
 </head>
 <body>
@@ -127,14 +132,16 @@
     <span class="muted">No rescue equipment recorded.</span>
 @endif
 
-<h2>Sign-off</h2>
-<table class="signoff">
-    <tr>
-        <td width="50%"><strong>Inspected by</strong><div class="signature">{{ data_get($record, 'inspectedBy.signature', '--') }}</div>{{ data_get($record, 'inspectedBy.name', '--') }}<br><span class="muted">{{ data_get($record, 'inspectedBy.company', '--') }}</span></td>
-        <td width="50%"><strong>Job leader</strong><div class="signature">{{ data_get($record, 'jobLeader.signature', '--') }}</div>{{ data_get($record, 'jobLeader.name', '--') }}<br><span class="muted">{{ data_get($record, 'jobLeader.company', '--') }}</span></td>
-    </tr>
-</table>
+<div class="signoff-block">
+    <h2>Sign-off</h2>
+    <table class="signoff">
+        <tr>
+            <td width="50%"><strong>Inspected by</strong><div class="signature">{{ data_get($record, 'inspectedBy.signature', '--') }}</div>{{ data_get($record, 'inspectedBy.name', '--') }}<br><span class="muted">{{ data_get($record, 'inspectedBy.company', '--') }}</span></td>
+            <td width="50%"><strong>Job leader</strong><div class="signature">{{ data_get($record, 'jobLeader.signature', '--') }}</div>{{ data_get($record, 'jobLeader.name', '--') }}<br><span class="muted">{{ data_get($record, 'jobLeader.company', '--') }}</span></td>
+        </tr>
+    </table>
+</div>
 
-<div class="footer">{{ $document['code'] ?? 'VMECC-OPS-016' }} · Revision {{ $document['revision'] ?? '0' }} · {{ $record['displayId'] ?? '' }}</div>
+<div class="footer">{{ $document['code'] ?? 'VMECC-OPS-016' }} &middot; Revision {{ $document['revision'] ?? '0' }} &middot; {{ $record['displayId'] ?? '' }} &middot; Page <span class="page-number"></span></div>
 </body>
 </html>

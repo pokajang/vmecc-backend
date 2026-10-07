@@ -6,7 +6,7 @@
         </td>
         <td class="header-right">
             <div class="report-id">{{ $displayId }}</div>
-            <div><span class="status-badge">{{ $status }}</span></div>
+            <div>@include('pdf.shared.status-badge', ['status' => $status])</div>
         </td>
     </tr>
 </table>

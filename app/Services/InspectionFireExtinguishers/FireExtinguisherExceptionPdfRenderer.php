@@ -3,6 +3,7 @@
 namespace App\Services\InspectionFireExtinguishers;
 
 use App\Services\InspectionReports\PdfFooterTextFitter;
+use App\Support\PdfDocumentOptions;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Dompdf\Canvas;
 use Dompdf\FontMetrics;
@@ -20,14 +21,7 @@ class FireExtinguisherExceptionPdfRenderer
         $generatedAt = trim((string) ($data['generatedAtDisplay'] ?? now()->format('d M Y, H:i')));
         $document = Pdf::loadView('pdf.fire_extinguisher_exception_export', ['data' => $data])
             ->setPaper('a4')
-            ->setOption([
-                'defaultFont' => 'DejaVu Sans',
-                'isFontSubsettingEnabled' => true,
-                'isHtml5ParserEnabled' => true,
-                'isRemoteEnabled' => false,
-                'isPhpEnabled' => false,
-                'isJavascriptEnabled' => false,
-            ]);
+            ->setOption(PdfDocumentOptions::secure());
 
         $document->render();
         $document->getDomPDF()->getCanvas()->page_script(

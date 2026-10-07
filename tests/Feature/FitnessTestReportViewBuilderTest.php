@@ -95,7 +95,8 @@ class FitnessTestReportViewBuilderTest extends TestCase
             'format' => 'html',
         ])->assertOk();
         $html->assertHeader('Content-Type', 'text/html; charset=utf-8');
-        $this->assertStringContainsString('<h1>Fitness Test Report - FIT-PHASE9-002</h1>', $html->getContent());
+        $this->assertStringContainsString('<h1 class="report-title">Fitness Test Report</h1>', $html->getContent());
+        $this->assertStringContainsString('<div class="report-id">FIT-PHASE9-002</div>', $html->getContent());
         $this->assertStringContainsString('Alpha', $html->getContent());
         $this->assertStringContainsString('CP1', $html->getContent());
 
