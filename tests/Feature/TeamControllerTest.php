@@ -676,6 +676,45 @@ class TeamControllerTest extends TestCase
         $this->assertEquals($user->id, $returned['members'][0]['user_id']);
     }
 
+    public function test_index_only_returns_teams_in_the_viewers_assignment_scope(): void
+    {
+        $assignedTeam = Team::factory()->create(['name' => 'Assigned Team']);
+        $otherTeam = Team::factory()->create(['name' => 'Other Team']);
+        $assignedMember = User::factory()->create(['status' => 'active']);
+        $otherMember = User::factory()->create(['status' => 'active']);
+        TeamMember::factory()->create([
+            'team_id' => $assignedTeam->id,
+            'user_id' => $assignedMember->id,
+            'name' => $assignedMember->name,
+            'ended_at' => null,
+        ]);
+        TeamMember::factory()->create([
+            'team_id' => $otherTeam->id,
+            'user_id' => $otherMember->id,
+            'name' => $otherMember->name,
+            'ended_at' => null,
+        ]);
+
+        $viewer = User::factory()->create(['status' => 'active']);
+        $role = Role::firstOrCreate(['name' => 'Scoped Team Viewer', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => 'teams.view', 'guard_name' => 'web']);
+        $role->givePermissionTo('teams.view');
+        UserRoleAssignment::create([
+            'user_id' => $viewer->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::CLIENT_SITE,
+            'team_id' => $assignedTeam->id,
+            'is_primary' => true,
+        ]);
+
+        $response = $this->actingAs($viewer)->getJson('/api/teams')->assertOk();
+
+        $response->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $assignedTeam->id)
+            ->assertJsonPath('data.0.members.0.user_id', $assignedMember->id);
+        $this->assertNotContains($otherMember->id, collect($response->json('data'))->pluck('members')->flatten(1)->pluck('user_id'));
+    }
+
     public function test_show_returns_single_team_with_members_and_past_members(): void
     {
         $this->actingAsAdmin();

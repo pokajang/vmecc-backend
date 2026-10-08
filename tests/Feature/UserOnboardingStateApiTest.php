@@ -85,6 +85,30 @@ class UserOnboardingStateApiTest extends TestCase
         $this->assertNull($profileState->snoozed_until);
     }
 
+    public function test_repeated_onboarding_event_is_idempotent(): void
+    {
+        $user = User::factory()->create(['status' => 'Active']);
+        $payload = [
+            'version' => 'v1',
+            'event' => 'snoozed',
+            'snoozedUntil' => now()->addDay()->toJSON(),
+        ];
+
+        $this->actingAs($user)
+            ->postJson('/api/onboarding/states/profile_completion_trt', $payload)
+            ->assertOk();
+
+        $this->actingAs($user)
+            ->postJson('/api/onboarding/states/profile_completion_trt', $payload)
+            ->assertOk();
+
+        $this->assertSame(1, UserOnboardingState::query()
+            ->where('user_id', $user->id)
+            ->where('key', 'profile_completion_trt')
+            ->where('version', 'v1')
+            ->count());
+    }
+
     public function test_onboarding_state_is_user_scoped(): void
     {
         $user = User::factory()->create(['status' => 'Active']);

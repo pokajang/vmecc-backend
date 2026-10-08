@@ -156,6 +156,39 @@ class RosterControllerTest extends TestCase
             ->assertJsonPath('data.0.shifts.day.team', 'Alpha');
     }
 
+    public function test_team_viewer_only_receives_published_rosters_in_assignment_scope(): void
+    {
+        $assignedTeam = $this->makeTeam('Assigned Team');
+        $otherTeam = $this->makeTeam('Other Team');
+        Roster::create([
+            'date' => '2026-05-01', 'shift' => 'day',
+            'team_id' => $assignedTeam->id, 'status' => 'published',
+        ]);
+        Roster::create([
+            'date' => '2026-05-01', 'shift' => 'night',
+            'team_id' => $otherTeam->id, 'status' => 'published',
+        ]);
+
+        $viewer = User::factory()->create(['status' => 'active']);
+        $role = Role::firstOrCreate(['name' => 'Scoped Team Viewer', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => 'teams.view', 'guard_name' => 'web']);
+        $role->givePermissionTo('teams.view');
+        UserRoleAssignment::create([
+            'user_id' => $viewer->id,
+            'role_id' => $role->id,
+            'scope_type' => RoleCatalog::CLIENT_SITE,
+            'team_id' => $assignedTeam->id,
+            'is_primary' => true,
+        ]);
+
+        $response = $this->actingAs($viewer)
+            ->getJson('/api/rosters?from=2026-05-01&to=2026-05-01')
+            ->assertOk()
+            ->assertJsonPath('data.0.shifts.day.team', 'Assigned Team');
+
+        $this->assertArrayNotHasKey('night', $response->json('data.0.shifts'));
+    }
+
     public function test_index_filters_by_status(): void
     {
         $this->actingAsRosterManager();

@@ -66,6 +66,13 @@ class E2eScenarioSeeder extends Seeder
             'email' => 'codex.e2e.client-contract-manager-beta@vmecc.local',
             'name' => 'Codex E2E Client Contract Manager Beta',
             'scope' => RoleCatalog::CLIENT_SITE,
+            'team' => 'Smoke Site Beta',
+        ],
+        'client_cm_directory_beta' => [
+            'role' => 'Client Contract Manager',
+            'email' => 'codex.e2e.client-contract-manager-directory-beta@vmecc.local',
+            'name' => 'Codex E2E Client Contract Manager Directory Beta',
+            'scope' => RoleCatalog::CLIENT_SITE,
             'team' => 'Smoke Client Beta',
         ],
     ];

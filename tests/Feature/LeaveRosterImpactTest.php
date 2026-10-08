@@ -110,7 +110,7 @@ class LeaveRosterImpactTest extends TestCase
     public function test_roster_markers_are_live_and_hide_people_from_non_managers(): void
     {
         $applicant = User::factory()->create(['status' => 'active', 'name' => 'Person A']);
-        $this->setupPublishedDuty($applicant);
+        $team = $this->setupPublishedDuty($applicant);
         LeaveAssignment::query()->create([
             'user_id' => $applicant->id,
             'year' => 2026,
@@ -122,6 +122,18 @@ class LeaveRosterImpactTest extends TestCase
         $this->actingAs($applicant)->postJson('/api/leave', $this->payload())->assertCreated();
 
         $viewer = User::factory()->create(['status' => 'active']);
+        $viewPermission = Permission::firstOrCreate(['name' => 'teams.view', 'guard_name' => 'web']);
+        $viewerRole = Role::firstOrCreate(['name' => 'Scoped Team Viewer', 'guard_name' => 'web']);
+        $viewerRole->givePermissionTo($viewPermission);
+        UserRoleAssignment::query()->create([
+            'user_id' => $viewer->id,
+            'role_id' => $viewerRole->id,
+            'scope_type' => RoleCatalog::SITE,
+            'team_id' => $team->id,
+            'is_primary' => true,
+            'start_date' => '2026-01-01',
+            'end_date' => '2026-12-31',
+        ]);
         $this->actingAs($viewer)
             ->getJson('/api/rosters?date=2026-07-13')
             ->assertOk()

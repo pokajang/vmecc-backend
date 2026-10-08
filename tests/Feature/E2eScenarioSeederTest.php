@@ -4,8 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\LeaveAssignment;
 use App\Models\OvertimeRecord;
+use App\Models\Team;
 use App\Models\User;
 use App\Services\OvertimeManagementScopeService;
+use App\Services\RoleCatalog;
 use App\Services\WorkflowSubmissionContextResolver;
 use Database\Seeders\E2eScenarioSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -85,6 +87,33 @@ class E2eScenarioSeederTest extends TestCase
         $this->assertTrue(
             $scope->canPerformWorkflowRole($approver, $record, 'Client Contract Manager'),
         );
+
+        $betaOwner = User::query()
+            ->where('email', E2eScenarioSeeder::PERSONAS['trt_beta']['email'])
+            ->firstOrFail();
+        $betaApprover = User::query()
+            ->where('email', E2eScenarioSeeder::PERSONAS['client_cm_beta']['email'])
+            ->firstOrFail();
+        $betaRecord = $record->replicate()->fill([
+            'user_id' => $betaOwner->id,
+            'display_id' => 'E2E-OT-BETA-SCOPE-PROBE',
+            'submitted_by' => $betaOwner->name,
+        ]);
+        $betaRecord->public_id = null;
+        $betaRecord->unsetRelation('user');
+        $betaRecord->save();
+
+        $this->assertTrue($scope->canManageRecord($betaApprover, $betaRecord));
+        $this->assertTrue(
+            $scope->canPerformWorkflowRole($betaApprover, $betaRecord, 'Client Contract Manager'),
+        );
+        $this->assertDatabaseHas('user_role_assignments', [
+            'user_id' => User::query()
+                ->where('email', E2eScenarioSeeder::PERSONAS['client_cm_directory_beta']['email'])
+                ->value('id'),
+            'team_id' => Team::query()->where('name', 'Smoke Client Beta')->value('id'),
+            'scope_type' => RoleCatalog::CLIENT_SITE,
+        ]);
         $this->assertSame('Smoke Site Alpha', $submissionContext['teamName']);
         $this->assertSame('role_assignment', $submissionContext['routingSource']);
         $this->assertTrue(

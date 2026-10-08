@@ -47,6 +47,8 @@ class RosterController extends Controller
     {
         $user = $request->user();
         $canManageRosters = $user && $this->authorizationService->hasPermission($user, 'rosters.manage');
+        $scopePermission = $canManageRosters ? 'rosters.manage' : 'teams.view';
+        $permittedTeamIds = $this->authorizationService->permittedTeamIds($user, $scopePermission);
         if (! $canManageRosters) {
             $requestedStatus = strtolower(trim((string) $request->input('status', '')));
             if ($requestedStatus !== '' && $requestedStatus !== 'published') {
@@ -81,7 +83,13 @@ class RosterController extends Controller
             }
         }
 
-        $query = Roster::with('team')->orderBy('date')->orderBy('shift');
+        $query = Roster::with('team')
+            ->when(
+                $permittedTeamIds !== null,
+                fn ($builder) => $builder->whereIn('team_id', $permittedTeamIds->all()),
+            )
+            ->orderBy('date')
+            ->orderBy('shift');
 
         if ($request->filled('date')) {
             $query->whereDate('date', $request->input('date'));

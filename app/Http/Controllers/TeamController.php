@@ -92,14 +92,21 @@ class TeamController extends Controller
     /**
      * Return all teams with their members.
      */
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
+        $permittedTeamIds = $this->authorizationService
+            ->permittedTeamIds($request->user(), 'teams.view');
+
         $teams = Team::with([
             'members' => function ($query) {
                 $query->orderByDesc('is_primary')->orderBy('name');
             },
             'members.user.roleAssignments.role',
         ])
+            ->when(
+                $permittedTeamIds !== null,
+                fn ($query) => $query->whereIn('id', $permittedTeamIds->all()),
+            )
             ->orderBy('name')
             ->get()
             ->map(fn (Team $team) => $this->teamPayload($team, true));

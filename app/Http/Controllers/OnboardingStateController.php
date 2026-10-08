@@ -44,7 +44,10 @@ class OnboardingStateController extends Controller
             'payload' => ['sometimes', 'nullable', 'array'],
         ]);
 
-        $state = UserOnboardingState::query()->firstOrNew([
+        // firstOrCreate recovers from a concurrent insert of the same unique
+        // onboarding key. The UI can submit the same dismissal from overlapping
+        // renders, so firstOrNew could race and surface a 500 unique violation.
+        $state = UserOnboardingState::query()->firstOrCreate([
             'user_id' => $user->id,
             'key' => $normalizedKey,
             'version' => $data['version'],
