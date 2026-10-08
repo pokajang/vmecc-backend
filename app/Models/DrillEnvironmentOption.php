@@ -9,6 +9,8 @@ class DrillEnvironmentOption extends Model
 {
     use HasFactory;
 
+    protected $table = 'report_drill_environment_options';
+
     protected $fillable = [
         'user_id',
         'value',

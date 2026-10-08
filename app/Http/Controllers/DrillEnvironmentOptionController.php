@@ -30,7 +30,7 @@ class DrillEnvironmentOptionController extends Controller
     {
         $user = $request->user();
         $data = $request->validate([
-            'options' => ['required', 'array'],
+            'options' => ['present', 'array'],
             'options.*.value' => ['required', 'string', 'max:140'],
             'options.*.title' => ['nullable', 'string', 'max:140'],
             'options.*.description' => ['nullable', 'string', 'max:500'],
@@ -80,10 +80,14 @@ class DrillEnvironmentOptionController extends Controller
         $normalized = [];
         foreach ($rows as $row) {
             $value = trim((string) ($row['value'] ?? ''));
-            if ($value === '') continue;
+            if ($value === '') {
+                continue;
+            }
 
             $title = trim((string) ($row['title'] ?? $row['value']));
-            if ($title === '') $title = $value;
+            if ($title === '') {
+                $title = $value;
+            }
 
             $normalized[] = [
                 'value' => $value,
