@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 class ProfileMedicalInfoApiTest extends TestCase
@@ -16,6 +17,8 @@ class ProfileMedicalInfoApiTest extends TestCase
             'status' => 'Active',
             'medical_info' => null,
         ]);
+        $permission = Permission::findOrCreate('self.profile.medical', 'web');
+        $user->givePermissionTo($permission);
 
         $medicalInfo = [
             'noKnownCriticalMedicalInfo' => true,

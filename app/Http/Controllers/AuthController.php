@@ -21,6 +21,12 @@ class AuthController extends Controller
 {
     private const MAX_FAILED_ATTEMPTS = 5;
 
+    private const PROFILE_FIELD_PERMISSIONS = [
+        'emergency_contact' => 'self.profile.emergency',
+        'banking_info' => 'self.profile.banking',
+        'medical_info' => 'self.profile.medical',
+    ];
+
     public function __construct(private readonly AuthSessionService $sessions) {}
 
     public function login(Request $request): JsonResponse
@@ -237,6 +243,12 @@ class AuthController extends Controller
         $roles = $authz->getActiveRoleNames($user)->values()->all();
         $primaryRole = trim((string) ($roles[0] ?? '')) ?: null;
 
+        $permissions = $authz->getActivePermissionNames($user)->values()->all();
+        $isSystemAdministrator = $authz->isSystemAdministrator($user);
+        $hasPermission = fn (string $permission): bool => $isSystemAdministrator
+            || in_array('*', $permissions, true)
+            || in_array($permission, $permissions, true);
+
         $payload = [
             'user' => [
                 'id' => $user->id,
@@ -252,12 +264,18 @@ class AuthController extends Controller
                 'roles' => $roles,
                 'primary_role' => $primaryRole,
                 'primary_role_code' => RoleCatalog::abbreviationForRole($primaryRole),
-                'permissions' => $authz->getActivePermissionNames($user)->values()->all(),
+                'permissions' => $permissions,
                 'role_assignments' => $authz->getRoleAssignmentsPayload($user),
-                'emergency_contact' => $user->emergency_contact ?? null,
-                'banking_info' => $user->banking_info ?? null,
+                'emergency_contact' => $hasPermission(self::PROFILE_FIELD_PERMISSIONS['emergency_contact'])
+                    ? ($user->emergency_contact ?? null)
+                    : null,
+                'banking_info' => $hasPermission(self::PROFILE_FIELD_PERMISSIONS['banking_info'])
+                    ? ($user->banking_info ?? null)
+                    : null,
                 'statutory_info' => $user->statutory_info ?? null,
-                'medical_info' => $user->medical_info ?? null,
+                'medical_info' => $hasPermission(self::PROFILE_FIELD_PERMISSIONS['medical_info'])
+                    ? ($user->medical_info ?? null)
+                    : null,
                 'onboarding' => UserOnboardingState::payloadForUser($user),
                 'login_records' => $loginRecords,
             ],
@@ -277,6 +295,15 @@ class AuthController extends Controller
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
+        $authz = app(AssignmentAuthorizationService::class);
+        foreach (self::PROFILE_FIELD_PERMISSIONS as $field => $permission) {
+            if ($request->exists($field) && ! $authz->hasPermission($user, $permission)) {
+                return response()->json([
+                    'message' => 'You do not have permission to update this profile section.',
+                ], 403);
+            }
+        }
+
         $data = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:255'],
             'ic_number' => ['sometimes', 'nullable', 'string', 'max:100'],
@@ -288,7 +315,7 @@ class AuthController extends Controller
                 'string',
                 'max:100',
                 function ($attribute, $value, $fail) {
-                    if (!is_null($value) && trim((string) $value) !== '' && ! MalaysiaStateCatalog::isValid((string) $value)) {
+                    if (! is_null($value) && trim((string) $value) !== '' && ! MalaysiaStateCatalog::isValid((string) $value)) {
                         $fail('The selected state is invalid.');
                     }
                 },
