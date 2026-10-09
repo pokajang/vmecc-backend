@@ -228,8 +228,8 @@ Route::middleware(['session.auth', 'session.csrf', 'system.maintenance'])->group
     Route::post('settings/inspection-workflow-rules', [SettingsController::class, 'updateInspectionWorkflowRules'])->middleware('permission.assignment:settings.manage');
     Route::get('settings/reporting-workflow-rules', [SettingsController::class, 'getReportingWorkflowRules'])->middleware('permission.assignment:settings.manage');
     Route::post('settings/reporting-workflow-rules', [SettingsController::class, 'updateReportingWorkflowRules'])->middleware('permission.assignment:settings.manage');
-    Route::get('settings/overtime-rate-settings', [SettingsController::class, 'getOvertimeRateSettings'])->middleware(['permission.assignment:settings.manage', 'sensitive.no-store']);
-    Route::post('settings/overtime-rate-settings', [SettingsController::class, 'updateOvertimeRateSettings'])->middleware(['permission.assignment:settings.manage', 'sensitive.no-store']);
+    Route::get('settings/overtime-rate-settings', [SettingsController::class, 'getOvertimeRateSettings'])->middleware(['permission.assignment.organization:settings.manage|staff.salary.manage', 'sensitive.no-store']);
+    Route::post('settings/overtime-rate-settings', [SettingsController::class, 'updateOvertimeRateSettings'])->middleware(['permission.assignment.organization:settings.manage|staff.salary.manage', 'sensitive.no-store']);
     Route::get('settings/salary-workflow-rules', [SettingsController::class, 'getSalaryWorkflowRules'])->middleware(['module.enabled:payroll.workflow_rules', 'permission.assignment.organization:settings.manage', 'sensitive.no-store']);
     Route::post('settings/salary-workflow-rules', [SettingsController::class, 'updateSalaryWorkflowRules'])->middleware(['module.enabled:payroll.workflow_rules', 'permission.assignment.organization:settings.manage', 'sensitive.no-store']);
     Route::get('settings/salary-statutory-rates', [SettingsController::class, 'getSalaryStatutoryRates'])->middleware(['module.enabled:payroll.statutory_rates', 'permission.assignment.organization:settings.manage|staff.salary.manage', 'sensitive.no-store']);

@@ -316,6 +316,18 @@ class SettingsControllerTest extends TestCase
         ])->assertOk();
     }
 
+    public function test_staff_salary_manager_can_read_and_update_overtime_rates(): void
+    {
+        $this->actingAsSettingsManager('staff.salary.manage');
+
+        $this->getJson('/api/settings/overtime-rate-settings')->assertOk();
+        $this->postJson('/api/settings/overtime-rate-settings', [
+            'weekdayMultiplier' => 1.5,
+            'weekendMultiplier' => 2.0,
+            'publicHolidayMultiplier' => 3.0,
+        ])->assertOk();
+    }
+
     // ─── Leave Approval Rules — role name validation ─────────────────────────
 
     public function test_update_leave_rules_rejects_nonexistent_role(): void
